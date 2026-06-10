@@ -10,14 +10,14 @@
 #ifndef EXTRAS_PORTING_LINUX_SMA_SMA_INVERTER_H_
 #define EXTRAS_PORTING_LINUX_SMA_SMA_INVERTER_H_
 
+#include <supla/sensor/electricity_meter.h>
+
 #include <atomic>
 #include <map>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include <supla/sensor/electricity_meter.h>
 
 #include "sma_types.h"
 

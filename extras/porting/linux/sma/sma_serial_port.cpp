@@ -18,17 +18,19 @@
 
 #include "sma_serial_port.h"
 
-#include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <random>
+#include <string>
 #include <thread>
+#include <utility>
 
 namespace Supla {
 namespace Linux {
@@ -93,7 +95,9 @@ bool isDcdSet(int fd) {
 
 }  // namespace
 
-SmaSerialPort::SmaSerialPort(std::string devicePath, int baud, SerialMedia media)
+SmaSerialPort::SmaSerialPort(std::string devicePath,
+                             int baud,
+                             SerialMedia media)
     : devicePath_(std::move(devicePath)), baud_(baud), media_(media) {}
 
 SmaSerialPort::~SmaSerialPort() {

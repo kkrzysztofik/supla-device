@@ -48,8 +48,8 @@ constexpr uint16_t kChStatus = 0x0008;
 constexpr uint16_t kChIn = 0x0100;
 constexpr uint16_t kChSpot = 0x0800;
 
-constexpr uint16_t kChSpotOnlineMask =
-    kChSpot | kChIn | kChAnalog | kChDigital | kChCounter | kChStatus;
+constexpr uint16_t kChSpotOnlineMask = kChSpot | kChIn | kChAnalog |
+kChDigital | kChCounter | kChStatus;
 
 constexpr uint16_t kNtypeByte = 0x0000;
 constexpr uint16_t kNtypeWord = 0x0001;

@@ -20,18 +20,16 @@
 
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include "sma_types.h"
-
-namespace Supla {
-namespace Linux {
-namespace Sma {
 
 namespace {
 
 constexpr uint32_t kAccm = 0x000e0000u;
 
 // FCS lookup table (PPP/HDLC), same polynomial as YASDI smanet.c
+// NOLINTBEGIN(whitespace/indent_namespace)
 constexpr uint16_t kFcstab[256] = {
     0x0000, 0x1189, 0x2312, 0x329b, 0x4624, 0x57ad, 0x6536, 0x74bf, 0x8c48,
     0x9dc1, 0xaf5a, 0xbed3, 0xca6c, 0xdbe5, 0xe97e, 0xf8f7, 0x1081, 0x0108,
@@ -62,6 +60,7 @@ constexpr uint16_t kFcstab[256] = {
     0x4854, 0x59dd, 0x2d62, 0x3ceb, 0x0e70, 0x1ff9, 0xf78f, 0xe606, 0xd49d,
     0xc514, 0xb1ab, 0xa022, 0x92b9, 0x8330, 0x7bc7, 0x6a4e, 0x58d5, 0x495c,
     0x3de3, 0x2c6a, 0x1ef1, 0x0f78};
+// NOLINTEND
 
 size_t charMapper(uint8_t* dest, const uint8_t* src, size_t len) {
   size_t dstIdx = 0;
@@ -69,13 +68,14 @@ size_t charMapper(uint8_t* dest, const uint8_t* src, size_t len) {
     const uint8_t ch = src[i];
     if (ch < 0x20) {
       if (kAccm & (1u << ch)) {
-        dest[dstIdx++] = kHdlcEsc;
+        dest[dstIdx++] = Supla::Linux::Sma::kHdlcEsc;
         dest[dstIdx++] = ch ^ 0x20;
       } else {
         dest[dstIdx++] = ch;
       }
-    } else if (ch == kHdlcEsc || ch == kHdlcSync) {
-      dest[dstIdx++] = kHdlcEsc;
+    } else if (ch == Supla::Linux::Sma::kHdlcEsc ||
+               ch == Supla::Linux::Sma::kHdlcSync) {
+      dest[dstIdx++] = Supla::Linux::Sma::kHdlcEsc;
       dest[dstIdx++] = ch ^ 0x20;
     } else {
       dest[dstIdx++] = ch;
@@ -100,7 +100,13 @@ uint16_t be16ToHost(const uint8_t* src) {
 
 }  // namespace
 
-uint16_t SmaNetFramer::calcFcsRaw(uint16_t fcs, const uint8_t* data, size_t len) {
+namespace Supla {
+namespace Linux {
+namespace Sma {
+
+uint16_t SmaNetFramer::calcFcsRaw(uint16_t fcs,
+                                  const uint8_t* data,
+                                  size_t len) {
   while (len-- > 0) {
     fcs = static_cast<uint16_t>((fcs >> 8) ^
                                 kFcstab[(fcs ^ *data++) & 0xff]);
@@ -132,7 +138,8 @@ std::vector<uint8_t> SmaNetFramer::encapsulate(uint16_t protocolId,
   inner.push_back(fcsLe[1]);
 
   std::vector<uint8_t> mapped(inner.size() * 2 + 2);
-  const size_t mappedLen = charMapper(mapped.data(), inner.data(), inner.size());
+  const size_t mappedLen =
+      charMapper(mapped.data(), inner.data(), inner.size());
 
   std::vector<uint8_t> frame;
   frame.reserve(mappedLen + 2);

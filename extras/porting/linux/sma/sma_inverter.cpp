@@ -9,12 +9,16 @@
 
 #include "sma_inverter.h"
 
-#include <chrono>
-#include <cstring>
-#include <thread>
-
 #include <supla/log_wrapper.h>
 #include <supla/time.h>
+
+#include <chrono>
+#include <cstring>
+#include <map>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #include "smadata_client.h"
 #include "sma_serial_port.h"
@@ -115,7 +119,8 @@ void SmaInverter::applyReadingsToChannel() {
       setPowerActive(0, static_cast<_supla_int_t>(value * 100000.0));
       hasPower = true;
     } else if (mappingIsFwdEnergy(mapping)) {
-      setFwdActEnergy(0, static_cast<unsigned _supla_int64_t>(value * 100000.0));
+      setFwdActEnergy(
+          0, static_cast<unsigned _supla_int64_t>(value * 100000.0));
     } else if (mappingIsVoltage(mapping)) {
       setVoltage(0, static_cast<unsigned _supla_int16_t>(value * 100.0));
     } else if (mappingIsCurrent(mapping)) {
@@ -134,8 +139,9 @@ void SmaInverter::applyReadingsToChannel() {
 }
 
 void SmaInverter::iterateAlways() {
-  if (lastReadTime == 0 ||
-      millis() - lastReadTime > static_cast<uint32_t>(pollIntervalSec_ * 1000)) {
+  const uint32_t pollMs =
+      static_cast<uint32_t>(pollIntervalSec_ * 1000);
+  if (lastReadTime == 0 || millis() - lastReadTime > pollMs) {
     lastReadTime = millis();
     applyReadingsToChannel();
   }
@@ -148,7 +154,8 @@ void SmaInverter::workerLoop() {
 
   while (!stopWorker_) {
     if (!port.isOpen() && !port.open()) {
-      SUPLA_LOG_WARNING("SmaInverter: failed to open %s", serialDevice_.c_str());
+      SUPLA_LOG_WARNING("SmaInverter: failed to open %s",
+                        serialDevice_.c_str());
       std::this_thread::sleep_for(std::chrono::seconds(5));
       continue;
     }

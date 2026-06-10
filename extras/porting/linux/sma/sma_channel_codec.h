@@ -41,7 +41,8 @@ class SmaChannelCodec {
                                 const SmaChannelDescriptor& channel,
                                 double* outValue);
 
-  static double applyGainOffset(double raw, const SmaChannelDescriptor& channel);
+  static double applyGainOffset(double raw,
+                                const SmaChannelDescriptor& channel);
 };
 
 }  // namespace Sma

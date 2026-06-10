@@ -22,6 +22,7 @@
 #include <chrono>
 #include <ctime>
 #include <thread>
+#include <vector>
 
 namespace Supla {
 namespace Linux {
@@ -32,7 +33,8 @@ namespace {
 constexpr int kDefaultTimeoutMs = 3000;
 constexpr int kMaxBackoffSec = 60;
 
-bool parseSmadataPayload(const std::vector<uint8_t>& payload, SmaDataHead* head) {
+bool parseSmadataPayload(const std::vector<uint8_t>& payload,
+                         SmaDataHead* head) {
   if (head == nullptr || payload.size() < 7) {
     return false;
   }
@@ -105,17 +107,19 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
   return port_.writeAll(frame.data(), frame.size());
 }
 
-std::optional<SmaDataResponse> SmaDataClient::readResponse(int timeoutMs,
-                                                           uint8_t expectedCmd) {
+std::optional<SmaDataResponse> SmaDataClient::readResponse(
+    int timeoutMs,
+    uint8_t expectedCmd) {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   uint8_t buffer[256];
 
   while (std::chrono::steady_clock::now() < deadline) {
-    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-        deadline - std::chrono::steady_clock::now());
-    const int waitMs = remaining.count() > 0 ? static_cast<int>(remaining.count())
-                                             : 1;
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+    const int waitMs =
+        remaining.count() > 0 ? static_cast<int>(remaining.count()) : 1;
     const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
     if (readBytes < 0) {
       return std::nullopt;

@@ -10,6 +10,7 @@
 #include <supla/log_wrapper.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "linux_channel_factory.h"
@@ -132,7 +133,8 @@ bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
     mapped.descriptor.suplaMapping = parseSuplaMapping(suplaMapping);
     if (mapped.descriptor.suplaMapping == nullptr) {
       SUPLA_LOG_ERROR(
-          "Channel[%d] config: unknown supla mapping \"%s\" for sma_channels.%s",
+          "Channel[%d] config: unknown supla mapping \"%s\" for "
+          "sma_channels.%s",
           context.channelNumber,
           suplaMapping.c_str(),
           key.c_str());
