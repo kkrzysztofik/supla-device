@@ -1,10 +1,18 @@
 /*
- Copyright (C) AC SOFTWARE SP. Z O.O.
+ Copyright (C) Krzysztof Krzysztofik
 
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
  as published by the Free Software Foundation; either version 2
  of the License, or (at your option) any later version.
+
+ YASDI reference (protocol constants only)
+ -----------------------------------------
+ Constants and masks follow YASDI — Yet Another SMA Data Implementation,
+ Copyright (C) 2001-2008 SMA Solar Technology AG, licensed under the
+ GNU Lesser General Public License v2.1 or later (LGPL-2.1+). Reference:
+ yasdi/sdk/include/chandef.h, yasdi/sdk/core/smadata_cmd.h,
+ yasdi/sdk/protocol/smanet.h, yasdi/sdk/core/smadata_layer.h.
 */
 
 #ifndef EXTRAS_PORTING_LINUX_SMA_SMA_TYPES_H_

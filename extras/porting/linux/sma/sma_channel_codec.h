@@ -1,10 +1,20 @@
 /*
- Copyright (C) AC SOFTWARE SP. Z O.O.
+ Copyright (C) Krzysztof Krzysztofik
 
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
  as published by the Free Software Foundation; either version 2
  of the License, or (at your option) any later version.
+
+ YASDI reference (protocol behavior only)
+ ----------------------------------------
+ Reimplemented from YASDI — Yet Another SMA Data Implementation,
+ Copyright (C) 2001-2008 SMA Solar Technology AG, licensed under the
+ GNU Lesser General Public License v2.1 or later (LGPL-2.1+). Reference:
+ yasdi/sdk/master/netchannel.c, yasdi/sdk/master/statereadchan.c,
+ yasdi/sdk/core/tools.c, yasdi/sdk/include/chandef.h.
+
+ This file is original supla-device code; no YASDI source is incorporated.
 */
 
 #ifndef EXTRAS_PORTING_LINUX_SMA_SMA_CHANNEL_CODEC_H_

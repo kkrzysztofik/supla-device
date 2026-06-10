@@ -1,8 +1,38 @@
 # Minimal SMA RS485/SMANet client (sd4linux)
 
 Read-only SMAData client for Linux `supla-device`. Protocol behavior is
-reimplemented in C++ and validated against YASDI 1.8.3 in `yasdi/` (reference
-only — no runtime dependency on `libyasdi`).
+reimplemented in C++ and validated against YASDI 1.8.3 (reference only — no
+runtime dependency on `libyasdi`).
+
+## License and YASDI attribution
+
+**supla-device SMA module** — Copyright (C) Krzysztof Krzysztofik, licensed
+under the GNU General Public License v2 or later (same as supla-device).
+
+**YASDI reference library** — Protocol algorithms and constants in this module
+follow the behavior of [YASDI](https://www.sma.de/) (*Yet Another SMA Data
+Implementation*), Copyright (C) 2001-2008 SMA Solar Technology AG, which is
+distributed under the **GNU Lesser General Public License v2.1 or later
+(LGPL-2.1+)**. A copy of the LGPL is typically shipped as `COPYING.LIB` with
+YASDI; the full license text is also available at
+<https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>.
+
+This directory contains **original C++ reimplementations** for supla-device.
+No YASDI source files are linked or vendored into the build. YASDI is used only
+as an interoperability reference and for validation (e.g. `yasdishell` on
+hardware). Each ported file documents its YASDI reference paths in the file
+header.
+
+| Module | YASDI reference sources |
+|--------|-------------------------|
+| `smanet_framer.*` | `sdk/protocol/smanet.c`, `smanet.h` |
+| `sma_serial_port.*` | `sdk/driver/serial_posix.c` |
+| `smadata_client.*` | `sdk/core/smadata_layer.c`, `smadata_cmd.h`, `statereadchan.c` |
+| `sma_channel_codec.*` | `sdk/master/netchannel.c`, `statereadchan.c`, `tools.c`, `chandef.h` |
+| `sma_types.h` | `chandef.h`, `smadata_cmd.h`, `smanet.h`, `smadata_layer.h` |
+
+`sma_inverter.*` and the sd4linux extension are SUPLA integration layers and do
+not incorporate YASDI protocol code.
 
 ## Hardware profiling (one-time per inverter)
 

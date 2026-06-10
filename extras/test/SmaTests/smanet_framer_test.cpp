@@ -1,5 +1,5 @@
 /*
- Copyright (C) AC SOFTWARE SP. Z O.O.
+ Copyright (C) Krzysztof Krzysztofik
 */
 
 #include <gtest/gtest.h>
