@@ -1,0 +1,37 @@
+# Example sd4linux config with SMA RS485 extension enabled at build time:
+# cmake -B build -DSUPLA_LINUX_EXTENSION_DIRS=../../../porting/linux/extensions/sma
+
+device:
+  name: supla-device-sma
+  guid: 00000000-0000-0000-0000-000000000001
+  auth_key: ""
+
+network:
+  mode: LAN
+  server: svr1.supla.org
+  email: user@example.com
+
+channels:
+  - type: SmaInverter
+    serial:
+      device: /dev/ttyUSB0
+      baud: 9600
+      media: RS485
+    device:
+      net_address: 1
+    poll_interval_sec: 15
+    sma_channels:
+      pac:
+        ctype: 0x0801
+        cindex: 0
+        ntype: 0x0004
+        gain: 1.0
+        offset: 0.0
+        supla: power_active
+      totwh:
+        ctype: 0x0804
+        cindex: 0
+        ntype: 0x0002
+        gain: 1.0
+        offset: 0.0
+        supla: fwd_act_energy

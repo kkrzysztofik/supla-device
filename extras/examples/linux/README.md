@@ -354,6 +354,7 @@ Supported channel types:
 * `CmdValve` - related class `Supla::Control::CmdValve`
 * `CmdRollerShutter` - related class `Supla::Control::CmdRollerShutter`
 * `Fronius` - related class `Supla::PV::Fronius`
+* `SmaInverter` - related class `Supla::PV::SmaInverter` (extension, RS485/SMANet; see `supla-device-sma.yaml`)
 * `SolarEdge` - related class `Supla::PV::SolarEdge`
 * `Afore` - related class `Supla::PV::Afore`
 * `ThermometerParsed` - related class `Supla::Sensor::ThermometerParsed`

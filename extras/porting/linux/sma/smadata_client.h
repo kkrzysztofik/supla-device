@@ -1,0 +1,82 @@
+/*
+ Copyright (C) AC SOFTWARE SP. Z O.O.
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
+*/
+
+#ifndef EXTRAS_PORTING_LINUX_SMA_SMADATA_CLIENT_H_
+#define EXTRAS_PORTING_LINUX_SMA_SMADATA_CLIENT_H_
+
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+#include "sma_channel_codec.h"
+#include "sma_serial_port.h"
+#include "smanet_framer.h"
+
+namespace Supla {
+namespace Linux {
+namespace Sma {
+
+struct SmaDataHead {
+  uint16_t sourceAddr = 0;
+  uint16_t destAddr = 0;
+  uint8_t ctrl = 0;
+  uint8_t pktCnt = 0;
+  uint8_t cmd = 0;
+};
+
+struct SmaDataResponse {
+  SmaDataHead head;
+  std::vector<uint8_t> payload;
+};
+
+class SmaDataClient {
+ public:
+  SmaDataClient(SmaSerialPort& port, uint16_t masterAddr, uint16_t deviceAddr);
+
+  bool syncOnline(int waitAfterSec = 1);
+  bool readChannel(const SmaChannelDescriptor& channel, double* outValue);
+  bool verifyCinfo();
+
+  void resetBackoff();
+  int backoffSec() const;
+
+ private:
+  bool transact(uint16_t destAddr,
+                uint8_t cmd,
+                const uint8_t* txData,
+                size_t txLen,
+                bool broadcast,
+                int timeoutMs,
+                SmaDataResponse* response);
+
+  bool sendSmadata(uint16_t destAddr,
+                   uint8_t cmd,
+                   const uint8_t* txData,
+                   size_t txLen,
+                   bool broadcast);
+
+  std::optional<SmaDataResponse> readResponse(int timeoutMs,
+                                              uint8_t expectedCmd);
+
+  static void hostToLe16(uint16_t val, uint8_t* dst);
+  static void hostToLe32(uint32_t val, uint8_t* dst);
+
+  SmaSerialPort& port_;
+  uint16_t masterAddr_;
+  uint16_t deviceAddr_;
+  uint8_t pktCounter_ = 0;
+  SmaNetFramer framer_;
+  int consecutiveErrors_ = 0;
+};
+
+}  // namespace Sma
+}  // namespace Linux
+}  // namespace Supla
+
+#endif  // EXTRAS_PORTING_LINUX_SMA_SMADATA_CLIENT_H_

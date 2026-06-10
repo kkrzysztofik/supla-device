@@ -28,6 +28,7 @@ Best for advanced projects and commercial/long-term products where you want full
 A ready-to-run SUPLA device implementation for desktop environments, useful for integration, testing and debugging.
 
 - Start here: [Quickstart: sd4linux](quickstart/sd4linux.md)
+- SMA inverters: [Integration plan](integrations/yasdi-supla-device-plan.md) (includes native `SmaInverter` extension), [YASDI architecture](integrations/yasdi-architecture.md), [SMA module README](../extras/porting/linux/sma/README.md)
 
 ---
 

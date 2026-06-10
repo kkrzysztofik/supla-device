@@ -74,6 +74,7 @@ file(GLOB TEST_SRC CONFIGURE_DEPENDS
   GpmTests/*.cpp
   SwUpdateTests/*.cpp
   ModbusTests/*.cpp
+  SmaTests/*.cpp
   )
 
 file(GLOB SD4LINUX_TEST_SRC CONFIGURE_DEPENDS
@@ -114,6 +115,10 @@ target_include_directories(supladevicelib PUBLIC
 )
 
 add_executable(supladevicetests ${TEST_SRC} ${DOUBLE_SRC})
+target_sources(supladevicetests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/smanet_framer.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_channel_codec.cpp
+)
 
 add_executable(sd4linuxtests
   ${SD4LINUX_TEST_SRC}
@@ -123,6 +128,7 @@ add_executable(sd4linuxtests
 
 target_include_directories(supladevicetests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
 )
 
 target_include_directories(sd4linuxtests PRIVATE
