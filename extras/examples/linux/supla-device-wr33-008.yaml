@@ -1,23 +1,33 @@
-# Example sd4linux config with SMA RS485 extension enabled at build time:
+# SMA WR33-008 (SN 2000497368) — supla-device-linux + SMA extension
+#
+# Build:
 #   ./build-sma.sh
 #
-# Copy to your own file or use supla-device-wr33-008.yaml as a hardware-specific
-# template. Set supla.mail, supla.server, and serial.device before running.
+# Edit before first run:
+#   - supla.mail / supla.server (your SUPLA Cloud account)
+#   - serial.device (same path as yasdi-posix.ini [COM1] Device=)
+#
+# On first start, GUID and AuthKey are generated under state_files_path.
+# Register the device in SUPLA Cloud using the values from:
+#   var/supla-wr33-008/guid_auth.yaml
+#
+# Hardware (profiled with yasdishell):
+#   Model WR33-008, net_address 0x0001, SMANet RS485 @ 1200 baud
 
-name: supla-device-sma
+name: "WR33-008 SN:2000497368"
 log_level: info
 proto_verbose_log: false
-state_files_path: "./var/supla-device-sma"
+state_files_path: "./var/supla-wr33-008"
 security_level: 0
 
 supla:
   server: svr1.supla.org
-  mail: user@example.com
+  mail: YOUR_EMAIL@example.com
   proto: 23
 
 channels:
   - type: SmaInverter
-    caption: SMA WR33 AC
+    caption: WR33 AC
     serial: &sma_serial
       device: /dev/ttyUSB0
       baud: 1200
@@ -33,7 +43,7 @@ channels:
       "E-Total": fwd_act_energy
 
   - type: SmaDcMeter
-    caption: SMA WR33 DC
+    caption: WR33 DC
     serial: *sma_serial
     device: *sma_device
     poll_interval_sec: 15
@@ -42,7 +52,7 @@ channels:
       Ipv: current
 
   - type: SmaThermometer
-    caption: SMA WR33 temperature
+    caption: WR33 temperature
     serial: *sma_serial
     device: *sma_device
     poll_interval_sec: 15
@@ -50,7 +60,7 @@ channels:
       Tkk: temperature
 
   - type: SmaMeasurement
-    caption: SMA WR33 grid impedance
+    caption: WR33 grid impedance
     serial: *sma_serial
     device: *sma_device
     poll_interval_sec: 15

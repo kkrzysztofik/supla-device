@@ -10,11 +10,97 @@ https://cloud.supla.org.
 
 # Build
 
-## Install dependencies
+## Dependencies (Debian / Ubuntu)
 
-For Debian based distributions:
+### Build from source
 
-    sudo apt install git libssl-dev build-essential libyaml-cpp-dev cmake
+Install packages needed to compile `supla-device-linux`:
+
+```bash
+sudo apt install \
+  build-essential \
+  cmake \
+  git \
+  libssl-dev \
+  libyaml-cpp-dev
+```
+
+| Package | Purpose |
+|---------|---------|
+| `build-essential` | GCC/G++ toolchain and `make` |
+| `cmake` | Configure the build (minimum 3.15) |
+| `git` | CMake `FetchContent` clones nlohmann/json, cxxopts, and MQTT-C at build time |
+| `libssl-dev` | OpenSSL headers/libs for TLS (SUPLA Cloud) and MQTT-over-SSL |
+| `libyaml-cpp-dev` | Parse `supla-device.yaml` configuration |
+
+These libraries are **vendored at build time** (no separate apt packages):
+
+- [nlohmann/json](https://github.com/nlohmann/json)
+- [cxxopts](https://github.com/jarro2783/cxxopts) (CLI: `-c`, `-d`, `--verbose`, …)
+- [MQTT-C](https://github.com/LiamBindle/MQTT-C) (optional MQTT channel integration)
+
+Optional: `ccache` speeds up rebuilds if installed (CMake uses it automatically).
+
+### Run a pre-built binary
+
+If you only copy `supla-device-linux` to another machine (without compiling
+there), install the **runtime** libraries it links against:
+
+```bash
+sudo apt install \
+  libssl3 \
+  libyaml-cpp0.8 \
+  ca-certificates
+```
+
+| Package | Purpose |
+|---------|---------|
+| `libssl3` | TLS to SUPLA server (`libssl.so.3`, `libcrypto.so.3`) |
+| `libyaml-cpp0.8` | Load YAML config (`libyaml-cpp.so.0.8`; package name may differ slightly on older releases, e.g. `libyaml-cpp0.7`) |
+| `ca-certificates` | Verify SUPLA Cloud server certificate when `security_level: 0` is not used |
+
+Standard C/C++ runtime (`libc`, `libstdc++`, `libm`, `libgcc_s`) comes with the
+base system. `libz1` / `libzstd1` are usually already installed as OpenSSL
+dependencies.
+
+Check missing libraries on the target host:
+
+```bash
+ldd ./supla-device-linux
+```
+
+### GLIBC / distro compatibility
+
+`supla-device-linux` is linked against the **glibc on the machine where it was
+built**. A binary compiled on a newer distro (e.g. Ubuntu 25.04 with glibc 2.43)
+may fail on Debian 13 (glibc 2.41) with:
+
+```text
+./supla-device-linux: version `GLIBC_2.42' not found
+```
+
+**Fix:** build on the same machine (or same or older glibc) that will run the
+binary:
+
+```bash
+sudo apt install build-essential cmake git libssl-dev libyaml-cpp-dev
+cd /home/kmk/supla-device/extras/examples/linux
+./build-sma.sh
+./build/supla-device-linux --version
+```
+
+Copy `build/supla-device-linux` only after building on Debian 13, or build
+inside a Debian 13 container/VM from your dev tree.
+
+### RS485 / serial extensions (e.g. SMA)
+
+No extra Debian packages beyond the lists above. Access to `/dev/ttyUSB0` (or your
+adapter) typically requires membership in the `dialout` group:
+
+```bash
+sudo usermod -aG dialout $USER
+# log out and back in
+```
 
 ## Get supla-device sources
 

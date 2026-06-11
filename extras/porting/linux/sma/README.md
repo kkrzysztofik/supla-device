@@ -122,13 +122,27 @@ See [profiles/README.md](profiles/README.md) for an example profile template.
 
 ### Dependencies (Debian/Ubuntu)
 
+Same as sd4linux — see [extras/examples/linux/README.md](../../../../examples/linux/README.md#dependencies-debian--ubuntu).
+
+Build:
+
 ```bash
-sudo apt install git libssl-dev build-essential libyaml-cpp-dev cmake
+sudo apt install build-essential cmake git libssl-dev libyaml-cpp-dev
 ```
+
+Runtime (deployed binary only): `libssl3`, `libyaml-cpp0.8`, `ca-certificates`.
+RS485 needs `dialout` group access, not an extra library.
 
 ### Build with the SMA extension
 
 From the repository root:
+
+```bash
+cd extras/examples/linux
+./build-sma.sh
+```
+
+Or manually:
 
 ```bash
 cd extras/examples/linux
@@ -161,9 +175,14 @@ cp supla-device-sma.yaml my-sma.yaml
 
 Set at least:
 
-- `network.email` and `network.server` (SUPLA Cloud or your server)
-- `device.guid` and `device.auth_key` (from SUPLA Cloud device registration)
-- `serial.device` — RS485 adapter path, e.g. `/dev/ttyUSB0`
+- `supla.mail` and `supla.server` (SUPLA Cloud or your server)
+- `serial.device` — RS485 adapter path, e.g. `/dev/ttyUSB0` (same as
+  `yasdi-posix.ini` `[COM1] Device=`)
+- On first run, GUID/AuthKey are written to `state_files_path/guid_auth.yaml`
+  — register the device in SUPLA Cloud with those values
+
+Hardware-specific template for WR33-008:
+`extras/examples/linux/supla-device-wr33-008.yaml`
 - `serial.baud` and `serial.media`
 - `device.net_address` and `sma_channels.*` — from `yasdishell` profiling
   (placeholder values in the example may not match your inverter)
@@ -196,7 +215,10 @@ If `-c` is omitted, sd4linux looks for `./etc/supla-device.yaml` or
 - SMA polling runs on a worker thread; the main `SuplaDevice.iterate()` loop is
   not blocked by serial I/O
 - Wrong serial path or channel metadata shows read failures or
-  `CMD_GET_CINFO failed` in logs
+  `CMD_GET_CINFO failed` in logs (large channel lists are sent as multiple
+  SMANet fragments; ensure you run a build with CINFO defragmentation support)
+- Only one process may use the RS485 port — stop `yasdishell` before starting
+  `supla-device-linux`
 
 ### Rebuild after code changes
 

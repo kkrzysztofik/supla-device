@@ -152,8 +152,10 @@ bool SmaSerialPort::configureTermios() {
   options.c_cc[VTIME] = 5;
 
   const speed_t rate = baudToFlag(baud_);
-  cfsetispeed(&options, rate);
-  cfsetospeed(&options, rate);
+  // Set baud via c_cflag so the binary does not depend on GLIBC_2.42
+  // cfsetispeed/cfsetospeed (C23); matches common Linux termios usage.
+  options.c_cflag &= ~static_cast<tcflag_t>(CBAUD);
+  options.c_cflag |= static_cast<tcflag_t>(rate);
 
   options.c_cflag &= ~PARENB;
   options.c_cflag &= ~CSTOPB;

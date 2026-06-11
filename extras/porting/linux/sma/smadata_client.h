@@ -76,7 +76,11 @@ class SmaDataClient {
                    uint8_t cmd,
                    const uint8_t* txData,
                    size_t txLen,
-                   bool broadcast);
+                   bool broadcast,
+                   std::optional<uint8_t> forcedPktCnt = std::nullopt);
+
+  std::optional<SmaDataResponse> readOneFrame(int timeoutMs,
+                                              uint8_t expectedCmd);
 
   std::optional<SmaDataResponse> readResponse(int timeoutMs,
                                               uint8_t expectedCmd);

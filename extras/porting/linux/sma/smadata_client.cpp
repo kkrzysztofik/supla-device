@@ -19,6 +19,8 @@
 
 #include "smadata_client.h"
 
+#include <supla/log_wrapper.h>
+
 #include <chrono>
 #include <ctime>
 #include <thread>
@@ -31,6 +33,8 @@ namespace Sma {
 namespace {
 
 constexpr int kDefaultTimeoutMs = 3000;
+constexpr int kCinfoTimeoutMs = 5000;
+constexpr int kMaxFollowPackets = 64;
 constexpr int kMaxBackoffSec = 60;
 
 bool parseSmadataPayload(const std::vector<uint8_t>& payload,
@@ -84,7 +88,8 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
                                 uint8_t cmd,
                                 const uint8_t* txData,
                                 size_t txLen,
-                                bool broadcast) {
+                                bool broadcast,
+                                std::optional<uint8_t> forcedPktCnt) {
   uint8_t head[7] = {};
   const uint16_t effectiveDest = broadcast ? 0 : destAddr;
   hostToLe16(effectiveDest, &head[0]);
@@ -92,7 +97,7 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
   if (broadcast) {
     head[4] |= kCtrlGroup;
   }
-  head[5] = pktCounter_++;
+  head[5] = forcedPktCnt.has_value() ? *forcedPktCnt : pktCounter_++;
   head[6] = cmd;
 
   std::vector<uint8_t> payload;
@@ -107,7 +112,7 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
   return port_.writeAll(frame.data(), frame.size());
 }
 
-std::optional<SmaDataResponse> SmaDataClient::readResponse(
+std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
     int timeoutMs,
     uint8_t expectedCmd) {
   const auto deadline =
@@ -158,6 +163,54 @@ std::optional<SmaDataResponse> SmaDataClient::readResponse(
     }
   }
 
+  return std::nullopt;
+}
+
+std::optional<SmaDataResponse> SmaDataClient::readResponse(
+    int timeoutMs,
+    uint8_t expectedCmd) {
+  std::vector<uint8_t> accumulated;
+  int fragments = 0;
+
+  while (fragments < kMaxFollowPackets) {
+    auto fragment = readOneFrame(timeoutMs, expectedCmd);
+    if (!fragment) {
+      return std::nullopt;
+    }
+
+    ++fragments;
+    accumulated.insert(accumulated.end(),
+                       fragment->payload.begin(),
+                       fragment->payload.end());
+
+    if (fragment->head.pktCnt == 0) {
+      fragment->payload = std::move(accumulated);
+      if (fragments > 1) {
+        SUPLA_LOG_DEBUG("SmaDataClient: reassembled cmd %u in %d fragments",
+                        expectedCmd,
+                        fragments);
+      }
+      return fragment;
+    }
+
+    SUPLA_LOG_DEBUG(
+        "SmaDataClient: cmd %u fragment pktCnt=%u, requesting follow-up",
+        expectedCmd,
+        fragment->head.pktCnt);
+
+    framer_.reset();
+    if (!sendSmadata(deviceAddr_,
+                     expectedCmd,
+                     nullptr,
+                     0,
+                     false,
+                     fragment->head.pktCnt)) {
+      return std::nullopt;
+    }
+  }
+
+  SUPLA_LOG_WARNING("SmaDataClient: exceeded max follow-up packets for cmd %u",
+                    expectedCmd);
   return std::nullopt;
 }
 
@@ -251,13 +304,17 @@ bool SmaDataClient::verifyCinfo() {
 }
 
 std::optional<std::vector<SmaChannelInfo>> SmaDataClient::fetchChannelList() {
+  if (!syncOnline(1)) {
+    SUPLA_LOG_DEBUG("SmaDataClient: CMD_SYN_ONLINE failed before GET_CINFO");
+  }
+
   SmaDataResponse response;
   if (!transact(deviceAddr_,
                 kCmdGetCinfo,
                 nullptr,
                 0,
                 false,
-                kDefaultTimeoutMs,
+                kCinfoTimeoutMs,
                 &response)) {
     return std::nullopt;
   }
