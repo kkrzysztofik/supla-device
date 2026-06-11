@@ -61,11 +61,15 @@ class SmaDataClient {
 
   void setDeviceAddr(uint16_t addr);
   bool configureNetAddress(uint32_t serial, uint16_t newAddr);
-  std::optional<SmaDetectedDevice> bringOnline(uint16_t desiredAddr,
-                                               int detectTimeoutMs = 20000);
+  std::optional<SmaDetectedDevice> bringOnline(
+      uint16_t desiredAddr,
+      int detectTimeoutMs = 20000,
+      const std::string& deviceProfile = {});
 
   bool syncOnline(int waitAfterSec = 1);
-  std::optional<SmaDetectedDevice> detectDevice(int timeoutMs = 20000);
+  std::optional<SmaDetectedDevice> detectDevice(
+      int timeoutMs = 20000,
+      const std::string& deviceProfile = {});
   bool readChannel(const SmaChannelDescriptor& channel, double* outValue);
   bool verifyCinfo();
   std::optional<std::vector<SmaChannelInfo>> fetchChannelList();

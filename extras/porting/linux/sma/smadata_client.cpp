@@ -67,6 +67,30 @@ size_t countCatalogChannelsForMask(const std::vector<SmaChannelInfo>& catalog,
   return count;
 }
 
+std::string normalizeProfileRef(std::string profile) {
+  if (profile.size() >= 4 &&
+      profile.compare(profile.size() - 4, 4, ".bin") == 0) {
+    profile.resize(profile.size() - 4);
+  }
+  while (!profile.empty() && profile.back() == ' ') {
+    profile.pop_back();
+  }
+  const auto start = profile.find_first_not_of(' ');
+  if (start == std::string::npos) {
+    return {};
+  }
+  return profile.substr(start);
+}
+
+bool detectedDeviceMatchesProfile(const SmaDetectedDevice& device,
+                                  const std::string& deviceProfile) {
+  if (deviceProfile.empty()) {
+    return true;
+  }
+  return normalizeProfileRef(device.type) ==
+         normalizeProfileRef(deviceProfile);
+}
+
 }  // namespace
 
 SmaDataClient::SmaDataClient(SmaSerialPort& port,
@@ -142,8 +166,9 @@ bool SmaDataClient::configureNetAddress(uint32_t serial, uint16_t newAddr) {
 
 std::optional<SmaDetectedDevice> SmaDataClient::bringOnline(
     uint16_t desiredAddr,
-    int detectTimeoutMs) {
-  auto detected = detectDevice(detectTimeoutMs);
+    int detectTimeoutMs,
+    const std::string& deviceProfile) {
+  auto detected = detectDevice(detectTimeoutMs, deviceProfile);
   if (!detected) {
     SUPLA_LOG_WARNING("SmaBus: %s detection failed",
                       smaCmdName(kCmdGetNetStart));
@@ -558,21 +583,24 @@ bool SmaDataClient::verifyCinfo() {
                   &response);
 }
 
-std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(int timeoutMs) {
+std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
+    int timeoutMs,
+    const std::string& deviceProfile) {
   framer_.reset();
   if (!sendSmadata(0, kCmdGetNetStart, nullptr, 0, true)) {
     return std::nullopt;
   }
 
-  // YASDI TStateDetect keeps the GET_NET_START IORequest active for the full
-  // DetectionTimeout while continuously reading the bus, not a blind sleep.
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  // YASDI waits the full DetectionTimeout when discovering multiple devices;
+  // stop early once the configured profile (or any device if unset) is found.
+  const auto started = std::chrono::steady_clock::now();
+  const auto deadline = started + std::chrono::milliseconds(timeoutMs);
   std::optional<SmaDetectedDevice> device;
   SmaReadStats stats;
   uint8_t buffer[256];
+  bool found = false;
 
-  while (std::chrono::steady_clock::now() < deadline) {
+  while (!found && std::chrono::steady_clock::now() < deadline) {
     const auto remaining =
         std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
@@ -608,9 +636,6 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(int timeoutMs) {
         if (frame->payload.size() < 19) {
           continue;
         }
-        if (device) {
-          continue;
-        }
 
         SmaDetectedDevice detected;
         detected.netAddress = head.sourceAddr;
@@ -628,7 +653,18 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(int timeoutMs) {
         if (start != std::string::npos) {
           detected.type = detected.type.substr(start);
         }
+
+        if (!detectedDeviceMatchesProfile(detected, deviceProfile)) {
+          SUPLA_LOG_DEBUG(
+              "SmaBus: ignoring detected %s SN=%u (profile filter \"%s\")",
+              detected.type.c_str(),
+              detected.serial,
+              deviceProfile.c_str());
+          continue;
+        }
+
         device = std::move(detected);
+        found = true;
 
         smaLogSmadataRx(head.cmd,
                         head.sourceAddr,
@@ -653,8 +689,11 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(int timeoutMs) {
     return std::nullopt;
   }
 
+  const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - started);
   SUPLA_LOG_DEBUG(
-      "SmaBus: detection window done: rawBytes=%d hdlcFrames=%d",
+      "SmaBus: detection done in %lld ms (rawBytes=%d hdlcFrames=%d)",
+      static_cast<long long>(elapsedMs.count()),
       stats.rawBytes,
       stats.hdlcFrames);
   return device;

@@ -216,8 +216,9 @@ void SmaBus::stopWorkerIfIdle() {
 void SmaBus::workerLoop() {
   SmaSerialPort port(config_.serialDevice, config_.baud, config_.media);
   const uint16_t masterAddr = 0;
-  const int pollIntervalSec =
-      config_.pollIntervalSec > 0 ? config_.pollIntervalSec : 15;
+  const int pollIntervalSec = config_.pollIntervalSec > 0
+                                  ? config_.pollIntervalSec
+                                  : kDefaultPollIntervalSec;
   bool smanetLoggedIn = false;
 
   while (!stopWorker_) {
@@ -248,7 +249,9 @@ void SmaBus::workerLoop() {
 
     std::optional<SmaDetectedDevice> detected;
     if (!smanetLoggedIn) {
-      detected = client.bringOnline(config_.netAddress);
+      detected = client.bringOnline(config_.netAddress,
+                                    20000,
+                                    config_.deviceProfile);
       if (!detected) {
         const int backoff = client.backoffSec();
         SUPLA_LOG_WARNING(

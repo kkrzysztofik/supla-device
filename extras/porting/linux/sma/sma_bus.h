@@ -26,12 +26,14 @@ namespace Supla {
 namespace Linux {
 namespace Sma {
 
+constexpr int kDefaultPollIntervalSec = 5;
+
 struct SmaBusConfig {
   std::string serialDevice;
   int baud = 9600;
   SerialMedia media = SerialMedia::RS485;
   uint16_t netAddress = 1;
-  int pollIntervalSec = 15;
+  int pollIntervalSec = kDefaultPollIntervalSec;
   // YASDI devices/<type>.bin name/path, or built-in type (e.g. WR33-008).
   std::string deviceProfile;
 };

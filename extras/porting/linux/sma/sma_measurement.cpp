@@ -31,10 +31,13 @@ SmaMeasurement::SmaMeasurement(std::string serialDevice,
                      baud,
                      media,
                      netAddress,
-                     pollIntervalSec > 0 ? pollIntervalSec : 15,
+                     pollIntervalSec > 0 ? pollIntervalSec
+                                         : Supla::Linux::Sma::kDefaultPollIntervalSec,
                      std::move(deviceProfile)},
                  std::move(channels)) {
-  const int intervalSec = pollIntervalSec > 0 ? pollIntervalSec : 15;
+  const int intervalSec =
+      pollIntervalSec > 0 ? pollIntervalSec
+                          : Supla::Linux::Sma::kDefaultPollIntervalSec;
   setRefreshIntervalMs(intervalSec * 1000);
 }
 

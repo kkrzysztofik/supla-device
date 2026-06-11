@@ -15,6 +15,7 @@
 
 #include "linux_channel_factory.h"
 #include "linux_yaml_config.h"
+#include "sma_bus.h"
 #include "sma_dc_meter.h"
 #include "sma_inverter.h"
 #include "sma_measurement.h"
@@ -71,7 +72,7 @@ struct SmaSerialConfig {
   int baud = 9600;
   std::string mediaStr = "RS485";
   uint16_t netAddress = 1;
-  int pollIntervalSec = 15;
+  int pollIntervalSec = Supla::Linux::Sma::kDefaultPollIntervalSec;
   std::string deviceProfile;
 };
 

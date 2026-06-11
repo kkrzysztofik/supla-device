@@ -56,10 +56,12 @@ SmaInverter::SmaInverter(std::string serialDevice,
                      baud,
                      media,
                      netAddress,
-                     pollIntervalSec > 0 ? pollIntervalSec : 15,
+                     pollIntervalSec > 0 ? pollIntervalSec
+                                         : Supla::Linux::Sma::kDefaultPollIntervalSec,
                      std::move(deviceProfile)},
                  std::move(channels)),
-      pollIntervalSec_(pollIntervalSec > 0 ? pollIntervalSec : 15) {
+      pollIntervalSec_(pollIntervalSec > 0 ? pollIntervalSec
+                                           : Supla::Linux::Sma::kDefaultPollIntervalSec) {
   refreshRateSec = pollIntervalSec_;
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
