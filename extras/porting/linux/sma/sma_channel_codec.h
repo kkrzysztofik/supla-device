@@ -56,6 +56,13 @@ class SmaChannelCodec {
       size_t len,
       const std::vector<SmaChannelInfo>& catalog,
       std::map<std::pair<uint16_t, uint8_t>, double>* outValues);
+
+  // Parses bulk CMD_GET_DATA in catalog order (YASDI spot mask 0x090f).
+  static bool parseBulkSpotValuesByName(
+      const uint8_t* data,
+      size_t len,
+      const std::vector<SmaChannelInfo>& catalog,
+      std::map<std::string, double>* outValuesByName);
 };
 
 }  // namespace Sma

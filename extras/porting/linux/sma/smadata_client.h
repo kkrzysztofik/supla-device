@@ -48,17 +48,24 @@ struct SmaDataResponse {
   std::vector<uint8_t> payload;
 };
 
+struct SmaDetectedDevice {
+  uint32_t serial = 0;
+  std::string type;
+  uint16_t netAddress = 0;
+};
+
 class SmaDataClient {
  public:
   SmaDataClient(SmaSerialPort& port, uint16_t masterAddr, uint16_t deviceAddr);
 
   bool syncOnline(int waitAfterSec = 1);
+  std::optional<SmaDetectedDevice> detectDevice(int timeoutMs = 20000);
   bool readChannel(const SmaChannelDescriptor& channel, double* outValue);
   bool verifyCinfo();
   std::optional<std::vector<SmaChannelInfo>> fetchChannelList();
   bool readSpotChannelsBulk(
       const std::vector<SmaChannelInfo>& catalog,
-      std::map<std::pair<uint16_t, uint8_t>, double>* outValues);
+      std::map<std::string, double>* outValuesByName);
 
   void resetBackoff();
   int backoffSec() const;
@@ -80,7 +87,8 @@ class SmaDataClient {
                    std::optional<uint8_t> forcedPktCnt = std::nullopt);
 
   std::optional<SmaDataResponse> readOneFrame(int timeoutMs,
-                                              uint8_t expectedCmd);
+                                              uint8_t expectedCmd,
+                                              bool acceptAnySource = false);
 
   std::optional<SmaDataResponse> readResponse(int timeoutMs,
                                               uint8_t expectedCmd);

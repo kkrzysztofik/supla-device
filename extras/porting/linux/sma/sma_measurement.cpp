@@ -21,13 +21,18 @@ SmaMeasurement::SmaMeasurement(std::string serialDevice,
                                Supla::Linux::Sma::SerialMedia media,
                                uint16_t netAddress,
                                int pollIntervalSec,
-                               std::vector<SmaMappedChannel> channels)
+                               std::vector<SmaMappedChannel> channels,
+                               std::string deviceProfile)
     : Supla::Sensor::GeneralPurposeMeasurement(nullptr, false),
       channelKey_(channels.empty() ? std::string() : channels.front().key),
       busClient_(this,
                  Supla::Linux::Sma::SmaBusConfig{
-                     std::move(serialDevice), baud, media, netAddress,
-                     pollIntervalSec > 0 ? pollIntervalSec : 15},
+                     std::move(serialDevice),
+                     baud,
+                     media,
+                     netAddress,
+                     pollIntervalSec > 0 ? pollIntervalSec : 15,
+                     std::move(deviceProfile)},
                  std::move(channels)) {
   const int intervalSec = pollIntervalSec > 0 ? pollIntervalSec : 15;
   setRefreshIntervalMs(intervalSec * 1000);

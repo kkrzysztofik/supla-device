@@ -29,7 +29,8 @@ class SmaInverter : public Supla::Sensor::ElectricityMeter {
               Supla::Linux::Sma::SerialMedia media,
               uint16_t netAddress,
               int pollIntervalSec,
-              std::vector<SmaMappedChannel> channels);
+              std::vector<SmaMappedChannel> channels,
+              std::string deviceProfile = {});
   ~SmaInverter() override;
 
   void onInit() override;

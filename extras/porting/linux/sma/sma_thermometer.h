@@ -28,7 +28,8 @@ class SmaThermometer : public Supla::Sensor::Thermometer {
                  Supla::Linux::Sma::SerialMedia media,
                  uint16_t netAddress,
                  int pollIntervalSec,
-                 std::vector<SmaMappedChannel> channels);
+                 std::vector<SmaMappedChannel> channels,
+                 std::string deviceProfile = {});
   ~SmaThermometer() override;
 
   void onInit() override;

@@ -65,9 +65,12 @@ cmake --build build
 See also [YASDI architecture — interactive exploration](../../../../docs/integrations/yasdi-architecture.md).
 4. Note `net_address`, serial port, and baud from `yasdi-posix.ini`.
 5. List spot channel **names** from `yasdishell` (`a` command), e.g. `Pac`,
-   `Uac`, `E-Total`. Use those names in `supla-device.yaml`; the driver fetches
-   `ctype`, `cindex`, `ntype`, `gain`, and `offset` from the inverter via
-   `CMD_GET_CINFO` at startup.
+   `Uac`, `E-Total`. Use those names in `supla-device.yaml`.
+6. Many inverters (including **WR33-008**) do not answer standalone
+   `CMD_GET_CINFO` the way YASDI uses during normal operation — YASDI loads
+   channel metadata from `yasdi/build/devices/<type>.bin` after the first
+   detection. Set `device.profile` in YAML (built-in `WR33-008` or a copied
+   `.bin` file). See [Device profiles](#device-profiles) below.
 
 ### Simplified configuration (recommended)
 
@@ -81,6 +84,7 @@ channels:
       media: RS485
     device: &sma_device
       net_address: 1
+      profile: WR33-008
     sma_channels:
       Pac: power_active
       Uac: voltage
@@ -111,12 +115,38 @@ Additional channel types (one `sma_channels` entry each):
 SUPLA mapping aliases: `pac`, `uac`, `fac`, `totwh`, `iac`, `upv`, `ipv`,
 `tkk`, `zac`, `riso`, `gpm`.
 
+### Device profiles
+
+YASDI sequence for spot values (what works on WR33):
+
+1. `CMD_SYN_ONLINE` (broadcast, 1 s wait)
+2. `CMD_GET_DATA` to `net_address` with mask `0x090f` (bulk spot read)
+
+Channel metadata (`ctype`, gain, order) comes from a **profile**, not from live
+`CMD_GET_CINFO` on every poll.
+
+| `device.profile` value | Source |
+|------------------------|--------|
+| `WR33-008` | Built-in catalog (verify against `yasdishell`) |
+| `/path/to/WR33-008.bin` | YASDI cache file (recommended for production) |
+| `SunnyBoy-5000` | Copy `yasdi/build/devices/<type>.bin` to `./sma-profiles/` |
+
+Export from YASDI after successful detection:
+
+```bash
+mkdir -p sma-profiles
+cp ~/yasdi/build/devices/WR33-008.bin sma-profiles/
+```
+
+Optional: `export SMA_PROFILES_DIR=/path/to/sma-profiles`.
+
+If `device.profile` is omitted, the driver tries `CMD_GET_CINFO` (with retries),
+then `CMD_GET_NET_START` detection and a profile lookup by device type.
+
 ### Advanced configuration (manual ctype/cindex)
 
-If CINFO is unavailable, you can still specify protocol fields explicitly
-(profiled with YASDI property dumps). See `profiles/README.md`.
-
-See [profiles/README.md](profiles/README.md) for an example profile template.
+You can specify protocol fields explicitly in YAML instead of names. See
+[profiles/README.md](profiles/README.md).
 
 ## Build and test on Linux
 
@@ -214,9 +244,10 @@ If `-c` is omitted, sd4linux looks for `./etc/supla-device.yaml` or
 - Log line similar to: `adding SmaInverter on /dev/ttyUSB0...`
 - SMA polling runs on a worker thread; the main `SuplaDevice.iterate()` loop is
   not blocked by serial I/O
-- Wrong serial path or channel metadata shows read failures or
-  `CMD_GET_CINFO failed` in logs (large channel lists are sent as multiple
-  SMANet fragments; ensure you run a build with CINFO defragmentation support)
+- `no channel catalog` — set `device.profile: WR33-008` (or copy YASDI
+  `devices/<type>.bin`); WR33 often does not respond to `CMD_GET_CINFO`
+- `bulk spot read failed` — stop `yasdishell`, check baud (1200 for WR33) and
+  `net_address: 1`
 - Only one process may use the RS485 port — stop `yasdishell` before starting
   `supla-device-linux`
 

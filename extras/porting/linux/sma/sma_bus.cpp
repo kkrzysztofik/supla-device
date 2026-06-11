@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "sma_profile_loader.h"
 #include "sma_serial_port.h"
 #include "smadata_client.h"
 
@@ -64,12 +65,13 @@ bool subscriberUsesNameResolution(const SmaBus::Subscriber& subscriber) {
   return false;
 }
 
-void resolveSubscriberChannels(SmaBus::Subscriber* subscriber,
+bool resolveSubscriberChannels(SmaBus::Subscriber* subscriber,
                                const std::vector<SmaChannelInfo>& catalog) {
   if (subscriber == nullptr || subscriber->channels == nullptr) {
-    return;
+    return true;
   }
 
+  bool allResolved = true;
   for (auto& mapped : *subscriber->channels) {
     if (!mapped.resolveByName || mapped.descriptor.ctype != 0) {
       continue;
@@ -78,14 +80,51 @@ void resolveSubscriberChannels(SmaBus::Subscriber* subscriber,
         mapped.smaName.empty() ? mapped.key : mapped.smaName;
     const auto* info = SmaCinfoParser::findByName(catalog, lookupName);
     if (info == nullptr) {
-      SUPLA_LOG_WARNING("SmaBus: SMA channel \"%s\" not in CINFO",
+      SUPLA_LOG_WARNING("SmaBus: SMA channel \"%s\" not in channel catalog",
                         lookupName.c_str());
+      allResolved = false;
       continue;
     }
     const char* suplaMapping = mapped.descriptor.suplaMapping;
     mapped.descriptor = info->descriptor;
     mapped.descriptor.suplaMapping = suplaMapping;
   }
+  return allResolved;
+}
+
+std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
+    SmaDataClient& client,
+    const SmaBusConfig& config) {
+  if (!config.deviceProfile.empty()) {
+    if (auto catalog = SmaProfileLoader::resolveProfile(config.deviceProfile)) {
+      SUPLA_LOG_INFO("SmaBus: using configured profile \"%s\" (%zu channels)",
+                     config.deviceProfile.c_str(),
+                     catalog->size());
+      return catalog;
+    }
+    SUPLA_LOG_WARNING("SmaBus: profile \"%s\" not found",
+                      config.deviceProfile.c_str());
+  }
+
+  if (auto catalog = client.fetchChannelList()) {
+    return catalog;
+  }
+
+  if (auto detected = client.detectDevice()) {
+    if (auto catalog = SmaProfileLoader::resolveProfile(detected->type)) {
+      SUPLA_LOG_INFO(
+          "SmaBus: CMD_GET_CINFO unavailable, using profile for %s",
+          detected->type.c_str());
+      return catalog;
+    }
+    SUPLA_LOG_WARNING(
+        "SmaBus: no profile for detected device type \"%s\" — export "
+        "yasdi/build/devices/%s.bin to ./sma-profiles/",
+        detected->type.c_str(),
+        detected->type.c_str());
+  }
+
+  return std::nullopt;
 }
 
 }  // namespace
@@ -180,9 +219,6 @@ void SmaBus::workerLoop() {
       if (subscribers_.empty()) {
         break;
       }
-      for (auto& subscriber : subscribers_) {
-        resolveSubscriberChannels(&subscriber, channelCatalog_);
-      }
       subscribers = subscribers_;
     }
 
@@ -204,10 +240,11 @@ void SmaBus::workerLoop() {
     }
 
     if (useNameBasedConfig && channelCatalog_.empty()) {
-      auto catalog = client.fetchChannelList();
+      auto catalog = loadChannelCatalog(client, config_);
       if (!catalog) {
         SUPLA_LOG_WARNING(
-            "SmaBus: CMD_GET_CINFO failed — check net_address and wiring");
+            "SmaBus: no channel catalog — check net_address, wiring, or set "
+            "device.profile (see sma/README.md)");
         const int backoff = client.backoffSec();
         port.close();
         std::this_thread::sleep_for(
@@ -217,18 +254,25 @@ void SmaBus::workerLoop() {
       channelCatalog_ = std::move(*catalog);
     } else if (!cinfoChecked_) {
       if (!client.verifyCinfo()) {
-        SUPLA_LOG_WARNING(
-            "SmaBus: CMD_GET_CINFO failed — check net_address and wiring");
+        SUPLA_LOG_DEBUG("SmaBus: CMD_GET_CINFO probe failed (optional)");
       }
       cinfoChecked_ = true;
     }
 
-    std::map<std::pair<uint16_t, uint8_t>, double> bulkValues;
+    {
+      std::lock_guard<std::mutex> lock(subscribersMutex_);
+      for (auto& subscriber : subscribers_) {
+        resolveSubscriberChannels(&subscriber, channelCatalog_);
+      }
+      subscribers = subscribers_;
+    }
+
+    std::map<std::string, double> bulkValues;
     bool pollOk = true;
 
     if (useNameBasedConfig) {
       if (!client.readSpotChannelsBulk(channelCatalog_, &bulkValues)) {
-        SUPLA_LOG_DEBUG("SmaBus: bulk spot read failed");
+        SUPLA_LOG_WARNING("SmaBus: bulk spot read failed");
         pollOk = false;
       }
     }
@@ -252,12 +296,12 @@ void SmaBus::workerLoop() {
           if (mapped.descriptor.ctype == 0 && mapped.resolveByName) {
             continue;
           }
-          const auto descriptorKey = std::make_pair(mapped.descriptor.ctype,
-                                                    mapped.descriptor.cindex);
-          const auto it = bulkValues.find(descriptorKey);
+          const std::string& lookupName =
+              mapped.smaName.empty() ? mapped.key : mapped.smaName;
+          const auto it = bulkValues.find(lookupName);
           if (it == bulkValues.end()) {
             SUPLA_LOG_DEBUG("SmaBus: no bulk value for channel %s",
-                            mapped.key.c_str());
+                            lookupName.c_str());
             pollOk = false;
             break;
           }

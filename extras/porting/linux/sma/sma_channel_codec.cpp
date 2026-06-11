@@ -244,6 +244,62 @@ bool SmaChannelCodec::parseBulkSpotValues(
   return true;
 }
 
+bool SmaChannelCodec::parseBulkSpotValuesByName(
+    const uint8_t* data,
+    size_t len,
+    const std::vector<SmaChannelInfo>& catalog,
+    std::map<std::string, double>* outValuesByName) {
+  if (data == nullptr || outValuesByName == nullptr || len < 5 ||
+      catalog.empty()) {
+    return false;
+  }
+
+  const uint8_t* cursor = data;
+  size_t remaining = len;
+
+  const uint16_t mask = le16ToHost(cursor);
+  cursor += 2;
+  remaining -= 2;
+  const uint8_t chanNr = *cursor;
+  cursor += 1;
+  remaining -= 1;
+
+  if (remaining < 2) {
+    return false;
+  }
+  cursor += 2;
+  remaining -= 2;
+
+  if (mask & kChSpot) {
+    if (remaining < 8) {
+      return false;
+    }
+    cursor += 8;
+    remaining -= 8;
+  }
+
+  outValuesByName->clear();
+  for (const auto& channelInfo : catalog) {
+    if (!channelMatchesFilter(channelInfo.descriptor, mask, chanNr)) {
+      continue;
+    }
+
+    double raw = 0.0;
+    if (!readScalar(cursor, remaining, channelInfo.descriptor.ntype, &raw)) {
+      return false;
+    }
+
+    const double value = applyGainOffset(raw, channelInfo.descriptor);
+    if (!std::isfinite(value)) {
+      return false;
+    }
+
+    (*outValuesByName)[channelInfo.name] = value;
+  }
+
+  return true;
+}
+
 }  // namespace Sma
 }  // namespace Linux
 }  // namespace Supla

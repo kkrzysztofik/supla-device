@@ -34,6 +34,7 @@ channels:
       media: RS485
     device: &sma_device
       net_address: 1
+      profile: WR33-008
     poll_interval_sec: 15
     sma_channels:
       Pac: power_active

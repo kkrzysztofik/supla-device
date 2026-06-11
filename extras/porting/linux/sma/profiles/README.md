@@ -1,7 +1,36 @@
 # SMA inverter profiles
 
-Fixed channel metadata for known inverter families. Values must be confirmed
-on your hardware with `yasdishell` — the examples below are placeholders.
+Channel metadata for SMAData bulk reads (`CMD_GET_DATA` mask `0x090f`). Many
+devices (e.g. WR33-008) match YASDI behaviour: metadata is loaded from a
+profile file, not from `CMD_GET_CINFO` on every startup.
+
+## YASDI export (recommended)
+
+After `yasdishell` detection (`e` command), YASDI writes:
+
+```text
+yasdi/build/devices/<DeviceType>.bin
+```
+
+Copy next to your config:
+
+```bash
+mkdir -p sma-profiles
+cp yasdi/build/devices/WR33-008.bin sma-profiles/
+```
+
+YAML:
+
+```yaml
+device:
+  net_address: 1
+  profile: WR33-008
+```
+
+Or use an absolute path: `profile: /opt/sma-profiles/WR33-008.bin`.
+
+Built-in `WR33-008` is available without a file; prefer a YASDI-exported
+`.bin` on production systems.
 
 ## Profiling workflow
 

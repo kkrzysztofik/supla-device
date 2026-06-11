@@ -72,6 +72,7 @@ struct SmaSerialConfig {
   std::string mediaStr = "RS485";
   uint16_t netAddress = 1;
   int pollIntervalSec = 15;
+  std::string deviceProfile;
 };
 
 bool parseSmaSerialConfig(const Supla::Linux::ChannelFactoryContext& context,
@@ -104,6 +105,10 @@ bool parseSmaSerialConfig(const Supla::Linux::ChannelFactoryContext& context,
   if (ch["poll_interval_sec"]) {
     config.markChannelParameterUsed();
     out->pollIntervalSec = ch["poll_interval_sec"].as<int>();
+  }
+  if (ch["device"] && ch["device"]["profile"]) {
+    config.markChannelParameterUsed();
+    out->deviceProfile = ch["device"]["profile"].as<std::string>();
   }
   return true;
 }
@@ -261,14 +266,16 @@ bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
                                       parseMedia(serialConfig.mediaStr),
                                       serialConfig.netAddress,
                                       serialConfig.pollIntervalSec,
-                                      std::move(mappedChannels));
+                                      std::move(mappedChannels),
+                                      serialConfig.deviceProfile);
   } else {
     meter = new Supla::PV::SmaInverter(serialConfig.devicePath,
                                        serialConfig.baud,
                                        parseMedia(serialConfig.mediaStr),
                                        serialConfig.netAddress,
                                        serialConfig.pollIntervalSec,
-                                       std::move(mappedChannels));
+                                       std::move(mappedChannels),
+                                       serialConfig.deviceProfile);
   }
 
   return context.config.addCommonChannelParameters(context.channel, meter);
@@ -306,7 +313,8 @@ bool AddSmaThermometer(const Supla::Linux::ChannelFactoryContext& context) {
                                                     parseMedia(serialConfig.mediaStr),
                                                     serialConfig.netAddress,
                                                     serialConfig.pollIntervalSec,
-                                                    std::move(mappedChannels));
+                                                    std::move(mappedChannels),
+                                                    serialConfig.deviceProfile);
   return context.config.addCommonChannelParameters(context.channel, thermometer);
 }
 
@@ -334,7 +342,8 @@ bool AddSmaMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
                                                     parseMedia(serialConfig.mediaStr),
                                                     serialConfig.netAddress,
                                                     serialConfig.pollIntervalSec,
-                                                    std::move(mappedChannels));
+                                                    std::move(mappedChannels),
+                                                    serialConfig.deviceProfile);
   applyGpmYamlOptions(context, measurement);
   return context.config.addCommonChannelParameters(context.channel, measurement);
 }

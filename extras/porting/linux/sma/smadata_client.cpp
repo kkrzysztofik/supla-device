@@ -32,8 +32,9 @@ namespace Sma {
 
 namespace {
 
-constexpr int kDefaultTimeoutMs = 3000;
-constexpr int kCinfoTimeoutMs = 5000;
+constexpr int kDefaultTimeoutMs = 4000;
+constexpr int kCinfoTimeoutMs = 4000;
+constexpr int kCinfoRepeats = 5;
 constexpr int kMaxFollowPackets = 64;
 constexpr int kMaxBackoffSec = 60;
 
@@ -114,7 +115,8 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
 
 std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
     int timeoutMs,
-    uint8_t expectedCmd) {
+    uint8_t expectedCmd,
+    bool acceptAnySource) {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   uint8_t buffer[256];
@@ -148,7 +150,10 @@ std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
         if (head.destAddr != masterAddr_) {
           continue;
         }
-        if (head.sourceAddr != deviceAddr_) {
+        if (!acceptAnySource && head.sourceAddr != deviceAddr_) {
+          continue;
+        }
+        if (acceptAnySource && head.sourceAddr == 0) {
           continue;
         }
 
@@ -299,8 +304,40 @@ bool SmaDataClient::verifyCinfo() {
                   nullptr,
                   0,
                   false,
-                  kDefaultTimeoutMs,
+                  kCinfoTimeoutMs,
                   &response);
+}
+
+std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(int timeoutMs) {
+  framer_.reset();
+  if (!sendSmadata(0, kCmdGetNetStart, nullptr, 0, true)) {
+    return std::nullopt;
+  }
+
+  auto reply = readOneFrame(timeoutMs, kCmdGetNetStart, true);
+  if (!reply || reply->payload.size() < 12) {
+    SUPLA_LOG_DEBUG("SmaDataClient: CMD_GET_NET_START failed or short response");
+    return std::nullopt;
+  }
+
+  SmaDetectedDevice device;
+  device.netAddress = reply->head.sourceAddr;
+  device.serial = SmaChannelCodec::le32ToHost(reply->payload.data());
+  device.type.assign(reinterpret_cast<const char*>(&reply->payload[4]), 8);
+  while (!device.type.empty() && device.type.back() == ' ') {
+    device.type.pop_back();
+  }
+  const auto start = device.type.find_first_not_of(' ');
+  if (start != std::string::npos) {
+    device.type = device.type.substr(start);
+  }
+
+  SUPLA_LOG_INFO(
+      "SmaDataClient: detected SMA device type=%s SN=%u net_address=0x%04x",
+      device.type.c_str(),
+      device.serial,
+      device.netAddress);
+  return device;
 }
 
 std::optional<std::vector<SmaChannelInfo>> SmaDataClient::fetchChannelList() {
@@ -308,28 +345,39 @@ std::optional<std::vector<SmaChannelInfo>> SmaDataClient::fetchChannelList() {
     SUPLA_LOG_DEBUG("SmaDataClient: CMD_SYN_ONLINE failed before GET_CINFO");
   }
 
-  SmaDataResponse response;
-  if (!transact(deviceAddr_,
-                kCmdGetCinfo,
-                nullptr,
-                0,
-                false,
-                kCinfoTimeoutMs,
-                &response)) {
-    return std::nullopt;
+  for (int attempt = 0; attempt < kCinfoRepeats; ++attempt) {
+    SmaDataResponse response;
+    if (!transact(deviceAddr_,
+                  kCmdGetCinfo,
+                  nullptr,
+                  0,
+                  false,
+                  kCinfoTimeoutMs,
+                  &response)) {
+      continue;
+    }
+
+    if (auto catalog =
+            SmaCinfoParser::parse(response.payload.data(),
+                                  response.payload.size())) {
+      SUPLA_LOG_INFO("SmaDataClient: CMD_GET_CINFO returned %zu channels",
+                     catalog->size());
+      return catalog;
+    }
   }
 
-  return SmaCinfoParser::parse(response.payload.data(), response.payload.size());
+  return std::nullopt;
 }
 
 bool SmaDataClient::readSpotChannelsBulk(
     const std::vector<SmaChannelInfo>& catalog,
-    std::map<std::pair<uint16_t, uint8_t>, double>* outValues) {
-  if (outValues == nullptr || catalog.empty()) {
+    std::map<std::string, double>* outValuesByName) {
+  if (outValuesByName == nullptr || catalog.empty()) {
     return false;
   }
 
   if (!syncOnline(1)) {
+    SUPLA_LOG_DEBUG("SmaDataClient: CMD_SYN_ONLINE failed before GET_DATA");
     return false;
   }
 
@@ -347,13 +395,14 @@ bool SmaDataClient::readSpotChannelsBulk(
                 false,
                 kDefaultTimeoutMs,
                 &response)) {
+    SUPLA_LOG_DEBUG("SmaDataClient: CMD_GET_DATA bulk read failed");
     return false;
   }
 
-  return SmaChannelCodec::parseBulkSpotValues(response.payload.data(),
-                                             response.payload.size(),
-                                             catalog,
-                                             outValues);
+  return SmaChannelCodec::parseBulkSpotValuesByName(response.payload.data(),
+                                                    response.payload.size(),
+                                                    catalog,
+                                                    outValuesByName);
 }
 
 }  // namespace Sma

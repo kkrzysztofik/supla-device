@@ -32,6 +32,8 @@ struct SmaBusConfig {
   SerialMedia media = SerialMedia::RS485;
   uint16_t netAddress = 1;
   int pollIntervalSec = 15;
+  // YASDI devices/<type>.bin name/path, or built-in type (e.g. WR33-008).
+  std::string deviceProfile;
 };
 
 class SmaBus : public std::enable_shared_from_this<SmaBus> {

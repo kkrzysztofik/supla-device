@@ -9,6 +9,8 @@ supla_linux_register_extension(
     ${_SMA_DIR}/smanet_framer.cpp
     ${_SMA_DIR}/sma_channel_codec.cpp
     ${_SMA_DIR}/sma_cinfo_parser.cpp
+    ${_SMA_DIR}/sma_profile_loader.cpp
+    ${_SMA_DIR}/sma_device_profiles.cpp
     ${_SMA_DIR}/sma_bus.cpp
     ${_SMA_DIR}/sma_bus_client.cpp
     ${_SMA_DIR}/smadata_client.cpp

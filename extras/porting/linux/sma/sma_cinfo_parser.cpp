@@ -121,8 +121,9 @@ std::optional<std::vector<SmaChannelInfo>> SmaCinfoParser::parse(
 const SmaChannelInfo* SmaCinfoParser::findByName(
     const std::vector<SmaChannelInfo>& channels,
     const std::string& name) {
+  const std::string trimmed = trimSmaChannelName(name.c_str(), name.size());
   for (const auto& channel : channels) {
-    if (channel.name == name) {
+    if (channel.name == trimmed || channel.name == name) {
       return &channel;
     }
   }

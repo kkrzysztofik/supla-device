@@ -28,7 +28,8 @@ class SmaMeasurement : public Supla::Sensor::GeneralPurposeMeasurement {
                  Supla::Linux::Sma::SerialMedia media,
                  uint16_t netAddress,
                  int pollIntervalSec,
-                 std::vector<SmaMappedChannel> channels);
+                 std::vector<SmaMappedChannel> channels,
+                 std::string deviceProfile = {});
   ~SmaMeasurement() override;
 
   void onInit() override;
