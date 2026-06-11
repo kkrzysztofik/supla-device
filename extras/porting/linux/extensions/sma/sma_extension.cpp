@@ -15,10 +15,15 @@
 
 #include "linux_channel_factory.h"
 #include "linux_yaml_config.h"
+#include "sma_dc_meter.h"
 #include "sma_inverter.h"
+#include "sma_measurement.h"
+#include "sma_thermometer.h"
 #include "sma_types.h"
 
 namespace {
+
+enum class SmaMappingKind { Meter, Thermometer, Measurement };
 
 Supla::Linux::Sma::SerialMedia parseMedia(const std::string& media) {
   if (media == "RS485" || media == "rs485") {
@@ -27,70 +32,94 @@ Supla::Linux::Sma::SerialMedia parseMedia(const std::string& media) {
   return Supla::Linux::Sma::SerialMedia::RS232;
 }
 
-const char* parseSuplaMapping(const std::string& mapping) {
-  if (mapping == "power_active" || mapping == "pac") {
-    return "power_active";
-  }
-  if (mapping == "fwd_act_energy" || mapping == "totwh") {
-    return "fwd_act_energy";
-  }
-  if (mapping == "voltage" || mapping == "uac") {
-    return "voltage";
-  }
-  if (mapping == "current" || mapping == "iac") {
-    return "current";
-  }
-  if (mapping == "frequency" || mapping == "fac") {
-    return "frequency";
+const char* parseSuplaMapping(const std::string& mapping, SmaMappingKind kind) {
+  switch (kind) {
+    case SmaMappingKind::Meter:
+      if (mapping == "power_active" || mapping == "pac") {
+        return "power_active";
+      }
+      if (mapping == "fwd_act_energy" || mapping == "totwh") {
+        return "fwd_act_energy";
+      }
+      if (mapping == "voltage" || mapping == "uac" || mapping == "upv") {
+        return "voltage";
+      }
+      if (mapping == "current" || mapping == "iac" || mapping == "ipv") {
+        return "current";
+      }
+      if (mapping == "frequency" || mapping == "fac") {
+        return "frequency";
+      }
+      return nullptr;
+    case SmaMappingKind::Thermometer:
+      if (mapping == "temperature" || mapping == "tkk") {
+        return "temperature";
+      }
+      return nullptr;
+    case SmaMappingKind::Measurement:
+      if (mapping == "measurement" || mapping == "value" || mapping == "gpm" ||
+          mapping == "impedance" || mapping == "zac" || mapping == "riso") {
+        return "measurement";
+      }
+      return nullptr;
   }
   return nullptr;
 }
 
-bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
-  const auto& ch = context.channel;
-  auto& config = context.config;
-
+struct SmaSerialConfig {
   std::string devicePath;
   int baud = 9600;
   std::string mediaStr = "RS485";
   uint16_t netAddress = 1;
   int pollIntervalSec = 15;
+};
+
+bool parseSmaSerialConfig(const Supla::Linux::ChannelFactoryContext& context,
+                          SmaSerialConfig* out) {
+  const auto& ch = context.channel;
+  auto& config = context.config;
 
   if (!ch["serial"] || !ch["serial"]["device"]) {
-    SUPLA_LOG_ERROR("Channel[%d] config: SmaInverter missing serial.device",
+    SUPLA_LOG_ERROR("Channel[%d] config: missing serial.device",
                     context.channelNumber);
     return false;
   }
 
   config.markChannelParameterUsed();
-  devicePath = ch["serial"]["device"].as<std::string>();
+  out->devicePath = ch["serial"]["device"].as<std::string>();
 
   if (ch["serial"]["baud"]) {
     config.markChannelParameterUsed();
-    baud = ch["serial"]["baud"].as<int>();
+    out->baud = ch["serial"]["baud"].as<int>();
   }
   if (ch["serial"]["media"]) {
     config.markChannelParameterUsed();
-    mediaStr = ch["serial"]["media"].as<std::string>();
+    out->mediaStr = ch["serial"]["media"].as<std::string>();
   }
-
   if (ch["device"] && ch["device"]["net_address"]) {
     config.markChannelParameterUsed();
-    netAddress = static_cast<uint16_t>(ch["device"]["net_address"].as<int>());
+    out->netAddress =
+        static_cast<uint16_t>(ch["device"]["net_address"].as<int>());
   }
-
   if (ch["poll_interval_sec"]) {
     config.markChannelParameterUsed();
-    pollIntervalSec = ch["poll_interval_sec"].as<int>();
+    out->pollIntervalSec = ch["poll_interval_sec"].as<int>();
   }
+  return true;
+}
+
+bool parseSmaChannels(const Supla::Linux::ChannelFactoryContext& context,
+                      SmaMappingKind mappingKind,
+                      std::vector<Supla::PV::SmaMappedChannel>* mappedChannels) {
+  const auto& ch = context.channel;
+  auto& config = context.config;
 
   if (!ch["sma_channels"]) {
-    SUPLA_LOG_ERROR("Channel[%d] config: SmaInverter missing sma_channels",
+    SUPLA_LOG_ERROR("Channel[%d] config: missing sma_channels",
                     context.channelNumber);
     return false;
   }
 
-  std::vector<Supla::PV::SmaMappedChannel> mappedChannels;
   for (const auto& entry : ch["sma_channels"]) {
     const std::string key = entry.first.as<std::string>();
     const YAML::Node& node = entry.second;
@@ -146,7 +175,7 @@ bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
       return false;
     }
 
-    mapped.descriptor.suplaMapping = parseSuplaMapping(suplaMapping);
+    mapped.descriptor.suplaMapping = parseSuplaMapping(suplaMapping, mappingKind);
     if (mapped.descriptor.suplaMapping == nullptr) {
       SUPLA_LOG_ERROR(
           "Channel[%d] config: unknown supla mapping \"%s\" for "
@@ -157,28 +186,157 @@ bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
       return false;
     }
 
-    mappedChannels.push_back(mapped);
+    mappedChannels->push_back(mapped);
   }
 
-  if (mappedChannels.empty()) {
-    SUPLA_LOG_ERROR("Channel[%d] config: SmaInverter has no sma_channels",
+  if (mappedChannels->empty()) {
+    SUPLA_LOG_ERROR("Channel[%d] config: sma_channels is empty",
                     context.channelNumber);
     return false;
   }
 
-  SUPLA_LOG_INFO(
-      "Channel[%d] config: adding SmaInverter on %s, net_address=0x%04x",
-      context.channelNumber,
-      devicePath.c_str(),
-      netAddress);
+  return true;
+}
 
-  auto inverter = new Supla::PV::SmaInverter(devicePath,
-                                             baud,
-                                             parseMedia(mediaStr),
-                                             netAddress,
-                                             pollIntervalSec,
-                                             std::move(mappedChannels));
-  return config.addCommonChannelParameters(ch, inverter);
+bool parseSingleSmaChannel(const Supla::Linux::ChannelFactoryContext& context,
+                           SmaMappingKind mappingKind,
+                           std::vector<Supla::PV::SmaMappedChannel>* mappedChannels) {
+  if (!parseSmaChannels(context, mappingKind, mappedChannels)) {
+    return false;
+  }
+  if (mappedChannels->size() != 1) {
+    SUPLA_LOG_ERROR(
+        "Channel[%d] config: expected exactly one sma_channels entry",
+        context.channelNumber);
+    return false;
+  }
+  return true;
+}
+
+void applyGpmYamlOptions(const Supla::Linux::ChannelFactoryContext& context,
+                         Supla::PV::SmaMeasurement* measurement) {
+  const auto& ch = context.channel;
+  auto& config = context.config;
+
+  if (ch["default_unit_after_value"]) {
+    config.markChannelParameterUsed();
+    const std::string unit = ch["default_unit_after_value"].as<std::string>();
+    measurement->setDefaultUnitAfterValue(unit.c_str());
+  }
+  if (ch["default_unit_before_value"]) {
+    config.markChannelParameterUsed();
+    const std::string unit = ch["default_unit_before_value"].as<std::string>();
+    measurement->setDefaultUnitBeforeValue(unit.c_str());
+  }
+  if (ch["default_value_precision"]) {
+    config.markChannelParameterUsed();
+    measurement->setDefaultValuePrecision(ch["default_value_precision"].as<int>());
+  }
+}
+
+bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
+                 const char* typeName,
+                 bool useDcMeter) {
+  SmaSerialConfig serialConfig;
+  if (!parseSmaSerialConfig(context, &serialConfig)) {
+    return false;
+  }
+
+  std::vector<Supla::PV::SmaMappedChannel> mappedChannels;
+  if (!parseSmaChannels(context, SmaMappingKind::Meter, &mappedChannels)) {
+    return false;
+  }
+
+  SUPLA_LOG_INFO(
+      "Channel[%d] config: adding %s on %s, net_address=0x%04x",
+      context.channelNumber,
+      typeName,
+      serialConfig.devicePath.c_str(),
+      serialConfig.netAddress);
+
+  Supla::PV::SmaInverter* meter = nullptr;
+  if (useDcMeter) {
+    meter = new Supla::PV::SmaDcMeter(serialConfig.devicePath,
+                                      serialConfig.baud,
+                                      parseMedia(serialConfig.mediaStr),
+                                      serialConfig.netAddress,
+                                      serialConfig.pollIntervalSec,
+                                      std::move(mappedChannels));
+  } else {
+    meter = new Supla::PV::SmaInverter(serialConfig.devicePath,
+                                       serialConfig.baud,
+                                       parseMedia(serialConfig.mediaStr),
+                                       serialConfig.netAddress,
+                                       serialConfig.pollIntervalSec,
+                                       std::move(mappedChannels));
+  }
+
+  return context.config.addCommonChannelParameters(context.channel, meter);
+}
+
+bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
+  return AddSmaMeter(context, "SmaInverter", false);
+}
+
+bool AddSmaDcMeter(const Supla::Linux::ChannelFactoryContext& context) {
+  return AddSmaMeter(context, "SmaDcMeter", true);
+}
+
+bool AddSmaThermometer(const Supla::Linux::ChannelFactoryContext& context) {
+  SmaSerialConfig serialConfig;
+  if (!parseSmaSerialConfig(context, &serialConfig)) {
+    return false;
+  }
+
+  std::vector<Supla::PV::SmaMappedChannel> mappedChannels;
+  if (!parseSingleSmaChannel(context,
+                             SmaMappingKind::Thermometer,
+                             &mappedChannels)) {
+    return false;
+  }
+
+  SUPLA_LOG_INFO(
+      "Channel[%d] config: adding SmaThermometer on %s, net_address=0x%04x",
+      context.channelNumber,
+      serialConfig.devicePath.c_str(),
+      serialConfig.netAddress);
+
+  auto* thermometer = new Supla::PV::SmaThermometer(serialConfig.devicePath,
+                                                    serialConfig.baud,
+                                                    parseMedia(serialConfig.mediaStr),
+                                                    serialConfig.netAddress,
+                                                    serialConfig.pollIntervalSec,
+                                                    std::move(mappedChannels));
+  return context.config.addCommonChannelParameters(context.channel, thermometer);
+}
+
+bool AddSmaMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
+  SmaSerialConfig serialConfig;
+  if (!parseSmaSerialConfig(context, &serialConfig)) {
+    return false;
+  }
+
+  std::vector<Supla::PV::SmaMappedChannel> mappedChannels;
+  if (!parseSingleSmaChannel(context,
+                             SmaMappingKind::Measurement,
+                             &mappedChannels)) {
+    return false;
+  }
+
+  SUPLA_LOG_INFO(
+      "Channel[%d] config: adding SmaMeasurement on %s, net_address=0x%04x",
+      context.channelNumber,
+      serialConfig.devicePath.c_str(),
+      serialConfig.netAddress);
+
+  auto* measurement = new Supla::PV::SmaMeasurement(serialConfig.devicePath,
+                                                    serialConfig.baud,
+                                                    parseMedia(serialConfig.mediaStr),
+                                                    serialConfig.netAddress,
+                                                    serialConfig.pollIntervalSec,
+                                                    std::move(mappedChannels));
+  applyGpmYamlOptions(context, measurement);
+  return context.config.addCommonChannelParameters(context.channel, measurement);
 }
 
 }  // namespace
@@ -190,6 +348,15 @@ void initSmaExtension() {
   ChannelFactoryRegistry::instance().registerFactory("sma",
                                                      "SmaInverter",
                                                      AddSmaInverter);
+  ChannelFactoryRegistry::instance().registerFactory("sma",
+                                                     "SmaDcMeter",
+                                                     AddSmaDcMeter);
+  ChannelFactoryRegistry::instance().registerFactory("sma",
+                                                     "SmaThermometer",
+                                                     AddSmaThermometer);
+  ChannelFactoryRegistry::instance().registerFactory("sma",
+                                                     "SmaMeasurement",
+                                                     AddSmaMeasurement);
 }
 
 }  // namespace Linux

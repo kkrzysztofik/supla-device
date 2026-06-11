@@ -74,20 +74,42 @@ See also [YASDI architecture — interactive exploration](../../../../docs/integ
 ```yaml
 channels:
   - type: SmaInverter
-    serial:
+    caption: SMA AC
+    serial: &sma_serial
       device: /dev/ttyUSB0
       baud: 1200
       media: RS485
-    device:
+    device: &sma_device
       net_address: 1
     sma_channels:
       Pac: power_active
       Uac: voltage
       Fac: frequency
+      "Iac-Ist": current
       "E-Total": fwd_act_energy
+
+  - type: SmaDcMeter
+    caption: SMA DC
+    serial: *sma_serial
+    device: *sma_device
+    sma_channels:
+      "Upv-Ist": voltage
+      Ipv: current
 ```
 
-SUPLA mapping aliases: `pac`, `uac`, `fac`, `totwh`, `iac` (see extension).
+`SmaInverter`, `SmaDcMeter`, `SmaThermometer`, and `SmaMeasurement` on the same
+serial port share one RS485 poller (`SmaBus`). `SmaDcMeter` derives DC power
+from voltage × current when both are mapped.
+
+Additional channel types (one `sma_channels` entry each):
+
+| YAML type | SUPLA channel | Example YASDI names |
+|-----------|---------------|---------------------|
+| `SmaThermometer` | Thermometer | `Tkk` |
+| `SmaMeasurement` | General purpose measurement | `Zac`, `Riso` |
+
+SUPLA mapping aliases: `pac`, `uac`, `fac`, `totwh`, `iac`, `upv`, `ipv`,
+`tkk`, `zac`, `riso`, `gpm`.
 
 ### Advanced configuration (manual ctype/cindex)
 

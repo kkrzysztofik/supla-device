@@ -12,25 +12,15 @@
 
 #include <supla/sensor/electricity_meter.h>
 
-#include <atomic>
 #include <map>
-#include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
-#include "sma_cinfo_parser.h"
-#include "sma_types.h"
+#include "sma_bus_client.h"
+#include "sma_meter_channel.h"
 
 namespace Supla {
 namespace PV {
-
-struct SmaMappedChannel {
-  Supla::Linux::Sma::SmaChannelDescriptor descriptor;
-  std::string key;
-  std::string smaName;
-  bool resolveByName = false;
-};
 
 class SmaInverter : public Supla::Sensor::ElectricityMeter {
  public:
@@ -45,32 +35,16 @@ class SmaInverter : public Supla::Sensor::ElectricityMeter {
   void onInit() override;
   void iterateAlways() override;
 
- private:
-  struct CachedReadings {
-    bool valid = false;
-  };
+ protected:
+  virtual void applyMappedReadings(const std::map<std::string, double>& values);
 
-  void workerLoop();
+  Supla::Linux::Sma::SmaBusClient busClient_;
+  int pollIntervalSec_;
+  int invDisabledCounter_ = 0;
+
+ private:
   void applyReadingsToChannel();
   void setZeroValues();
-
-  std::string serialDevice_;
-  int baud_;
-  Supla::Linux::Sma::SerialMedia media_;
-  uint16_t netAddress_;
-  int pollIntervalSec_;
-  std::vector<SmaMappedChannel> channels_;
-
-  std::thread worker_;
-  std::atomic<bool> stopWorker_{false};
-  std::mutex cacheMutex_;
-  CachedReadings cache_;
-  std::map<std::string, double> valuesByKey_;
-  int invDisabledCounter_ = 0;
-  bool cinfoChecked_ = false;
-  bool useNameBasedConfig_ = false;
-  std::vector<Supla::Linux::Sma::SmaChannelInfo> channelCatalog_;
-  bool channelsResolved_ = false;
 };
 
 }  // namespace PV

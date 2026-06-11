@@ -13,17 +13,44 @@ network:
 
 channels:
   - type: SmaInverter
-    serial:
+    caption: SMA WR33 AC
+    serial: &sma_serial
       device: /dev/ttyUSB0
       baud: 1200
       media: RS485
-    device:
+    device: &sma_device
       net_address: 1
     poll_interval_sec: 15
-    # Channel names must match YASDI/yasdishell (e.g. "Pac", "E-Total").
-    # ctype, cindex, gain, and ntype are fetched from the inverter via CINFO.
     sma_channels:
       Pac: power_active
       Uac: voltage
       Fac: frequency
+      "Iac-Ist": current
       "E-Total": fwd_act_energy
+
+  - type: SmaDcMeter
+    caption: SMA WR33 DC
+    serial: *sma_serial
+    device: *sma_device
+    poll_interval_sec: 15
+    sma_channels:
+      "Upv-Ist": voltage
+      Ipv: current
+
+  - type: SmaThermometer
+    caption: SMA WR33 temperature
+    serial: *sma_serial
+    device: *sma_device
+    poll_interval_sec: 15
+    sma_channels:
+      Tkk: temperature
+
+  - type: SmaMeasurement
+    caption: SMA WR33 grid impedance
+    serial: *sma_serial
+    device: *sma_device
+    poll_interval_sec: 15
+    default_unit_after_value: "Ohm"
+    default_value_precision: 3
+    sma_channels:
+      Zac: measurement

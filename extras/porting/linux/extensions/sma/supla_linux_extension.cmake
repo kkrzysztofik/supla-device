@@ -9,8 +9,13 @@ supla_linux_register_extension(
     ${_SMA_DIR}/smanet_framer.cpp
     ${_SMA_DIR}/sma_channel_codec.cpp
     ${_SMA_DIR}/sma_cinfo_parser.cpp
+    ${_SMA_DIR}/sma_bus.cpp
+    ${_SMA_DIR}/sma_bus_client.cpp
     ${_SMA_DIR}/smadata_client.cpp
     ${_SMA_DIR}/sma_inverter.cpp
+    ${_SMA_DIR}/sma_dc_meter.cpp
+    ${_SMA_DIR}/sma_thermometer.cpp
+    ${_SMA_DIR}/sma_measurement.cpp
   INCLUDE_DIRS
     ${SUPLA_LINUX_PORT_DIR}
     ${_SMA_DIR}
