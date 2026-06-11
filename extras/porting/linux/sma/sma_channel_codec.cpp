@@ -163,6 +163,87 @@ bool SmaChannelCodec::parseGetDataValue(const uint8_t* data,
   return std::isfinite(*outValue);
 }
 
+bool SmaChannelCodec::channelMatchesFilter(const SmaChannelDescriptor& channel,
+                                           uint16_t mask,
+                                           uint8_t index) {
+  if (mask == 0xffff) {
+    return true;
+  }
+
+  constexpr uint16_t kChTest = 0x2000;
+  constexpr uint16_t kMask1 = kChSpot | kChIn | kChAnalog | kChPara | 0x1000 |
+                              kChTest;
+  constexpr uint16_t kMask2 =
+      kChAnalog | kChDigital | kChCounter | kChStatus;
+
+  if ((channel.ctype & kChTest) != (mask & kChTest)) {
+    return false;
+  }
+  if (((channel.ctype & kMask1) & (mask & kMask1)) == 0) {
+    return false;
+  }
+  if (((channel.ctype & kMask2) & (mask & kMask2)) == 0) {
+    return false;
+  }
+  return index == 0 || channel.cindex == index;
+}
+
+bool SmaChannelCodec::parseBulkSpotValues(
+    const uint8_t* data,
+    size_t len,
+    const std::vector<SmaChannelInfo>& catalog,
+    std::map<std::pair<uint16_t, uint8_t>, double>* outValues) {
+  if (data == nullptr || outValues == nullptr || len < 5) {
+    return false;
+  }
+
+  const uint8_t* cursor = data;
+  size_t remaining = len;
+
+  const uint16_t mask = le16ToHost(cursor);
+  cursor += 2;
+  remaining -= 2;
+  const uint8_t chanNr = *cursor;
+  cursor += 1;
+  remaining -= 1;
+
+  if (remaining < 2) {
+    return false;
+  }
+  cursor += 2;
+  remaining -= 2;
+
+  if (mask & kChSpot) {
+    if (remaining < 8) {
+      return false;
+    }
+    cursor += 8;
+    remaining -= 8;
+  }
+
+  outValues->clear();
+  for (const auto& channelInfo : catalog) {
+    if (!channelMatchesFilter(channelInfo.descriptor, mask, chanNr)) {
+      continue;
+    }
+
+    double raw = 0.0;
+    if (!readScalar(cursor, remaining, channelInfo.descriptor.ntype, &raw)) {
+      return false;
+    }
+
+    const double value = applyGainOffset(raw, channelInfo.descriptor);
+    if (!std::isfinite(value)) {
+      return false;
+    }
+
+    (*outValues)[{channelInfo.descriptor.ctype,
+                  channelInfo.descriptor.cindex}] = value;
+  }
+
+  return true;
+}
+
 }  // namespace Sma
 }  // namespace Linux
 }  // namespace Supla

@@ -15,23 +15,15 @@ channels:
   - type: SmaInverter
     serial:
       device: /dev/ttyUSB0
-      baud: 9600
+      baud: 1200
       media: RS485
     device:
       net_address: 1
     poll_interval_sec: 15
+    # Channel names must match YASDI/yasdishell (e.g. "Pac", "E-Total").
+    # ctype, cindex, gain, and ntype are fetched from the inverter via CINFO.
     sma_channels:
-      pac:
-        ctype: 0x0801
-        cindex: 0
-        ntype: 0x0004
-        gain: 1.0
-        offset: 0.0
-        supla: power_active
-      totwh:
-        ctype: 0x0804
-        cindex: 0
-        ntype: 0x0002
-        gain: 1.0
-        offset: 0.0
-        supla: fwd_act_energy
+      Pac: power_active
+      Uac: voltage
+      Fac: frequency
+      "E-Total": fwd_act_energy

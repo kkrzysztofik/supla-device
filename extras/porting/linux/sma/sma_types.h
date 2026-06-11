@@ -19,6 +19,7 @@
 #define EXTRAS_PORTING_LINUX_SMA_SMA_TYPES_H_
 
 #include <cstdint>
+#include <string>
 
 namespace Supla {
 namespace Linux {
@@ -46,6 +47,7 @@ constexpr uint16_t kChDigital = 0x0002;
 constexpr uint16_t kChCounter = 0x0004;
 constexpr uint16_t kChStatus = 0x0008;
 constexpr uint16_t kChIn = 0x0100;
+constexpr uint16_t kChPara = 0x0400;
 constexpr uint16_t kChSpot = 0x0800;
 
 constexpr uint16_t kChSpotOnlineMask = kChSpot | kChIn | kChAnalog |
@@ -65,6 +67,11 @@ struct SmaChannelDescriptor {
   float gain = 1.0f;
   float offset = 0.0f;
   const char* suplaMapping = nullptr;
+};
+
+struct SmaChannelInfo {
+  std::string name;
+  SmaChannelDescriptor descriptor;
 };
 
 }  // namespace Sma

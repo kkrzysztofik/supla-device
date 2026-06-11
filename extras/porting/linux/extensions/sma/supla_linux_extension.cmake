@@ -8,6 +8,7 @@ supla_linux_register_extension(
     ${_SMA_DIR}/sma_serial_port.cpp
     ${_SMA_DIR}/smanet_framer.cpp
     ${_SMA_DIR}/sma_channel_codec.cpp
+    ${_SMA_DIR}/sma_cinfo_parser.cpp
     ${_SMA_DIR}/smadata_client.cpp
     ${_SMA_DIR}/sma_inverter.cpp
   INCLUDE_DIRS

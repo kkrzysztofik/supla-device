@@ -97,37 +97,53 @@ bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
     Supla::PV::SmaMappedChannel mapped;
     mapped.key = key;
 
-    if (!node["ctype"] || !node["cindex"]) {
+    std::string suplaMapping;
+
+    if (node.IsScalar()) {
+      config.markChannelParameterUsed();
+      mapped.resolveByName = true;
+      mapped.smaName = key;
+      suplaMapping = node.as<std::string>();
+    } else if (node.IsMap()) {
+      if (!node["ctype"] || !node["cindex"]) {
+        SUPLA_LOG_ERROR(
+            "Channel[%d] config: sma_channels.%s requires ctype and cindex "
+            "or a scalar SUPLA mapping",
+            context.channelNumber,
+            key.c_str());
+        return false;
+      }
+
+      config.markChannelParameterUsed();
+      mapped.descriptor.ctype = static_cast<uint16_t>(node["ctype"].as<int>());
+      mapped.descriptor.cindex = static_cast<uint8_t>(node["cindex"].as<int>());
+
+      if (node["ntype"]) {
+        config.markChannelParameterUsed();
+        mapped.descriptor.ntype =
+            static_cast<uint16_t>(node["ntype"].as<int>());
+      }
+      if (node["gain"]) {
+        config.markChannelParameterUsed();
+        mapped.descriptor.gain = node["gain"].as<float>();
+      }
+      if (node["offset"]) {
+        config.markChannelParameterUsed();
+        mapped.descriptor.offset = node["offset"].as<float>();
+      }
+
+      if (node["supla"]) {
+        config.markChannelParameterUsed();
+        suplaMapping = node["supla"].as<std::string>();
+      } else {
+        suplaMapping = key;
+      }
+    } else {
       SUPLA_LOG_ERROR(
-          "Channel[%d] config: sma_channels.%s requires ctype and cindex",
+          "Channel[%d] config: sma_channels.%s must be a scalar or map",
           context.channelNumber,
           key.c_str());
       return false;
-    }
-
-    config.markChannelParameterUsed();
-    mapped.descriptor.ctype = static_cast<uint16_t>(node["ctype"].as<int>());
-    mapped.descriptor.cindex = static_cast<uint8_t>(node["cindex"].as<int>());
-
-    if (node["ntype"]) {
-      config.markChannelParameterUsed();
-      mapped.descriptor.ntype = static_cast<uint16_t>(node["ntype"].as<int>());
-    }
-    if (node["gain"]) {
-      config.markChannelParameterUsed();
-      mapped.descriptor.gain = node["gain"].as<float>();
-    }
-    if (node["offset"]) {
-      config.markChannelParameterUsed();
-      mapped.descriptor.offset = node["offset"].as<float>();
-    }
-
-    std::string suplaMapping;
-    if (node["supla"]) {
-      config.markChannelParameterUsed();
-      suplaMapping = node["supla"].as<std::string>();
-    } else {
-      suplaMapping = key;
     }
 
     mapped.descriptor.suplaMapping = parseSuplaMapping(suplaMapping);

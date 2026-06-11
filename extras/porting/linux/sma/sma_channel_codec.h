@@ -22,7 +22,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "sma_types.h"
 
@@ -43,6 +46,16 @@ class SmaChannelCodec {
 
   static double applyGainOffset(double raw,
                                 const SmaChannelDescriptor& channel);
+
+  static bool channelMatchesFilter(const SmaChannelDescriptor& channel,
+                                   uint16_t mask,
+                                   uint8_t index);
+
+  static bool parseBulkSpotValues(
+      const uint8_t* data,
+      size_t len,
+      const std::vector<SmaChannelInfo>& catalog,
+      std::map<std::pair<uint16_t, uint8_t>, double>* outValues);
 };
 
 }  // namespace Sma

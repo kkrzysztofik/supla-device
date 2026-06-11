@@ -444,6 +444,13 @@ yasdiMasterShutdown()
 
 Same init, plus event listener for hot-plug detection, shell commands to list channels and read/write values, access level changes.
 
+Device discovery logging (command `e` / `b`, or `autodetect` CLI arg) uses two layers:
+
+- **`[detect]` lines** — shell summaries in `CommonShellUIMain.c` (device handle, name, type, serial, elapsed ms, result codes).
+- **Timestamped `YASDI_DEBUG` traces** — library state machine and protocol (requires `YASDI_DEBUG_OUTPUT=ON` at build time and `[Misc] DebugOutput=stderr` in the INI).
+
+See [SMA hardware profiling](../../extras/porting/linux/sma/README.md#debugging-device-discovery) for build and run steps.
+
 ### 3. Cached read semantics
 
 `GetChannelValue(..., maxAgeSec)`:

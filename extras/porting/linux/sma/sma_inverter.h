@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "sma_cinfo_parser.h"
 #include "sma_types.h"
 
 namespace Supla {
@@ -27,6 +28,8 @@ namespace PV {
 struct SmaMappedChannel {
   Supla::Linux::Sma::SmaChannelDescriptor descriptor;
   std::string key;
+  std::string smaName;
+  bool resolveByName = false;
 };
 
 class SmaInverter : public Supla::Sensor::ElectricityMeter {
@@ -65,6 +68,9 @@ class SmaInverter : public Supla::Sensor::ElectricityMeter {
   std::map<std::string, double> valuesByKey_;
   int invDisabledCounter_ = 0;
   bool cinfoChecked_ = false;
+  bool useNameBasedConfig_ = false;
+  std::vector<Supla::Linux::Sma::SmaChannelInfo> channelCatalog_;
+  bool channelsResolved_ = false;
 };
 
 }  // namespace PV

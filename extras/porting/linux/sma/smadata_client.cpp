@@ -250,6 +250,55 @@ bool SmaDataClient::verifyCinfo() {
                   &response);
 }
 
+std::optional<std::vector<SmaChannelInfo>> SmaDataClient::fetchChannelList() {
+  SmaDataResponse response;
+  if (!transact(deviceAddr_,
+                kCmdGetCinfo,
+                nullptr,
+                0,
+                false,
+                kDefaultTimeoutMs,
+                &response)) {
+    return std::nullopt;
+  }
+
+  return SmaCinfoParser::parse(response.payload.data(), response.payload.size());
+}
+
+bool SmaDataClient::readSpotChannelsBulk(
+    const std::vector<SmaChannelInfo>& catalog,
+    std::map<std::pair<uint16_t, uint8_t>, double>* outValues) {
+  if (outValues == nullptr || catalog.empty()) {
+    return false;
+  }
+
+  if (!syncOnline(1)) {
+    return false;
+  }
+
+  const uint8_t txData[3] = {
+      static_cast<uint8_t>(kChSpotOnlineMask & 0xff),
+      static_cast<uint8_t>((kChSpotOnlineMask >> 8) & 0xff),
+      0,
+  };
+
+  SmaDataResponse response;
+  if (!transact(deviceAddr_,
+                kCmdGetData,
+                txData,
+                sizeof(txData),
+                false,
+                kDefaultTimeoutMs,
+                &response)) {
+    return false;
+  }
+
+  return SmaChannelCodec::parseBulkSpotValues(response.payload.data(),
+                                             response.payload.size(),
+                                             catalog,
+                                             outValues);
+}
+
 }  // namespace Sma
 }  // namespace Linux
 }  // namespace Supla

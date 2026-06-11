@@ -81,6 +81,19 @@ code. Timings are configured in YAML with:
         long_ms: 600
         pause_ms: 200
 
+### SMA RS485 inverter extension (`SmaInverter`)
+
+Build with the native SMA extension (read-only RS485/SMANet, no `libyasdi`):
+
+    cd extras/examples/linux
+    cmake -B build -DSUPLA_LINUX_EXTENSION_DIRS=../../../porting/linux/extensions/sma
+    cmake --build build -j$(nproc)
+    ./build/supla-device-linux -c supla-device-sma.yaml --verbose
+
+Copy `supla-device-sma.yaml`, set SUPLA credentials, serial port (`/dev/ttyUSB0`),
+and channel metadata from `yasdishell` profiling. Full instructions:
+[extras/porting/linux/sma/README.md](../../porting/linux/sma/README.md).
+
 # Usage
 
 Currently, there is no automated installation available. So please follow below

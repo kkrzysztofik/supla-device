@@ -21,10 +21,13 @@
 #define EXTRAS_PORTING_LINUX_SMA_SMADATA_CLIENT_H_
 
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "sma_channel_codec.h"
+#include "sma_cinfo_parser.h"
 #include "sma_serial_port.h"
 #include "smanet_framer.h"
 
@@ -52,6 +55,10 @@ class SmaDataClient {
   bool syncOnline(int waitAfterSec = 1);
   bool readChannel(const SmaChannelDescriptor& channel, double* outValue);
   bool verifyCinfo();
+  std::optional<std::vector<SmaChannelInfo>> fetchChannelList();
+  bool readSpotChannelsBulk(
+      const std::vector<SmaChannelInfo>& catalog,
+      std::map<std::pair<uint16_t, uint8_t>, double>* outValues);
 
   void resetBackoff();
   int backoffSec() const;

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "smadata_client.h"
+#include "sma_cinfo_parser.h"
 #include "sma_serial_port.h"
 
 namespace Supla {
@@ -62,6 +63,12 @@ SmaInverter::SmaInverter(std::string serialDevice,
       netAddress_(netAddress),
       pollIntervalSec_(pollIntervalSec > 0 ? pollIntervalSec : 15),
       channels_(std::move(channels)) {
+  for (const auto& mapped : channels_) {
+    if (mapped.resolveByName) {
+      useNameBasedConfig_ = true;
+      break;
+    }
+  }
   refreshRateSec = pollIntervalSec_;
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
@@ -162,7 +169,19 @@ void SmaInverter::workerLoop() {
 
     Supla::Linux::Sma::SmaDataClient client(port, masterAddr, netAddress_);
 
-    if (!cinfoChecked_) {
+    if (useNameBasedConfig_ && channelCatalog_.empty()) {
+      auto catalog = client.fetchChannelList();
+      if (!catalog) {
+        SUPLA_LOG_WARNING(
+            "SmaInverter: CMD_GET_CINFO failed — check net_address and wiring");
+        const int backoff = client.backoffSec();
+        port.close();
+        std::this_thread::sleep_for(
+            std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec_));
+        continue;
+      }
+      channelCatalog_ = std::move(*catalog);
+    } else if (!cinfoChecked_) {
       if (!client.verifyCinfo()) {
         SUPLA_LOG_WARNING(
             "SmaInverter: CMD_GET_CINFO failed — check net_address and wiring");
@@ -170,18 +189,64 @@ void SmaInverter::workerLoop() {
       cinfoChecked_ = true;
     }
 
+    if (useNameBasedConfig_ && !channelsResolved_) {
+      for (auto& mapped : channels_) {
+        if (!mapped.resolveByName) {
+          continue;
+        }
+        const std::string& lookupName =
+            mapped.smaName.empty() ? mapped.key : mapped.smaName;
+        const auto* info =
+            Supla::Linux::Sma::SmaCinfoParser::findByName(channelCatalog_,
+                                                          lookupName);
+        if (info == nullptr) {
+          SUPLA_LOG_WARNING("SmaInverter: SMA channel \"%s\" not in CINFO",
+                            lookupName.c_str());
+          continue;
+        }
+        const char* suplaMapping = mapped.descriptor.suplaMapping;
+        mapped.descriptor = info->descriptor;
+        mapped.descriptor.suplaMapping = suplaMapping;
+      }
+      channelsResolved_ = true;
+    }
+
     std::map<std::string, double> readings;
     bool pollOk = true;
 
-    for (const auto& mapped : channels_) {
-      double value = 0.0;
-      if (!client.readChannel(mapped.descriptor, &value)) {
-        SUPLA_LOG_DEBUG("SmaInverter: read failed for channel %s",
-                        mapped.key.c_str());
+    if (useNameBasedConfig_) {
+      std::map<std::pair<uint16_t, uint8_t>, double> bulkValues;
+      if (!client.readSpotChannelsBulk(channelCatalog_, &bulkValues)) {
+        SUPLA_LOG_DEBUG("SmaInverter: bulk spot read failed");
         pollOk = false;
-        break;
+      } else {
+        for (const auto& mapped : channels_) {
+          if (mapped.descriptor.ctype == 0 && mapped.resolveByName) {
+            continue;
+          }
+          const auto key = std::make_pair(mapped.descriptor.ctype,
+                                          mapped.descriptor.cindex);
+          const auto it = bulkValues.find(key);
+          if (it == bulkValues.end()) {
+            SUPLA_LOG_DEBUG("SmaInverter: no bulk value for channel %s",
+                            mapped.key.c_str());
+            pollOk = false;
+            break;
+          }
+          readings[mapped.key] = it->second;
+        }
       }
-      readings[mapped.key] = value;
+    } else {
+      for (const auto& mapped : channels_) {
+        double value = 0.0;
+        if (!client.readChannel(mapped.descriptor, &value)) {
+          SUPLA_LOG_DEBUG("SmaInverter: read failed for channel %s",
+                          mapped.key.c_str());
+          pollOk = false;
+          break;
+        }
+        readings[mapped.key] = value;
+      }
     }
 
     if (!pollOk) {
