@@ -218,6 +218,7 @@ void SmaBus::workerLoop() {
   const uint16_t masterAddr = 0;
   const int pollIntervalSec =
       config_.pollIntervalSec > 0 ? config_.pollIntervalSec : 15;
+  bool smanetLoggedIn = false;
 
   while (!stopWorker_) {
     std::vector<Subscriber> subscribers;
@@ -245,17 +246,24 @@ void SmaBus::workerLoop() {
         config_.netAddress,
         config_.deviceProfile.empty() ? "(auto)" : config_.deviceProfile.c_str());
 
-    auto detected = client.bringOnline(config_.netAddress);
-    if (!detected) {
-      const int backoff = client.backoffSec();
-      SUPLA_LOG_WARNING(
-          "SmaBus: SMANet login failed, backoff %d s (errors=%d)",
-          backoff > 0 ? backoff : pollIntervalSec,
-          client.backoffSec());
-      port.close();
-      std::this_thread::sleep_for(
-          std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
-      continue;
+    std::optional<SmaDetectedDevice> detected;
+    if (!smanetLoggedIn) {
+      detected = client.bringOnline(config_.netAddress);
+      if (!detected) {
+        const int backoff = client.backoffSec();
+        SUPLA_LOG_WARNING(
+            "SmaBus: SMANet login failed, backoff %d s (errors=%d)",
+            backoff > 0 ? backoff : pollIntervalSec,
+            client.backoffSec());
+        port.close();
+        std::this_thread::sleep_for(
+            std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
+        continue;
+      }
+      smanetLoggedIn = true;
+    } else {
+      client.setDeviceAddr(config_.netAddress);
+      SUPLA_LOG_DEBUG("SmaBus: reusing SMANet session (skip GET_NET_START/CFG)");
     }
 
     bool useNameBasedConfig = false;
@@ -267,11 +275,17 @@ void SmaBus::workerLoop() {
     }
 
     if (useNameBasedConfig && channelCatalog_.empty()) {
+      if (!detected) {
+        SmaDetectedDevice placeholder;
+        placeholder.netAddress = config_.netAddress;
+        detected = placeholder;
+      }
       auto catalog = loadChannelCatalog(client, config_, *detected);
       if (!catalog) {
         SUPLA_LOG_WARNING(
             "SmaBus: no channel catalog — check net_address, wiring, or set "
             "device.profile (see sma/README.md)");
+        smanetLoggedIn = false;
         const int backoff = client.backoffSec();
         port.close();
         std::this_thread::sleep_for(
@@ -279,6 +293,9 @@ void SmaBus::workerLoop() {
         continue;
       }
       channelCatalog_ = std::move(*catalog);
+      if (!config_.deviceProfile.empty()) {
+        cinfoChecked_ = true;
+      }
     } else if (!cinfoChecked_) {
       if (!client.verifyCinfo()) {
         SUPLA_LOG_DEBUG("SmaBus: CMD_GET_CINFO probe failed (optional)");
@@ -368,9 +385,18 @@ void SmaBus::workerLoop() {
 
     if (!pollOk) {
       const int backoff = client.backoffSec();
+      if (smanetLoggedIn) {
+        SUPLA_LOG_WARNING(
+            "SmaBus: spot read failed, keep session open, retry in %d s",
+            backoff > 0 ? backoff : 1);
+        std::this_thread::sleep_for(
+            std::chrono::seconds(backoff > 0 ? backoff : 1));
+        continue;
+      }
       SUPLA_LOG_WARNING("SmaBus: poll failed, backoff %d s (errors=%d)",
                         backoff > 0 ? backoff : pollIntervalSec,
                         client.backoffSec());
+      smanetLoggedIn = false;
       port.close();
       std::this_thread::sleep_for(
           std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));

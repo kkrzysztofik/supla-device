@@ -172,19 +172,21 @@ bool SmaChannelCodec::channelMatchesFilter(const SmaChannelDescriptor& channel,
     return true;
   }
 
+  // YASDI TNewChanListFilter_CheckChannel (netdevice.c): category bits
+  // (PARA/SPOT/MEAN) are matched separately from value-type bits.
   constexpr uint16_t kChTest = 0x2000;
-  constexpr uint16_t kMask1 = kChSpot | kChIn | kChAnalog | kChPara | 0x1000 |
-                              kChTest;
-  constexpr uint16_t kMask2 =
+  constexpr uint16_t kChMean = 0x1000;
+  constexpr uint16_t kChanTypeMask1 = kChPara | kChSpot | kChMean;
+  constexpr uint16_t kChanTypeMask2 =
       kChAnalog | kChDigital | kChCounter | kChStatus;
 
   if ((channel.ctype & kChTest) != (mask & kChTest)) {
     return false;
   }
-  if (((channel.ctype & kMask1) & (mask & kMask1)) == 0) {
+  if (((channel.ctype & kChanTypeMask1) & (mask & kChanTypeMask1)) == 0) {
     return false;
   }
-  if (((channel.ctype & kMask2) & (mask & kMask2)) == 0) {
+  if (((channel.ctype & kChanTypeMask2) & (mask & kChanTypeMask2)) == 0) {
     return false;
   }
   return index == 0 || channel.cindex == index;
@@ -224,6 +226,7 @@ bool SmaChannelCodec::parseBulkSpotValues(
   }
 
   outValues->clear();
+  size_t parsedCount = 0;
   for (const auto& channelInfo : catalog) {
     if (!channelMatchesFilter(channelInfo.descriptor, mask, chanNr)) {
       continue;
@@ -231,8 +234,12 @@ bool SmaChannelCodec::parseBulkSpotValues(
 
     double raw = 0.0;
     if (!readScalar(cursor, remaining, channelInfo.descriptor.ntype, &raw)) {
+      if (parsedCount > 0) {
+        break;
+      }
       return false;
     }
+    ++parsedCount;
 
     const double value = applyGainOffset(raw, channelInfo.descriptor);
     if (!std::isfinite(value)) {
@@ -243,7 +250,7 @@ bool SmaChannelCodec::parseBulkSpotValues(
                   channelInfo.descriptor.cindex}] = value;
   }
 
-  return true;
+  return !outValues->empty();
 }
 
 bool SmaChannelCodec::parseBulkSpotValuesByName(
@@ -298,6 +305,16 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
 
     double raw = 0.0;
     if (!readScalar(cursor, remaining, channelInfo.descriptor.ntype, &raw)) {
+      // YASDI stops when the payload is shorter than the filtered catalog
+      // (TStateChanReader_ScanUpdateValue) but keeps values already decoded.
+      if (parsedCount > 0) {
+        SUPLA_LOG_DEBUG(
+            "SmaBus: bulk parse ended after %zu channels (%zu bytes left in "
+            "payload)",
+            parsedCount,
+            remaining);
+        break;
+      }
       SUPLA_LOG_WARNING(
           "SmaBus: bulk parse failed at channel \"%s\" (#%zu, ctype=0x%04x "
           "cindex=%u ntype=0x%04x, remaining=%zu)",
@@ -324,6 +341,12 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
   if (remaining != 0) {
     SUPLA_LOG_VERBOSE("SmaBus: bulk parse finished with %zu trailing bytes",
                       remaining);
+  }
+
+  if (outValuesByName->empty()) {
+    SUPLA_LOG_WARNING("SmaBus: bulk parse decoded no values (mask=0x%04x)",
+                      mask);
+    return false;
   }
 
   SUPLA_LOG_DEBUG("SmaBus: bulk parse decoded %zu values (mask=0x%04x)",

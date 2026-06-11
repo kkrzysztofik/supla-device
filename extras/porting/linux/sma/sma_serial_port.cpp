@@ -29,7 +29,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <random>
 #include <string>
 #include <thread>
 #include <utility>
@@ -85,14 +84,6 @@ bool modemStatusClr(int fd, int flag) {
   }
   status &= ~flag;
   return ioctl(fd, TIOCMSET, &status) >= 0;
-}
-
-bool isDcdSet(int fd) {
-  int status = 0;
-  if (ioctl(fd, TIOCMGET, &status) < 0) {
-    return false;
-  }
-  return (status & TIOCM_CD) != 0;
 }
 
 }  // namespace
@@ -180,25 +171,16 @@ bool SmaSerialPort::configureTermios() {
   return tcsetattr(fd_, TCSANOW, &options) == 0;
 }
 
-void SmaSerialPort::waitBusFree() {
-  if (media_ != SerialMedia::RS485 || fd_ < 0) {
+void SmaSerialPort::flushRx() {
+  if (fd_ < 0) {
     return;
   }
+  tcflush(fd_, TCIFLUSH);
+}
 
-  int waitedMs = 0;
-  while (isDcdSet(fd_)) {
-    if (waitedMs > 1005) {
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    waitedMs += 5;
-  }
-
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<int> dist(0, 7);
-  std::this_thread::sleep_for(
-      std::chrono::milliseconds(85 + dist(gen) * 5));
+void SmaSerialPort::waitBusFree() {
+  // YASDI serial_wait_bus_free() arbitrates via DCD only on powerline media,
+  // not RS232/RS485 (serial_posix.c).
 }
 
 void SmaSerialPort::prepareSend() {

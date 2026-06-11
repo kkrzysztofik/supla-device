@@ -32,7 +32,8 @@ namespace Sma {
 
 namespace {
 
-constexpr int kDefaultTimeoutMs = 4000;
+constexpr int kDefaultTimeoutMs = 6000;
+constexpr int kGetDataRetries = 3;
 constexpr int kCfgNetAddrTimeoutMs = 4000;
 constexpr int kCinfoTimeoutMs = 4000;
 constexpr int kCinfoRepeats = 5;
@@ -170,12 +171,15 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
                                 std::optional<uint8_t> forcedPktCnt) {
   uint8_t head[7] = {};
   const uint16_t effectiveDest = broadcast ? 0 : destAddr;
-  hostToLe16(effectiveDest, &head[0]);
-  hostToLe16(masterAddr_, &head[2]);
+  // YASDI TSMADataHead wire order: SourceAddr, DestAddr, Ctrl, PktCnt, Cmd
+  hostToLe16(masterAddr_, &head[0]);
+  hostToLe16(effectiveDest, &head[2]);
   if (broadcast) {
     head[4] |= kCtrlGroup;
   }
-  head[5] = forcedPktCnt.has_value() ? *forcedPktCnt : pktCounter_++;
+  // YASDI sends PktCnt=0 for every non-fragment request (smadata_layer.c
+  // TSMAData_SendRequest); only multi-fragment follow-ups reuse pktCnt.
+  head[5] = forcedPktCnt.has_value() ? *forcedPktCnt : 0;
   head[6] = cmd;
 
   std::vector<uint8_t> payload;
@@ -203,10 +207,56 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
     return false;
   }
 
-  SUPLA_LOG_VERBOSE("SmaBus: wire TX %zu bytes for %s",
-                    frame.size(),
-                    smaCmdName(cmd));
+  SUPLA_LOG_DEBUG("SmaBus: wire TX %zu bytes for %s",
+                  frame.size(),
+                  smaCmdName(cmd));
+  smaLogHexVerbose("wire TX", frame.data(), frame.size());
   return true;
+}
+
+void SmaDataClient::drainSerial(int timeoutMs, SmaReadStats* stats) {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  uint8_t buffer[256];
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+    const int waitMs =
+        remaining.count() > 0 ? static_cast<int>(remaining.count()) : 1;
+    const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
+    if (readBytes <= 0) {
+      continue;
+    }
+    if (stats != nullptr) {
+      stats->rawBytes += static_cast<int>(readBytes);
+    }
+    for (ssize_t i = 0; i < readBytes; ++i) {
+      framer_.feed(buffer[i]);
+      if (auto frame = framer_.takeFrame()) {
+        if (stats != nullptr) {
+          ++stats->hdlcFrames;
+        }
+        if (frame->protocolId == kProtPppSmadata1 &&
+            frame->payload.size() >= 7) {
+          SmaDataHead head{};
+          if (parseSmadataPayload(frame->payload, &head)) {
+            if (stats != nullptr) {
+              stats->lastSeenCmd = head.cmd;
+              stats->lastSeenSrc = head.sourceAddr;
+              stats->lastSeenDest = head.destAddr;
+            }
+            SUPLA_LOG_VERBOSE(
+                "SmaBus: drained %s src=0x%04x dest=0x%04x during wait",
+                smaCmdName(head.cmd),
+                head.sourceAddr,
+                head.destAddr);
+          }
+        }
+      }
+    }
+  }
 }
 
 std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
@@ -217,6 +267,8 @@ std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   uint8_t buffer[256];
+
+  port_.prepareRecv();
 
   while (std::chrono::steady_clock::now() < deadline) {
     const auto remaining =
@@ -412,10 +464,17 @@ bool SmaDataClient::transact(uint16_t destAddr,
   }
 
   if (broadcast && cmd == kCmdSynOnline) {
-    SUPLA_LOG_DEBUG("SmaBus: %s sent, waiting %d ms",
+    SUPLA_LOG_DEBUG("SmaBus: %s sent, draining serial for %d ms",
                     smaCmdName(cmd),
                     timeoutMs);
-    std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+    SmaReadStats drainStats;
+    drainSerial(timeoutMs, &drainStats);
+    SUPLA_LOG_DEBUG(
+        "SmaBus: post-%s drain: rawBytes=%d hdlcFrames=%d lastSeen=%s",
+        smaCmdName(cmd),
+        drainStats.rawBytes,
+        drainStats.hdlcFrames,
+        smaCmdName(drainStats.lastSeenCmd));
     resetBackoff();
     return true;
   }
@@ -505,32 +564,99 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(int timeoutMs) {
     return std::nullopt;
   }
 
+  // YASDI TStateDetect keeps the GET_NET_START IORequest active for the full
+  // DetectionTimeout while continuously reading the bus, not a blind sleep.
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  std::optional<SmaDetectedDevice> device;
   SmaReadStats stats;
-  auto reply = readOneFrame(timeoutMs, kCmdGetNetStart, true, &stats);
-  if (!reply || reply->payload.size() < 12) {
-    SUPLA_LOG_WARNING("SmaBus: %s failed (payload=%zu)",
+  uint8_t buffer[256];
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+    const int waitMs =
+        remaining.count() > 0 ? static_cast<int>(remaining.count()) : 1;
+    const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
+    if (readBytes <= 0) {
+      continue;
+    }
+    stats.rawBytes += static_cast<int>(readBytes);
+
+    for (ssize_t i = 0; i < readBytes; ++i) {
+      framer_.feed(buffer[i]);
+      if (auto frame = framer_.takeFrame()) {
+        ++stats.hdlcFrames;
+        if (frame->protocolId != kProtPppSmadata1) {
+          ++stats.wrongProtocol;
+          continue;
+        }
+        SmaDataHead head{};
+        if (!parseSmadataPayload(frame->payload, &head)) {
+          ++stats.shortPayload;
+          continue;
+        }
+        stats.lastSeenCmd = head.cmd;
+        stats.lastSeenSrc = head.sourceAddr;
+        stats.lastSeenDest = head.destAddr;
+
+        if (head.cmd != kCmdGetNetStart || !(head.ctrl & kCtrlAck) ||
+            head.destAddr != masterAddr_ || head.sourceAddr == 0) {
+          continue;
+        }
+        if (frame->payload.size() < 19) {
+          continue;
+        }
+        if (device) {
+          continue;
+        }
+
+        SmaDetectedDevice detected;
+        detected.netAddress = head.sourceAddr;
+        const uint8_t* payload = frame->payload.data() + 7;
+        const size_t payloadLen = frame->payload.size() - 7;
+        if (payloadLen < 12) {
+          continue;
+        }
+        detected.serial = SmaChannelCodec::le32ToHost(payload);
+        detected.type.assign(reinterpret_cast<const char*>(&payload[4]), 8);
+        while (!detected.type.empty() && detected.type.back() == ' ') {
+          detected.type.pop_back();
+        }
+        const auto start = detected.type.find_first_not_of(' ');
+        if (start != std::string::npos) {
+          detected.type = detected.type.substr(start);
+        }
+        device = std::move(detected);
+
+        smaLogSmadataRx(head.cmd,
+                        head.sourceAddr,
+                        head.destAddr,
+                        head.pktCnt,
+                        payload,
+                        payloadLen);
+        SUPLA_LOG_INFO(
+            "SmaDataClient: detected SMA device type=%s SN=%u net_address=0x%04x",
+            device->type.c_str(),
+            device->serial,
+            device->netAddress);
+      }
+    }
+  }
+
+  if (!device) {
+    smaLogReadStats("detectDevice", kCmdGetNetStart, timeoutMs, stats);
+    SUPLA_LOG_WARNING("SmaBus: %s failed during %d ms detection window",
                       smaCmdName(kCmdGetNetStart),
-                      reply ? reply->payload.size() : 0);
+                      timeoutMs);
     return std::nullopt;
   }
 
-  SmaDetectedDevice device;
-  device.netAddress = reply->head.sourceAddr;
-  device.serial = SmaChannelCodec::le32ToHost(reply->payload.data());
-  device.type.assign(reinterpret_cast<const char*>(&reply->payload[4]), 8);
-  while (!device.type.empty() && device.type.back() == ' ') {
-    device.type.pop_back();
-  }
-  const auto start = device.type.find_first_not_of(' ');
-  if (start != std::string::npos) {
-    device.type = device.type.substr(start);
-  }
-
-  SUPLA_LOG_INFO(
-      "SmaDataClient: detected SMA device type=%s SN=%u net_address=0x%04x",
-      device.type.c_str(),
-      device.serial,
-      device.netAddress);
+  SUPLA_LOG_DEBUG(
+      "SmaBus: detection window done: rawBytes=%d hdlcFrames=%d",
+      stats.rawBytes,
+      stats.hdlcFrames);
   return device;
 }
 
@@ -590,10 +716,6 @@ bool SmaDataClient::readSpotChannelsBulk(
       matchingChannels,
       kChSpotOnlineMask);
 
-  if (!syncOnline(1)) {
-    return false;
-  }
-
   const uint8_t txData[3] = {
       static_cast<uint8_t>(kChSpotOnlineMask & 0xff),
       static_cast<uint8_t>((kChSpotOnlineMask >> 8) & 0xff),
@@ -601,17 +723,33 @@ bool SmaDataClient::readSpotChannelsBulk(
   };
 
   SmaDataResponse response;
-  if (!transact(deviceAddr_,
-                kCmdGetData,
-                txData,
-                sizeof(txData),
-                false,
-                kDefaultTimeoutMs,
-                &response)) {
+  bool gotData = false;
+  for (int attempt = 0; attempt < kGetDataRetries; ++attempt) {
+    if (!syncOnline(1)) {
+      continue;
+    }
+    if (transact(deviceAddr_,
+                 kCmdGetData,
+                 txData,
+                 sizeof(txData),
+                 false,
+                 kDefaultTimeoutMs,
+                 &response)) {
+      gotData = true;
+      break;
+    }
+    SUPLA_LOG_DEBUG("SmaBus: %s attempt %d/%d failed for device 0x%04x",
+                    smaCmdName(kCmdGetData),
+                    attempt + 1,
+                    kGetDataRetries,
+                    deviceAddr_);
+  }
+  if (!gotData) {
     SUPLA_LOG_WARNING(
-        "SmaBus: %s transact failed for device 0x%04x",
+        "SmaBus: %s transact failed for device 0x%04x after %d attempts",
         smaCmdName(kCmdGetData),
-        deviceAddr_);
+        deviceAddr_,
+        kGetDataRetries);
     return false;
   }
 

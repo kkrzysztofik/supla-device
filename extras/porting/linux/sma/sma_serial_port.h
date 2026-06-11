@@ -44,6 +44,7 @@ class SmaSerialPort {
 
   bool writeAll(const uint8_t* data, size_t len);
   ssize_t readSome(uint8_t* buffer, size_t maxLen, int timeoutMs);
+  void flushRx();
 
   void prepareSend();
   void prepareRecv();

@@ -62,7 +62,7 @@ class SmaDataClient {
   void setDeviceAddr(uint16_t addr);
   bool configureNetAddress(uint32_t serial, uint16_t newAddr);
   std::optional<SmaDetectedDevice> bringOnline(uint16_t desiredAddr,
-                                               int detectTimeoutMs = 6000);
+                                               int detectTimeoutMs = 20000);
 
   bool syncOnline(int waitAfterSec = 1);
   std::optional<SmaDetectedDevice> detectDevice(int timeoutMs = 20000);
@@ -101,13 +101,14 @@ class SmaDataClient {
                                               uint8_t expectedCmd,
                                               SmaReadStats* stats = nullptr);
 
+  void drainSerial(int timeoutMs, SmaReadStats* stats = nullptr);
+
   static void hostToLe16(uint16_t val, uint8_t* dst);
   static void hostToLe32(uint32_t val, uint8_t* dst);
 
   SmaSerialPort& port_;
   uint16_t masterAddr_;
   uint16_t deviceAddr_;
-  uint8_t pktCounter_ = 0;
   SmaNetFramer framer_;
   int consecutiveErrors_ = 0;
 };
