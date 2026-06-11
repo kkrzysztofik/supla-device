@@ -35,6 +35,7 @@ constexpr uint16_t kPppGoodFcs16 = 0xf0b8;
 
 constexpr uint16_t kProtPppSmadata1 = 0x4041;
 
+constexpr uint8_t kCmdCfgNetAddr = 3;
 constexpr uint8_t kCmdGetNetStart = 6;
 constexpr uint8_t kCmdGetCinfo = 9;
 constexpr uint8_t kCmdSynOnline = 10;

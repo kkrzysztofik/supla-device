@@ -18,6 +18,8 @@
 
 #include "sma_serial_port.h"
 
+#include <supla/log_wrapper.h>
+
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
@@ -109,10 +111,18 @@ bool SmaSerialPort::open() {
 
   fd_ = ::open(devicePath_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
   if (fd_ < 0) {
+    SUPLA_LOG_WARNING("SmaBus: open %s failed (errno=%d %s)",
+                      devicePath_.c_str(),
+                      errno,
+                      std::strerror(errno));
     return false;
   }
 
   if (!configureTermios()) {
+    SUPLA_LOG_WARNING("SmaBus: termios config failed for %s (errno=%d %s)",
+                      devicePath_.c_str(),
+                      errno,
+                      std::strerror(errno));
     close();
     return false;
   }
@@ -123,6 +133,10 @@ bool SmaSerialPort::open() {
     return false;
   }
 
+  SUPLA_LOG_DEBUG("SmaBus: opened %s @ %d baud (%s)",
+                  devicePath_.c_str(),
+                  baud_,
+                  media_ == SerialMedia::RS485 ? "RS485" : "RS232");
   return true;
 }
 
@@ -221,6 +235,11 @@ bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
       if (errno == EINTR) {
         continue;
       }
+      SUPLA_LOG_WARNING("SmaBus: write %s failed at offset %zu (errno=%d %s)",
+                        devicePath_.c_str(),
+                        offset,
+                        errno,
+                        std::strerror(errno));
       return false;
     }
     offset += static_cast<size_t>(written);
@@ -246,6 +265,10 @@ ssize_t SmaSerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {
 
   const int ready = select(fd_ + 1, &readfds, nullptr, nullptr, &tv);
   if (ready < 0) {
+    SUPLA_LOG_VERBOSE("SmaBus: select on %s failed (errno=%d %s)",
+                      devicePath_.c_str(),
+                      errno,
+                      std::strerror(errno));
     return -1;
   }
   if (ready == 0) {

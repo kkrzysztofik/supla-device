@@ -19,6 +19,8 @@
 
 #include "sma_channel_codec.h"
 
+#include <supla/log_wrapper.h>
+
 #include <cmath>
 #include <cstring>
 
@@ -251,6 +253,7 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
     std::map<std::string, double>* outValuesByName) {
   if (data == nullptr || outValuesByName == nullptr || len < 5 ||
       catalog.empty()) {
+    SUPLA_LOG_WARNING("SmaBus: bulk parse aborted (invalid args or empty catalog)");
     return false;
   }
 
@@ -265,6 +268,11 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
   remaining -= 1;
 
   if (remaining < 2) {
+    SUPLA_LOG_WARNING(
+        "SmaBus: bulk parse header too short (mask=0x%04x chanNr=%u len=%zu)",
+        mask,
+        chanNr,
+        len);
     return false;
   }
   cursor += 2;
@@ -272,6 +280,9 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
 
   if (mask & kChSpot) {
     if (remaining < 8) {
+      SUPLA_LOG_WARNING(
+          "SmaBus: bulk parse missing spot timestamp (remaining=%zu)",
+          remaining);
       return false;
     }
     cursor += 8;
@@ -279,6 +290,7 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
   }
 
   outValuesByName->clear();
+  size_t parsedCount = 0;
   for (const auto& channelInfo : catalog) {
     if (!channelMatchesFilter(channelInfo.descriptor, mask, chanNr)) {
       continue;
@@ -286,17 +298,37 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
 
     double raw = 0.0;
     if (!readScalar(cursor, remaining, channelInfo.descriptor.ntype, &raw)) {
+      SUPLA_LOG_WARNING(
+          "SmaBus: bulk parse failed at channel \"%s\" (#%zu, ctype=0x%04x "
+          "cindex=%u ntype=0x%04x, remaining=%zu)",
+          channelInfo.name.c_str(),
+          parsedCount + 1,
+          channelInfo.descriptor.ctype,
+          channelInfo.descriptor.cindex,
+          channelInfo.descriptor.ntype,
+          remaining);
       return false;
     }
+    ++parsedCount;
 
     const double value = applyGainOffset(raw, channelInfo.descriptor);
     if (!std::isfinite(value)) {
+      SUPLA_LOG_WARNING("SmaBus: bulk parse non-finite value for \"%s\"",
+                        channelInfo.name.c_str());
       return false;
     }
 
     (*outValuesByName)[channelInfo.name] = value;
   }
 
+  if (remaining != 0) {
+    SUPLA_LOG_VERBOSE("SmaBus: bulk parse finished with %zu trailing bytes",
+                      remaining);
+  }
+
+  SUPLA_LOG_DEBUG("SmaBus: bulk parse decoded %zu values (mask=0x%04x)",
+                  outValuesByName->size(),
+                  mask);
   return true;
 }
 

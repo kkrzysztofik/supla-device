@@ -88,13 +88,21 @@ bool resolveSubscriberChannels(SmaBus::Subscriber* subscriber,
     const char* suplaMapping = mapped.descriptor.suplaMapping;
     mapped.descriptor = info->descriptor;
     mapped.descriptor.suplaMapping = suplaMapping;
+    SUPLA_LOG_VERBOSE(
+        "SmaBus: resolved \"%s\" ctype=0x%04x cindex=%u ntype=0x%04x gain=%g",
+        lookupName.c_str(),
+        mapped.descriptor.ctype,
+        mapped.descriptor.cindex,
+        mapped.descriptor.ntype,
+        static_cast<double>(mapped.descriptor.gain));
   }
   return allResolved;
 }
 
 std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
     SmaDataClient& client,
-    const SmaBusConfig& config) {
+    const SmaBusConfig& config,
+    const SmaDetectedDevice& detected) {
   if (!config.deviceProfile.empty()) {
     if (auto catalog = SmaProfileLoader::resolveProfile(config.deviceProfile)) {
       SUPLA_LOG_INFO("SmaBus: using configured profile \"%s\" (%zu channels)",
@@ -110,19 +118,18 @@ std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
     return catalog;
   }
 
-  if (auto detected = client.detectDevice()) {
-    if (auto catalog = SmaProfileLoader::resolveProfile(detected->type)) {
-      SUPLA_LOG_INFO(
-          "SmaBus: CMD_GET_CINFO unavailable, using profile for %s",
-          detected->type.c_str());
-      return catalog;
-    }
-    SUPLA_LOG_WARNING(
-        "SmaBus: no profile for detected device type \"%s\" — export "
-        "yasdi/build/devices/%s.bin to ./sma-profiles/",
-        detected->type.c_str(),
-        detected->type.c_str());
+  if (auto catalog = SmaProfileLoader::resolveProfile(detected.type)) {
+    SUPLA_LOG_INFO(
+        "SmaBus: CMD_GET_CINFO unavailable, using profile for %s",
+        detected.type.c_str());
+    return catalog;
   }
+
+  SUPLA_LOG_WARNING(
+      "SmaBus: no profile for detected device type \"%s\" — export "
+      "yasdi/build/devices/%s.bin to ./sma-profiles/",
+      detected.type.c_str(),
+      detected.type.c_str());
 
   return std::nullopt;
 }
@@ -231,6 +238,26 @@ void SmaBus::workerLoop() {
 
     SmaDataClient client(port, masterAddr, config_.netAddress);
 
+    SUPLA_LOG_DEBUG(
+        "SmaBus: poll cycle on %s @ %d, net_address=0x%04x, profile=\"%s\"",
+        config_.serialDevice.c_str(),
+        config_.baud,
+        config_.netAddress,
+        config_.deviceProfile.empty() ? "(auto)" : config_.deviceProfile.c_str());
+
+    auto detected = client.bringOnline(config_.netAddress);
+    if (!detected) {
+      const int backoff = client.backoffSec();
+      SUPLA_LOG_WARNING(
+          "SmaBus: SMANet login failed, backoff %d s (errors=%d)",
+          backoff > 0 ? backoff : pollIntervalSec,
+          client.backoffSec());
+      port.close();
+      std::this_thread::sleep_for(
+          std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
+      continue;
+    }
+
     bool useNameBasedConfig = false;
     for (const auto& subscriber : subscribers) {
       if (subscriberUsesNameResolution(subscriber)) {
@@ -240,7 +267,7 @@ void SmaBus::workerLoop() {
     }
 
     if (useNameBasedConfig && channelCatalog_.empty()) {
-      auto catalog = loadChannelCatalog(client, config_);
+      auto catalog = loadChannelCatalog(client, config_, *detected);
       if (!catalog) {
         SUPLA_LOG_WARNING(
             "SmaBus: no channel catalog — check net_address, wiring, or set "
@@ -272,7 +299,6 @@ void SmaBus::workerLoop() {
 
     if (useNameBasedConfig) {
       if (!client.readSpotChannelsBulk(channelCatalog_, &bulkValues)) {
-        SUPLA_LOG_WARNING("SmaBus: bulk spot read failed");
         pollOk = false;
       }
     }
@@ -306,6 +332,10 @@ void SmaBus::workerLoop() {
             break;
           }
           readings[mapped.key] = it->second;
+          SUPLA_LOG_VERBOSE("SmaBus: subscriber value %s (%s) = %.6f",
+                            mapped.key.c_str(),
+                            lookupName.c_str(),
+                            it->second);
         }
       } else {
         for (const auto& mapped : *subscriber.channels) {
@@ -338,12 +368,16 @@ void SmaBus::workerLoop() {
 
     if (!pollOk) {
       const int backoff = client.backoffSec();
+      SUPLA_LOG_WARNING("SmaBus: poll failed, backoff %d s (errors=%d)",
+                        backoff > 0 ? backoff : pollIntervalSec,
+                        client.backoffSec());
       port.close();
       std::this_thread::sleep_for(
           std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
       continue;
     }
 
+    SUPLA_LOG_DEBUG("SmaBus: poll OK, sleeping %d s", pollIntervalSec);
     std::this_thread::sleep_for(std::chrono::seconds(pollIntervalSec));
   }
 

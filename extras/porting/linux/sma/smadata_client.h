@@ -28,6 +28,7 @@
 
 #include "sma_channel_codec.h"
 #include "sma_cinfo_parser.h"
+#include "sma_log.h"
 #include "sma_serial_port.h"
 #include "smanet_framer.h"
 
@@ -57,6 +58,11 @@ struct SmaDetectedDevice {
 class SmaDataClient {
  public:
   SmaDataClient(SmaSerialPort& port, uint16_t masterAddr, uint16_t deviceAddr);
+
+  void setDeviceAddr(uint16_t addr);
+  bool configureNetAddress(uint32_t serial, uint16_t newAddr);
+  std::optional<SmaDetectedDevice> bringOnline(uint16_t desiredAddr,
+                                               int detectTimeoutMs = 6000);
 
   bool syncOnline(int waitAfterSec = 1);
   std::optional<SmaDetectedDevice> detectDevice(int timeoutMs = 20000);
@@ -88,10 +94,12 @@ class SmaDataClient {
 
   std::optional<SmaDataResponse> readOneFrame(int timeoutMs,
                                               uint8_t expectedCmd,
-                                              bool acceptAnySource = false);
+                                              bool acceptAnySource = false,
+                                              SmaReadStats* stats = nullptr);
 
   std::optional<SmaDataResponse> readResponse(int timeoutMs,
-                                              uint8_t expectedCmd);
+                                              uint8_t expectedCmd,
+                                              SmaReadStats* stats = nullptr);
 
   static void hostToLe16(uint16_t val, uint8_t* dst);
   static void hostToLe32(uint32_t val, uint8_t* dst);
