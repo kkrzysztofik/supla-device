@@ -47,7 +47,7 @@ class SmaSerialPort {
   void flushRx();
 
   bool prepareSend();
-  bool prepareRecv();
+  bool prepareRecv(bool skipDrain = false);
   void waitBusFree();
 
  private:

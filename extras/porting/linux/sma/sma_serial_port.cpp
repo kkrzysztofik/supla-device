@@ -240,11 +240,11 @@ bool SmaSerialPort::prepareSend() {
   return true;
 }
 
-bool SmaSerialPort::prepareRecv() {
+bool SmaSerialPort::prepareRecv(bool skipDrain) {
   if (media_ != SerialMedia::RS485 || fd_ < 0) {
     return true;
   }
-  if (tcdrain(fd_) != 0) {
+  if (!skipDrain && tcdrain(fd_) != 0) {
     logDirectionControlError(fd_, "tcdrain");
     return false;
   }
@@ -303,7 +303,7 @@ bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
     logDirectionControlError(fd_, "tcdrain after write");
     return false;
   }
-  return prepareRecv();
+  return prepareRecv(true);
 }
 
 ssize_t SmaSerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {

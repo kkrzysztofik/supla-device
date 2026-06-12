@@ -28,6 +28,7 @@ mark_as_advanced(
 )
 
 include(FetchContent)
+find_package(yaml-cpp REQUIRED)
 
 FetchContent_Declare(
   json
@@ -102,6 +103,23 @@ set(SD4LINUX_PORT_SRC
   ../porting/linux/supla/payload/payload.cpp
   )
 
+set(SMA_PORT_SRC
+  ../porting/linux/sma/smanet_framer.cpp
+  ../porting/linux/sma/sma_bus.cpp
+  ../porting/linux/sma/sma_bus_client.cpp
+  ../porting/linux/sma/sma_channel_codec.cpp
+  ../porting/linux/sma/sma_cinfo_parser.cpp
+  ../porting/linux/sma/sma_dc_meter.cpp
+  ../porting/linux/sma/sma_device_profiles.cpp
+  ../porting/linux/sma/sma_inverter.cpp
+  ../porting/linux/sma/sma_log.cpp
+  ../porting/linux/sma/sma_measurement.cpp
+  ../porting/linux/sma/sma_profile_loader.cpp
+  ../porting/linux/sma/sma_serial_port.cpp
+  ../porting/linux/sma/sma_thermometer.cpp
+  ../porting/linux/sma/smadata_client.cpp
+  )
+
 add_library(supladevicelib SHARED)
 supla_device(supladevicelib)
 target_sources(supladevicelib PRIVATE
@@ -115,19 +133,14 @@ target_include_directories(supladevicelib PUBLIC
 )
 
 add_executable(supladevicetests ${TEST_SRC} ${DOUBLE_SRC})
-target_sources(supladevicetests PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/smanet_framer.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_channel_codec.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_cinfo_parser.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_device_profiles.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_profile_loader.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_serial_port.cpp
-)
+target_sources(supladevicetests PRIVATE ${SMA_PORT_SRC})
 
 add_executable(sd4linuxtests
   ${SD4LINUX_TEST_SRC}
   ${DOUBLE_SRC}
   ${SD4LINUX_PORT_SRC}
+  ${SMA_PORT_SRC}
+  ../porting/linux/extensions/sma/sma_extension.cpp
   )
 
 target_include_directories(supladevicetests PRIVATE
@@ -138,6 +151,7 @@ target_include_directories(supladevicetests PRIVATE
 target_include_directories(sd4linuxtests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
 )
 
 target_link_libraries(supladevicetests
@@ -153,6 +167,7 @@ target_link_libraries(sd4linuxtests
   PRIVATE
     supladevicelib
     nlohmann_json::nlohmann_json
+    yaml-cpp
     gtest
     gmock
     gtest_main

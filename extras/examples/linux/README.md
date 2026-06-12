@@ -180,6 +180,12 @@ Copy `supla-device-sma.yaml`, set SUPLA credentials, serial port (`/dev/ttyUSB0`
 and channel metadata from `yasdishell` profiling. Full instructions:
 [extras/porting/linux/sma/README.md](../../porting/linux/sma/README.md).
 
+Migration note: SMA `E-Total` is inverter lifetime yield/production, so the
+example maps it to `rvr_act_energy`. Existing deployments that copied an older
+`fwd_act_energy` mapping should move dashboards and automations to reverse
+active energy, or keep the old local mapping only if they intentionally stored
+production in the forward/consumption field.
+
 # Usage
 
 Currently, there is no automated installation available. So please follow below
