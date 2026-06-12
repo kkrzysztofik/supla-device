@@ -9,6 +9,7 @@
 
 #include <supla/log_wrapper.h>
 
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "linux_channel_factory.h"
 #include "linux_yaml_config.h"
 #include "sma_bus.h"
+#include "sma_bus_client.h"
 #include "sma_dc_meter.h"
 #include "sma_inverter.h"
 #include "sma_measurement.h"
@@ -24,6 +26,8 @@
 #include "sma_types.h"
 
 namespace {
+
+bool smaShutdownRegistered = false;
 
 enum class SmaMappingKind { Meter, Thermometer, Measurement };
 
@@ -373,6 +377,11 @@ namespace Supla {
 namespace Linux {
 
 void initSmaExtension() {
+  if (!smaShutdownRegistered) {
+    std::atexit(&Supla::Linux::Sma::shutdownAllClients);
+    smaShutdownRegistered = true;
+  }
+
   ChannelFactoryRegistry::instance().registerFactory(
       "sma", "SmaInverter", AddSmaInverter);
   ChannelFactoryRegistry::instance().registerFactory(

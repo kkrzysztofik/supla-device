@@ -47,6 +47,8 @@ class SmaBusClient {
   std::shared_ptr<SmaBus> bus_;
 };
 
+void shutdownAllClients();
+
 }  // namespace Sma
 }  // namespace Linux
 }  // namespace Supla
