@@ -11,8 +11,10 @@
 
 #include <supla/time.h>
 
+#include <cmath>
 #include <cstring>
 #include <map>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,10 @@ namespace {
 
 bool mappingIsPower(const char* mapping) {
   return mapping != nullptr && std::strcmp(mapping, "power_active") == 0;
+}
+
+bool mappingIsRvrEnergy(const char* mapping) {
+  return mapping != nullptr && std::strcmp(mapping, "rvr_act_energy") == 0;
 }
 
 bool mappingIsFwdEnergy(const char* mapping) {
@@ -41,6 +47,21 @@ bool mappingIsFrequency(const char* mapping) {
   return mapping != nullptr && std::strcmp(mapping, "frequency") == 0;
 }
 
+// SMA Pac is positive when feeding the grid; SUPLA uses negative active power
+// for export (see ElectricityMeterParsed / grid meter convention).
+int64_t smaAcPowerToSupla(double watts) {
+  return static_cast<int64_t>(std::llround(-watts * 100000.0));
+}
+
+unsigned smaAcCurrentToSupla(double amps) {
+  return static_cast<unsigned>(std::llround(std::abs(amps) * 1000.0));
+}
+
+int normalizePollIntervalSec(int pollIntervalSec) {
+  return pollIntervalSec > 0 ? pollIntervalSec
+                             : Supla::Linux::Sma::kDefaultPollIntervalSec;
+}
+
 }  // namespace
 
 SmaInverter::SmaInverter(std::string serialDevice,
@@ -56,12 +77,12 @@ SmaInverter::SmaInverter(std::string serialDevice,
                      baud,
                      media,
                      netAddress,
-                     pollIntervalSec > 0 ? pollIntervalSec
-                                         : Supla::Linux::Sma::kDefaultPollIntervalSec,
+                     normalizePollIntervalSec(pollIntervalSec),
+                     // NOLINTNEXTLINE(whitespace/indent_namespace)
                      std::move(deviceProfile)},
                  std::move(channels)),
-      pollIntervalSec_(pollIntervalSec > 0 ? pollIntervalSec
-                                           : Supla::Linux::Sma::kDefaultPollIntervalSec) {
+      // NOLINTNEXTLINE(whitespace/indent_namespace)
+      pollIntervalSec_(normalizePollIntervalSec(pollIntervalSec)) {
   refreshRateSec = pollIntervalSec_;
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
@@ -84,8 +105,10 @@ void SmaInverter::setZeroValues() {
 void SmaInverter::applyMappedReadings(
     const std::map<std::string, double>& values) {
   bool hasPower = false;
+  std::vector<SmaMappedChannel> channels;
+  busClient_.copyChannels(&channels);
 
-  for (const auto& mapped : busClient_.channels()) {
+  for (const auto& mapped : channels) {
     auto it = values.find(mapped.key);
     if (it == values.end()) {
       continue;
@@ -93,15 +116,21 @@ void SmaInverter::applyMappedReadings(
     const double value = it->second;
     const char* mapping = mapped.descriptor.suplaMapping;
     if (mappingIsPower(mapping)) {
-      setPowerActive(0, static_cast<_supla_int_t>(value * 100000.0));
+      setPowerActive(0, smaAcPowerToSupla(value));
       hasPower = true;
+    } else if (mappingIsRvrEnergy(mapping)) {
+      // Inverter yield (E-Total) is energy exported to grid → rvr_act_energy.
+      setRvrActEnergy(
+          0,
+          static_cast<unsigned _supla_int64_t>(std::llround(value * 100000.0)));
     } else if (mappingIsFwdEnergy(mapping)) {
       setFwdActEnergy(
-          0, static_cast<unsigned _supla_int64_t>(value * 100000.0));
+          0,
+          static_cast<unsigned _supla_int64_t>(std::llround(value * 100000.0)));
     } else if (mappingIsVoltage(mapping)) {
       setVoltage(0, static_cast<unsigned _supla_int16_t>(value * 100.0));
     } else if (mappingIsCurrent(mapping)) {
-      setCurrent(0, static_cast<unsigned _supla_int16_t>(value * 1000.0));
+      setCurrent(0, smaAcCurrentToSupla(value));
     } else if (mappingIsFrequency(mapping)) {
       setFreq(static_cast<unsigned _supla_int16_t>(value * 100.0));
       hasPower = true;

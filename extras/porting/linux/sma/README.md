@@ -90,7 +90,7 @@ channels:
       Uac: voltage
       Fac: frequency
       "Iac-Ist": current
-      "E-Total": fwd_act_energy
+      "E-Total": rvr_act_energy
 
   - type: SmaDcMeter
     caption: SMA DC
@@ -112,7 +112,8 @@ Additional channel types (one `sma_channels` entry each):
 | `SmaThermometer` | Thermometer | `Tkk` |
 | `SmaMeasurement` | General purpose measurement | `Zac`, `Riso` |
 
-SUPLA mapping aliases: `pac`, `uac`, `fac`, `totwh`, `iac`, `upv`, `ipv`,
+SUPLA mapping aliases: `pac`, `uac`, `fac`, `totwh` (→ `rvr_act_energy`), `iac`,
+`upv`, `ipv`,
 `tkk`, `zac`, `riso`, `gpm`.
 
 ### Device profiles

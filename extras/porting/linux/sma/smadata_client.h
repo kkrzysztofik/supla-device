@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -68,14 +69,12 @@ class SmaDataClient {
 
   bool syncOnline(int waitAfterSec = 1);
   std::optional<SmaDetectedDevice> detectDevice(
-      int timeoutMs = 20000,
-      const std::string& deviceProfile = {});
+      int timeoutMs = 20000, const std::string& deviceProfile = {});
   bool readChannel(const SmaChannelDescriptor& channel, double* outValue);
   bool verifyCinfo();
   std::optional<std::vector<SmaChannelInfo>> fetchChannelList();
-  bool readSpotChannelsBulk(
-      const std::vector<SmaChannelInfo>& catalog,
-      std::map<std::string, double>* outValuesByName);
+  bool readSpotChannelsBulk(const std::vector<SmaChannelInfo>& catalog,
+                            std::map<std::string, double>* outValuesByName);
 
   void resetBackoff();
   int backoffSec() const;

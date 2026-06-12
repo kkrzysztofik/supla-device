@@ -12,6 +12,8 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <string>
+#include <vector>
 
 namespace Supla {
 namespace PV {
@@ -41,8 +43,10 @@ void SmaDcMeter::applyMappedReadings(
   double current = 0.0;
   bool hasVoltage = false;
   bool hasCurrent = false;
+  std::vector<SmaMappedChannel> channels;
+  busClient_.copyChannels(&channels);
 
-  for (const auto& mapped : busClient_.channels()) {
+  for (const auto& mapped : channels) {
     const char* mapping = mapped.descriptor.suplaMapping;
     if (mappingIsPower(mapping)) {
       hasExplicitPower = true;

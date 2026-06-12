@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -54,10 +55,12 @@ std::mutex gRegistryMutex;
 std::map<SmaBusKey, std::weak_ptr<SmaBus>> gBuses;
 
 bool subscriberUsesNameResolution(const SmaBus::Subscriber& subscriber) {
-  if (subscriber.channels == nullptr) {
+  if (!subscriber.state) {
     return false;
   }
-  for (const auto& mapped : *subscriber.channels) {
+
+  std::lock_guard<std::mutex> lock(subscriber.state->mutex);
+  for (const auto& mapped : subscriber.state->channels) {
     if (mapped.resolveByName) {
       return true;
     }
@@ -67,12 +70,13 @@ bool subscriberUsesNameResolution(const SmaBus::Subscriber& subscriber) {
 
 bool resolveSubscriberChannels(SmaBus::Subscriber* subscriber,
                                const std::vector<SmaChannelInfo>& catalog) {
-  if (subscriber == nullptr || subscriber->channels == nullptr) {
+  if (subscriber == nullptr || !subscriber->state) {
     return true;
   }
 
   bool allResolved = true;
-  for (auto& mapped : *subscriber->channels) {
+  std::lock_guard<std::mutex> lock(subscriber->state->mutex);
+  for (auto& mapped : subscriber->state->channels) {
     if (!mapped.resolveByName || mapped.descriptor.ctype != 0) {
       continue;
     }
@@ -119,9 +123,8 @@ std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
   }
 
   if (auto catalog = SmaProfileLoader::resolveProfile(detected.type)) {
-    SUPLA_LOG_INFO(
-        "SmaBus: CMD_GET_CINFO unavailable, using profile for %s",
-        detected.type.c_str());
+    SUPLA_LOG_INFO("SmaBus: CMD_GET_CINFO unavailable, using profile for %s",
+                   detected.type.c_str());
     return catalog;
   }
 
@@ -137,10 +140,8 @@ std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
 }  // namespace
 
 std::shared_ptr<SmaBus> SmaBus::acquire(const SmaBusConfig& config) {
-  const SmaBusKey key{config.serialDevice,
-                      config.baud,
-                      config.media,
-                      config.netAddress};
+  const SmaBusKey key{
+      config.serialDevice, config.baud, config.media, config.netAddress};
 
   std::lock_guard<std::mutex> lock(gRegistryMutex);
   auto it = gBuses.find(key);
@@ -155,10 +156,11 @@ std::shared_ptr<SmaBus> SmaBus::acquire(const SmaBusConfig& config) {
   return bus;
 }
 
-SmaBus::SmaBus(SmaBusConfig config) : config_(std::move(config)) {}
+SmaBus::SmaBus(SmaBusConfig config) : config_(std::move(config)) {
+}
 
 void SmaBus::subscribe(Subscriber subscriber) {
-  if (subscriber.owner == nullptr) {
+  if (!subscriber.state || subscriber.state->owner == nullptr) {
     return;
   }
 
@@ -172,13 +174,13 @@ void SmaBus::subscribe(Subscriber subscriber) {
 void SmaBus::unsubscribe(void* owner) {
   {
     std::lock_guard<std::mutex> lock(subscribersMutex_);
-    subscribers_.erase(
-        std::remove_if(subscribers_.begin(),
-                       subscribers_.end(),
-                       [owner](const Subscriber& subscriber) {
-                         return subscriber.owner == owner;
-                       }),
-        subscribers_.end());
+    subscribers_.erase(std::remove_if(subscribers_.begin(),
+                                      subscribers_.end(),
+                                      [owner](const Subscriber& subscriber) {
+                                        return subscriber.state &&
+                                               subscriber.state->owner == owner;
+                                      }),
+                       subscribers_.end());
   }
   stopWorkerIfIdle();
 }
@@ -187,6 +189,9 @@ void SmaBus::startWorkerIfNeeded() {
   std::lock_guard<std::mutex> lock(subscribersMutex_);
   if (workerRunning_) {
     return;
+  }
+  if (worker_.joinable()) {
+    worker_.join();
   }
   stopWorker_ = false;
   workerRunning_ = true;
@@ -208,7 +213,10 @@ void SmaBus::stopWorkerIfIdle() {
   if (worker_.joinable()) {
     worker_.join();
   }
-  workerRunning_ = false;
+  {
+    std::lock_guard<std::mutex> lock(subscribersMutex_);
+    workerRunning_ = false;
+  }
   channelCatalog_.clear();
   cinfoChecked_ = false;
 }
@@ -219,7 +227,6 @@ void SmaBus::workerLoop() {
   const int pollIntervalSec = config_.pollIntervalSec > 0
                                   ? config_.pollIntervalSec
                                   : kDefaultPollIntervalSec;
-  bool smanetLoggedIn = false;
 
   while (!stopWorker_) {
     std::vector<Subscriber> subscribers;
@@ -245,28 +252,21 @@ void SmaBus::workerLoop() {
         config_.serialDevice.c_str(),
         config_.baud,
         config_.netAddress,
-        config_.deviceProfile.empty() ? "(auto)" : config_.deviceProfile.c_str());
+        config_.deviceProfile.empty() ? "(auto)"
+                                      : config_.deviceProfile.c_str());
 
     std::optional<SmaDetectedDevice> detected;
-    if (!smanetLoggedIn) {
-      detected = client.bringOnline(config_.netAddress,
-                                    20000,
-                                    config_.deviceProfile);
-      if (!detected) {
-        const int backoff = client.backoffSec();
-        SUPLA_LOG_WARNING(
-            "SmaBus: SMANet login failed, backoff %d s (errors=%d)",
-            backoff > 0 ? backoff : pollIntervalSec,
-            client.backoffSec());
-        port.close();
-        std::this_thread::sleep_for(
-            std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
-        continue;
-      }
-      smanetLoggedIn = true;
-    } else {
-      client.setDeviceAddr(config_.netAddress);
-      SUPLA_LOG_DEBUG("SmaBus: reusing SMANet session (skip GET_NET_START/CFG)");
+    detected =
+        client.bringOnline(config_.netAddress, 20000, config_.deviceProfile);
+    if (!detected) {
+      const int backoff = client.backoffSec();
+      SUPLA_LOG_WARNING("SmaBus: SMANet login failed, backoff %d s (errors=%d)",
+                        backoff > 0 ? backoff : pollIntervalSec,
+                        client.backoffSec());
+      port.close();
+      std::this_thread::sleep_for(
+          std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
+      continue;
     }
 
     bool useNameBasedConfig = false;
@@ -278,17 +278,11 @@ void SmaBus::workerLoop() {
     }
 
     if (useNameBasedConfig && channelCatalog_.empty()) {
-      if (!detected) {
-        SmaDetectedDevice placeholder;
-        placeholder.netAddress = config_.netAddress;
-        detected = placeholder;
-      }
       auto catalog = loadChannelCatalog(client, config_, *detected);
       if (!catalog) {
         SUPLA_LOG_WARNING(
             "SmaBus: no channel catalog — check net_address, wiring, or set "
             "device.profile (see sma/README.md)");
-        smanetLoggedIn = false;
         const int backoff = client.backoffSec();
         port.close();
         std::this_thread::sleep_for(
@@ -315,91 +309,101 @@ void SmaBus::workerLoop() {
     }
 
     std::map<std::string, double> bulkValues;
-    bool pollOk = true;
+    bool bulkOk = true;
 
     if (useNameBasedConfig) {
-      if (!client.readSpotChannelsBulk(channelCatalog_, &bulkValues)) {
-        pollOk = false;
+      bulkOk = client.readSpotChannelsBulk(channelCatalog_, &bulkValues);
+      if (!bulkOk) {
+        bulkValues.clear();
       }
     }
 
+    bool anySubscriberUpdated = false;
+
     for (auto& subscriber : subscribers) {
       std::map<std::string, double> readings;
-      if (!pollOk) {
-        if (subscriber.cacheMutex != nullptr && subscriber.cacheValid != nullptr) {
-          std::lock_guard<std::mutex> lock(*subscriber.cacheMutex);
-          *subscriber.cacheValid = false;
-        }
+      auto state = subscriber.state;
+
+      if (!state) {
+        continue;
+      }
+      std::vector<Supla::PV::SmaMappedChannel> channels;
+      {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        channels = state->channels;
+      }
+      if (channels.empty()) {
         continue;
       }
 
-      if (subscriber.channels == nullptr) {
-        continue;
-      }
+      bool subscriberOk = true;
 
       if (useNameBasedConfig) {
-        for (const auto& mapped : *subscriber.channels) {
+        for (const auto& mapped : channels) {
           if (mapped.descriptor.ctype == 0 && mapped.resolveByName) {
             continue;
           }
           const std::string& lookupName =
               mapped.smaName.empty() ? mapped.key : mapped.smaName;
+
           const auto it = bulkValues.find(lookupName);
-          if (it == bulkValues.end()) {
-            SUPLA_LOG_DEBUG("SmaBus: no bulk value for channel %s",
+          if (it != bulkValues.end()) {
+            readings[mapped.key] = it->second;
+            SUPLA_LOG_VERBOSE("SmaBus: subscriber value %s (%s) = %.6f",
+                              mapped.key.c_str(),
+                              lookupName.c_str(),
+                              it->second);
+            continue;
+          }
+
+          // Bulk GET_DATA payloads are often shorter than the full catalog
+          // (YASDI stops at end of frame); read counters like E-Total per
+          // channel.
+          double value = 0.0;
+          if (!client.readChannel(mapped.descriptor, &value)) {
+            SUPLA_LOG_DEBUG("SmaBus: read failed for channel %s (%s)",
+                            mapped.key.c_str(),
                             lookupName.c_str());
-            pollOk = false;
+            subscriberOk = false;
             break;
           }
-          readings[mapped.key] = it->second;
-          SUPLA_LOG_VERBOSE("SmaBus: subscriber value %s (%s) = %.6f",
-                            mapped.key.c_str(),
-                            lookupName.c_str(),
-                            it->second);
+          readings[mapped.key] = value;
+          SUPLA_LOG_VERBOSE(
+              "SmaBus: subscriber value %s (%s) = %.6f (single-channel)",
+              mapped.key.c_str(),
+              lookupName.c_str(),
+              value);
         }
       } else {
-        for (const auto& mapped : *subscriber.channels) {
+        for (const auto& mapped : channels) {
           double value = 0.0;
           if (!client.readChannel(mapped.descriptor, &value)) {
             SUPLA_LOG_DEBUG("SmaBus: read failed for channel %s",
                             mapped.key.c_str());
-            pollOk = false;
+            subscriberOk = false;
             break;
           }
           readings[mapped.key] = value;
         }
       }
 
-      if (!pollOk) {
-        if (subscriber.cacheMutex != nullptr && subscriber.cacheValid != nullptr) {
-          std::lock_guard<std::mutex> lock(*subscriber.cacheMutex);
-          *subscriber.cacheValid = false;
-        }
+      if (!subscriberOk) {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->cacheValid = false;
         continue;
       }
 
-      if (subscriber.cacheMutex != nullptr && subscriber.valuesByKey != nullptr &&
-          subscriber.cacheValid != nullptr) {
-        std::lock_guard<std::mutex> lock(*subscriber.cacheMutex);
-        *subscriber.valuesByKey = readings;
-        *subscriber.cacheValid = true;
-      }
+      std::lock_guard<std::mutex> lock(state->mutex);
+      state->valuesByKey = readings;
+      state->cacheValid = true;
+      anySubscriberUpdated = true;
     }
 
-    if (!pollOk) {
+    if (!anySubscriberUpdated) {
       const int backoff = client.backoffSec();
-      if (smanetLoggedIn) {
-        SUPLA_LOG_WARNING(
-            "SmaBus: spot read failed, keep session open, retry in %d s",
-            backoff > 0 ? backoff : 1);
-        std::this_thread::sleep_for(
-            std::chrono::seconds(backoff > 0 ? backoff : 1));
-        continue;
-      }
       SUPLA_LOG_WARNING("SmaBus: poll failed, backoff %d s (errors=%d)",
                         backoff > 0 ? backoff : pollIntervalSec,
                         client.backoffSec());
-      smanetLoggedIn = false;
       port.close();
       std::this_thread::sleep_for(
           std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
@@ -411,7 +415,10 @@ void SmaBus::workerLoop() {
   }
 
   port.close();
-  workerRunning_ = false;
+  {
+    std::lock_guard<std::mutex> lock(subscribersMutex_);
+    workerRunning_ = false;
+  }
 }
 
 }  // namespace Sma

@@ -18,9 +18,8 @@
 
 #include "sma_serial_port.h"
 
-#include <supla/log_wrapper.h>
-
 #include <fcntl.h>
+#include <supla/log_wrapper.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
@@ -86,12 +85,23 @@ bool modemStatusClr(int fd, int flag) {
   return ioctl(fd, TIOCMSET, &status) >= 0;
 }
 
+void logDirectionControlError(int fd, const char* operation) {
+  SUPLA_LOG_WARNING(
+      "SmaBus: RS485 direction control failed fd=%d op=%s "
+      "(errno=%d %s)",
+      fd,
+      operation,
+      errno,
+      std::strerror(errno));
+}
+
 }  // namespace
 
 SmaSerialPort::SmaSerialPort(std::string devicePath,
                              int baud,
                              SerialMedia media)
-    : devicePath_(std::move(devicePath)), baud_(baud), media_(media) {}
+    : devicePath_(std::move(devicePath)), baud_(baud), media_(media) {
+}
 
 SmaSerialPort::~SmaSerialPort() {
   close();
@@ -183,23 +193,40 @@ void SmaSerialPort::waitBusFree() {
   // not RS232/RS485 (serial_posix.c).
 }
 
-void SmaSerialPort::prepareSend() {
+bool SmaSerialPort::prepareSend() {
   if (media_ != SerialMedia::RS485 || fd_ < 0) {
-    return;
+    return true;
   }
-  modemStatusSet(fd_, TIOCM_RTS);
-  modemStatusClr(fd_, TIOCM_DTR);
+  if (!modemStatusSet(fd_, TIOCM_RTS)) {
+    logDirectionControlError(fd_, "set RTS");
+    return false;
+  }
+  if (!modemStatusClr(fd_, TIOCM_DTR)) {
+    logDirectionControlError(fd_, "clear DTR");
+    return false;
+  }
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  return true;
 }
 
-void SmaSerialPort::prepareRecv() {
+bool SmaSerialPort::prepareRecv() {
   if (media_ != SerialMedia::RS485 || fd_ < 0) {
-    return;
+    return true;
   }
-  tcdrain(fd_);
+  if (tcdrain(fd_) != 0) {
+    logDirectionControlError(fd_, "tcdrain");
+    return false;
+  }
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  modemStatusClr(fd_, TIOCM_RTS);
-  modemStatusSet(fd_, TIOCM_DTR);
+  if (!modemStatusClr(fd_, TIOCM_RTS)) {
+    logDirectionControlError(fd_, "clear RTS");
+    return false;
+  }
+  if (!modemStatusSet(fd_, TIOCM_DTR)) {
+    logDirectionControlError(fd_, "set DTR");
+    return false;
+  }
+  return true;
 }
 
 bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
@@ -208,7 +235,9 @@ bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
   }
 
   waitBusFree();
-  prepareSend();
+  if (!prepareSend()) {
+    return false;
+  }
 
   size_t offset = 0;
   while (offset < len) {
@@ -217,6 +246,18 @@ bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
       if (errno == EINTR) {
         continue;
       }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        fd_set writefds;
+        FD_ZERO(&writefds);
+        FD_SET(fd_, &writefds);
+
+        timeval tv{};
+        tv.tv_sec = 1;
+        const int ready = select(fd_ + 1, nullptr, &writefds, nullptr, &tv);
+        if (ready > 0) {
+          continue;
+        }
+      }
       SUPLA_LOG_WARNING("SmaBus: write %s failed at offset %zu (errno=%d %s)",
                         devicePath_.c_str(),
                         offset,
@@ -224,12 +265,20 @@ bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
                         std::strerror(errno));
       return false;
     }
+    if (written == 0) {
+      SUPLA_LOG_WARNING("SmaBus: write %s made no progress at offset %zu",
+                        devicePath_.c_str(),
+                        offset);
+      return false;
+    }
     offset += static_cast<size_t>(written);
   }
 
-  tcdrain(fd_);
-  prepareRecv();
-  return true;
+  if (tcdrain(fd_) != 0) {
+    logDirectionControlError(fd_, "tcdrain after write");
+    return false;
+  }
+  return prepareRecv();
 }
 
 ssize_t SmaSerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {

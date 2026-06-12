@@ -11,10 +11,10 @@
 
 #include <supla/log_wrapper.h>
 
-#include "sma_types.h"
-
 #include <cstdio>
 #include <string>
+
+#include "sma_types.h"
 
 namespace Supla {
 namespace Linux {

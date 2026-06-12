@@ -41,11 +41,15 @@ struct SmaBusConfig {
 class SmaBus : public std::enable_shared_from_this<SmaBus> {
  public:
   struct Subscriber {
-    void* owner = nullptr;
-    std::vector<Supla::PV::SmaMappedChannel>* channels = nullptr;
-    std::mutex* cacheMutex = nullptr;
-    std::map<std::string, double>* valuesByKey = nullptr;
-    bool* cacheValid = nullptr;
+    struct State {
+      void* owner = nullptr;
+      std::vector<Supla::PV::SmaMappedChannel> channels;
+      mutable std::mutex mutex;
+      std::map<std::string, double> valuesByKey;
+      bool cacheValid = false;
+    };
+
+    std::shared_ptr<State> state;
   };
 
   static std::shared_ptr<SmaBus> acquire(const SmaBusConfig& config);

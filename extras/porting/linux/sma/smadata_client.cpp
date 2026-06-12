@@ -22,8 +22,12 @@
 #include <supla/log_wrapper.h>
 
 #include <chrono>
+#include <cinttypes>
 #include <ctime>
+#include <map>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace Supla {
@@ -58,9 +62,8 @@ size_t countCatalogChannelsForMask(const std::vector<SmaChannelInfo>& catalog,
                                    uint8_t chanNr) {
   size_t count = 0;
   for (const auto& channelInfo : catalog) {
-    if (SmaChannelCodec::channelMatchesFilter(channelInfo.descriptor,
-                                              mask,
-                                              chanNr)) {
+    if (SmaChannelCodec::channelMatchesFilter(
+            channelInfo.descriptor, mask, chanNr)) {
       ++count;
     }
   }
@@ -87,8 +90,7 @@ bool detectedDeviceMatchesProfile(const SmaDetectedDevice& device,
   if (deviceProfile.empty()) {
     return true;
   }
-  return normalizeProfileRef(device.type) ==
-         normalizeProfileRef(deviceProfile);
+  return normalizeProfileRef(device.type) == normalizeProfileRef(deviceProfile);
 }
 
 }  // namespace
@@ -96,7 +98,8 @@ bool detectedDeviceMatchesProfile(const SmaDetectedDevice& device,
 SmaDataClient::SmaDataClient(SmaSerialPort& port,
                              uint16_t masterAddr,
                              uint16_t deviceAddr)
-    : port_(port), masterAddr_(masterAddr), deviceAddr_(deviceAddr) {}
+    : port_(port), masterAddr_(masterAddr), deviceAddr_(deviceAddr) {
+}
 
 void SmaDataClient::hostToLe16(uint16_t val, uint8_t* dst) {
   dst[0] = static_cast<uint8_t>(val & 0xff);
@@ -141,10 +144,7 @@ bool SmaDataClient::configureNetAddress(uint32_t serial, uint16_t newAddr) {
   }
 
   SmaReadStats stats;
-  auto reply = readOneFrame(kCfgNetAddrTimeoutMs,
-                            kCmdCfgNetAddr,
-                            true,
-                            &stats);
+  auto reply = readOneFrame(kCfgNetAddrTimeoutMs, kCmdCfgNetAddr, true, &stats);
   if (!reply) {
     SUPLA_LOG_WARNING("SmaBus: %s failed for SN=%u newAddr=0x%04x",
                       smaCmdName(kCmdCfgNetAddr),
@@ -155,11 +155,10 @@ bool SmaDataClient::configureNetAddress(uint32_t serial, uint16_t newAddr) {
   }
 
   deviceAddr_ = reply->head.sourceAddr;
-  SUPLA_LOG_INFO(
-      "SmaDataClient: %s OK SN=%u net_address=0x%04x",
-      smaCmdName(kCmdCfgNetAddr),
-      serial,
-      deviceAddr_);
+  SUPLA_LOG_INFO("SmaDataClient: %s OK SN=%u net_address=0x%04x",
+                 smaCmdName(kCmdCfgNetAddr),
+                 serial,
+                 deviceAddr_);
   resetBackoff();
   return true;
 }
@@ -214,13 +213,8 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
     payload.insert(payload.end(), txData, txData + txLen);
   }
 
-  smaLogSmadataTx(cmd,
-                  effectiveDest,
-                  masterAddr_,
-                  head[5],
-                  broadcast,
-                  txData,
-                  txLen);
+  smaLogSmadataTx(
+      cmd, effectiveDest, masterAddr_, head[5], broadcast, txData, txLen);
 
   const auto frame =
       framer_.encapsulate(kProtPppSmadata1, payload.data(), payload.size());
@@ -232,9 +226,8 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
     return false;
   }
 
-  SUPLA_LOG_DEBUG("SmaBus: wire TX %zu bytes for %s",
-                  frame.size(),
-                  smaCmdName(cmd));
+  SUPLA_LOG_DEBUG(
+      "SmaBus: wire TX %zu bytes for %s", frame.size(), smaCmdName(cmd));
   smaLogHexVerbose("wire TX", frame.data(), frame.size());
   return true;
 }
@@ -412,9 +405,7 @@ std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
 }
 
 std::optional<SmaDataResponse> SmaDataClient::readResponse(
-    int timeoutMs,
-    uint8_t expectedCmd,
-    SmaReadStats* stats) {
+    int timeoutMs, uint8_t expectedCmd, SmaReadStats* stats) {
   std::vector<uint8_t> accumulated;
   int fragments = 0;
 
@@ -422,7 +413,8 @@ std::optional<SmaDataResponse> SmaDataClient::readResponse(
     auto fragment = readOneFrame(timeoutMs, expectedCmd, false, stats);
     if (!fragment) {
       if (fragments == 0) {
-        SUPLA_LOG_WARNING("SmaBus: no response for %s", smaCmdName(expectedCmd));
+        SUPLA_LOG_WARNING("SmaBus: no response for %s",
+                          smaCmdName(expectedCmd));
       } else {
         SUPLA_LOG_WARNING(
             "SmaBus: incomplete %s after %d fragment(s), %zu bytes accumulated",
@@ -434,17 +426,17 @@ std::optional<SmaDataResponse> SmaDataClient::readResponse(
     }
 
     ++fragments;
-    accumulated.insert(accumulated.end(),
-                       fragment->payload.begin(),
-                       fragment->payload.end());
+    accumulated.insert(
+        accumulated.end(), fragment->payload.begin(), fragment->payload.end());
 
     if (fragment->head.pktCnt == 0) {
       fragment->payload = std::move(accumulated);
       if (fragments > 1) {
-        SUPLA_LOG_DEBUG("SmaDataClient: reassembled %s in %d fragments (%zu bytes)",
-                        smaCmdName(expectedCmd),
-                        fragments,
-                        fragment->payload.size());
+        SUPLA_LOG_DEBUG(
+            "SmaDataClient: reassembled %s in %d fragments (%zu bytes)",
+            smaCmdName(expectedCmd),
+            fragments,
+            fragment->payload.size());
       }
       return fragment;
     }
@@ -566,26 +558,18 @@ bool SmaDataClient::readChannel(const SmaChannelDescriptor& channel,
     return false;
   }
 
-  return SmaChannelCodec::parseGetDataValue(response.payload.data(),
-                                           response.payload.size(),
-                                           channel,
-                                           outValue);
+  return SmaChannelCodec::parseGetDataValue(
+      response.payload.data(), response.payload.size(), channel, outValue);
 }
 
 bool SmaDataClient::verifyCinfo() {
   SmaDataResponse response;
-  return transact(deviceAddr_,
-                  kCmdGetCinfo,
-                  nullptr,
-                  0,
-                  false,
-                  kCinfoTimeoutMs,
-                  &response);
+  return transact(
+      deviceAddr_, kCmdGetCinfo, nullptr, 0, false, kCinfoTimeoutMs, &response);
 }
 
 std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
-    int timeoutMs,
-    const std::string& deviceProfile) {
+    int timeoutMs, const std::string& deviceProfile) {
   framer_.reset();
   if (!sendSmadata(0, kCmdGetNetStart, nullptr, 0, true)) {
     return std::nullopt;
@@ -673,7 +657,8 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
                         payload,
                         payloadLen);
         SUPLA_LOG_INFO(
-            "SmaDataClient: detected SMA device type=%s SN=%u net_address=0x%04x",
+            "SmaDataClient: detected SMA device type=%s SN=%u "
+            "net_address=0x%04x",
             device->type.c_str(),
             device->serial,
             device->netAddress);
@@ -691,11 +676,11 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
 
   const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - started);
-  SUPLA_LOG_DEBUG(
-      "SmaBus: detection done in %lld ms (rawBytes=%d hdlcFrames=%d)",
-      static_cast<long long>(elapsedMs.count()),
-      stats.rawBytes,
-      stats.hdlcFrames);
+  SUPLA_LOG_DEBUG("SmaBus: detection done in %" PRId64
+                  " ms (rawBytes=%d hdlcFrames=%d)",
+                  static_cast<int64_t>(elapsedMs.count()),
+                  stats.rawBytes,
+                  stats.hdlcFrames);
   return device;
 }
 
@@ -721,9 +706,8 @@ std::optional<std::vector<SmaChannelInfo>> SmaDataClient::fetchChannelList() {
       continue;
     }
 
-    if (auto catalog =
-            SmaCinfoParser::parse(response.payload.data(),
-                                  response.payload.size())) {
+    if (auto catalog = SmaCinfoParser::parse(response.payload.data(),
+                                             response.payload.size())) {
       SUPLA_LOG_INFO("SmaDataClient: %s returned %zu channels (%zu bytes)",
                      smaCmdName(kCmdGetCinfo),
                      catalog->size(),
@@ -747,8 +731,8 @@ bool SmaDataClient::readSpotChannelsBulk(
     return false;
   }
 
-  const size_t matchingChannels = countCatalogChannelsForMask(
-      catalog, kChSpotOnlineMask, 0);
+  const size_t matchingChannels =
+      countCatalogChannelsForMask(catalog, kChSpotOnlineMask, 0);
   SUPLA_LOG_DEBUG(
       "SmaBus: bulk spot read catalog=%zu channels, %zu match mask 0x%04x",
       catalog.size(),
@@ -808,17 +792,16 @@ bool SmaDataClient::readSpotChannelsBulk(
         response.payload.size(),
         catalog.size(),
         matchingChannels);
-    smaLogHexVerbose("GET_DATA payload", response.payload.data(),
-                     response.payload.size());
+    smaLogHexVerbose(
+        "GET_DATA payload", response.payload.data(), response.payload.size());
     return false;
   }
 
   SUPLA_LOG_DEBUG("SmaBus: bulk spot read OK, %zu channel values",
                   outValuesByName->size());
   for (const auto& entry : *outValuesByName) {
-    SUPLA_LOG_VERBOSE("SmaBus: spot %s = %.6f",
-                      entry.first.c_str(),
-                      entry.second);
+    SUPLA_LOG_VERBOSE(
+        "SmaBus: spot %s = %.6f", entry.first.c_str(), entry.second);
   }
   return true;
 }

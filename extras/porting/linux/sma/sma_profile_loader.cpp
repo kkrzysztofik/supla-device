@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <string>
 #include <vector>
 
 #include "sma_cinfo_parser.h"

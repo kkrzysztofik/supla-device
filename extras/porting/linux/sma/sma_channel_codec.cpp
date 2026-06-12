@@ -23,6 +23,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace Supla {
 namespace Linux {
@@ -260,7 +263,8 @@ bool SmaChannelCodec::parseBulkSpotValuesByName(
     std::map<std::string, double>* outValuesByName) {
   if (data == nullptr || outValuesByName == nullptr || len < 5 ||
       catalog.empty()) {
-    SUPLA_LOG_WARNING("SmaBus: bulk parse aborted (invalid args or empty catalog)");
+    SUPLA_LOG_WARNING(
+        "SmaBus: bulk parse aborted (invalid args or empty catalog)");
     return false;
   }
 

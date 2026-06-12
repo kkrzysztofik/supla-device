@@ -118,6 +118,7 @@ add_executable(supladevicetests ${TEST_SRC} ${DOUBLE_SRC})
 target_sources(supladevicetests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/smanet_framer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_channel_codec.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_cinfo_parser.cpp
 )
 
 add_executable(sd4linuxtests

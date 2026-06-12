@@ -30,7 +30,7 @@ channels:
       Uac: voltage
       Fac: frequency
       "Iac-Ist": current
-      "E-Total": fwd_act_energy
+      "E-Total": rvr_act_energy
 
   - type: SmaDcMeter
     caption: SMA WR33 DC

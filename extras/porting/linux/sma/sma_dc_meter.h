@@ -10,6 +10,9 @@
 #ifndef EXTRAS_PORTING_LINUX_SMA_SMA_DC_METER_H_
 #define EXTRAS_PORTING_LINUX_SMA_SMA_DC_METER_H_
 
+#include <map>
+#include <string>
+
 #include "sma_inverter.h"
 
 namespace Supla {
@@ -20,7 +23,8 @@ class SmaDcMeter : public SmaInverter {
   using SmaInverter::SmaInverter;
 
  protected:
-  void applyMappedReadings(const std::map<std::string, double>& values) override;
+  void applyMappedReadings(
+      const std::map<std::string, double>& values) override;
 };
 
 }  // namespace PV

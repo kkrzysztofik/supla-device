@@ -11,10 +11,21 @@
 
 #include <cmath>
 #include <map>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace Supla {
 namespace PV {
+
+namespace {
+
+int normalizePollIntervalSec(int pollIntervalSec) {
+  return pollIntervalSec > 0 ? pollIntervalSec
+                             : Supla::Linux::Sma::kDefaultPollIntervalSec;
+}
+
+}  // namespace
 
 SmaMeasurement::SmaMeasurement(std::string serialDevice,
                                int baud,
@@ -31,13 +42,11 @@ SmaMeasurement::SmaMeasurement(std::string serialDevice,
                      baud,
                      media,
                      netAddress,
-                     pollIntervalSec > 0 ? pollIntervalSec
-                                         : Supla::Linux::Sma::kDefaultPollIntervalSec,
+                     normalizePollIntervalSec(pollIntervalSec),
+                     // NOLINTNEXTLINE(whitespace/indent_namespace)
                      std::move(deviceProfile)},
                  std::move(channels)) {
-  const int intervalSec =
-      pollIntervalSec > 0 ? pollIntervalSec
-                          : Supla::Linux::Sma::kDefaultPollIntervalSec;
+  const int intervalSec = normalizePollIntervalSec(pollIntervalSec);
   setRefreshIntervalMs(intervalSec * 1000);
 }
 

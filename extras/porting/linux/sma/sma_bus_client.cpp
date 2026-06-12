@@ -9,6 +9,11 @@
 
 #include "sma_bus_client.h"
 
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace Supla {
 namespace Linux {
 namespace Sma {
@@ -16,9 +21,11 @@ namespace Sma {
 SmaBusClient::SmaBusClient(void* owner,
                            SmaBusConfig config,
                            std::vector<Supla::PV::SmaMappedChannel> channels)
-    : owner_(owner),
-      config_(std::move(config)),
-      channels_(std::move(channels)) {}
+    : config_(std::move(config)),
+      state_(std::make_shared<SmaBus::Subscriber::State>()) {
+  state_->owner = owner;
+  state_->channels = std::move(channels);
+}
 
 SmaBusClient::~SmaBusClient() {
   detach();
@@ -31,24 +38,26 @@ void SmaBusClient::attach() {
 
   bus_ = SmaBus::acquire(config_);
   SmaBus::Subscriber subscriber;
-  subscriber.owner = owner_;
-  subscriber.channels = &channels_;
-  subscriber.cacheMutex = &cacheMutex_;
-  subscriber.valuesByKey = &valuesByKey_;
-  subscriber.cacheValid = &cacheValid_;
+  subscriber.state = state_;
   bus_->subscribe(subscriber);
 }
 
 void SmaBusClient::detach() {
   if (bus_) {
-    bus_->unsubscribe(owner_);
+    bus_->unsubscribe(state_->owner);
     bus_.reset();
   }
 }
 
-const std::vector<Supla::PV::SmaMappedChannel>& SmaBusClient::channels()
-    const {
-  return channels_;
+bool SmaBusClient::copyChannels(
+    std::vector<Supla::PV::SmaMappedChannel>* channels) const {
+  if (channels == nullptr) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(state_->mutex);
+  *channels = state_->channels;
+  return true;
 }
 
 bool SmaBusClient::copyReadings(std::map<std::string, double>* values,
@@ -57,9 +66,9 @@ bool SmaBusClient::copyReadings(std::map<std::string, double>* values,
     return false;
   }
 
-  std::lock_guard<std::mutex> lock(cacheMutex_);
-  *values = valuesByKey_;
-  *valid = cacheValid_;
+  std::lock_guard<std::mutex> lock(state_->mutex);
+  *values = state_->valuesByKey;
+  *valid = state_->cacheValid;
   return true;
 }
 

@@ -34,17 +34,13 @@ class SmaBusClient {
   void detach();
 
   bool copyReadings(std::map<std::string, double>* values, bool* valid) const;
-  const std::vector<Supla::PV::SmaMappedChannel>& channels() const;
+  bool copyChannels(std::vector<Supla::PV::SmaMappedChannel>* channels) const;
 
  private:
-  void* owner_;
   SmaBusConfig config_;
-  std::vector<Supla::PV::SmaMappedChannel> channels_;
+  std::shared_ptr<SmaBus::Subscriber::State> state_;
 
   std::shared_ptr<SmaBus> bus_;
-  mutable std::mutex cacheMutex_;
-  std::map<std::string, double> valuesByKey_;
-  bool cacheValid_ = false;
 };
 
 }  // namespace Sma
