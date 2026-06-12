@@ -44,6 +44,19 @@ constexpr int kCinfoRepeats = 5;
 constexpr int kMaxFollowPackets = 64;
 constexpr int kMaxBackoffSec = 60;
 
+using Clock = std::chrono::steady_clock;
+using Deadline = Clock::time_point;
+
+Deadline makeDeadline(int timeoutMs) {
+  return Clock::now() + std::chrono::milliseconds(timeoutMs);
+}
+
+int waitMsUntil(Deadline deadline) {
+  const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+      deadline - Clock::now());
+  return remaining.count() > 0 ? static_cast<int>(remaining.count()) : 1;
+}
+
 bool parseSmadataPayload(const std::vector<uint8_t>& payload,
                          SmaDataHead* head) {
   if (head == nullptr || payload.size() < 7) {
@@ -85,12 +98,49 @@ std::string normalizeProfileRef(std::string profile) {
   return profile.substr(start);
 }
 
+void trimDeviceType(std::string* type) {
+  if (type == nullptr) {
+    return;
+  }
+  while (!type->empty() && type->back() == ' ') {
+    type->pop_back();
+  }
+  const auto start = type->find_first_not_of(' ');
+  if (start != std::string::npos) {
+    *type = type->substr(start);
+  }
+}
+
 bool detectedDeviceMatchesProfile(const SmaDetectedDevice& device,
                                   const std::string& deviceProfile) {
   if (deviceProfile.empty()) {
     return true;
   }
   return normalizeProfileRef(device.type) == normalizeProfileRef(deviceProfile);
+}
+
+std::optional<SmaDetectedDevice> parseDetectedDevice(
+    const SmaDataHead& head,
+    const std::vector<uint8_t>& wirePayload,
+    uint16_t masterAddr) {
+  if (head.cmd != kCmdGetNetStart || !(head.ctrl & kCtrlAck) ||
+      head.destAddr != masterAddr || head.sourceAddr == 0 ||
+      wirePayload.size() < 19) {
+    return std::nullopt;
+  }
+
+  const uint8_t* payload = wirePayload.data() + 7;
+  const size_t payloadLen = wirePayload.size() - 7;
+  if (payloadLen < 12) {
+    return std::nullopt;
+  }
+
+  SmaDetectedDevice detected;
+  detected.netAddress = head.sourceAddr;
+  detected.serial = SmaChannelCodec::le32ToHost(payload);
+  detected.type.assign(reinterpret_cast<const char*>(&payload[4]), 8);
+  trimDeviceType(&detected.type);
+  return detected;
 }
 
 }  // namespace
@@ -233,16 +283,11 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
 }
 
 void SmaDataClient::drainSerial(int timeoutMs, SmaReadStats* stats) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  const auto deadline = makeDeadline(timeoutMs);
   uint8_t buffer[256];
 
-  while (std::chrono::steady_clock::now() < deadline) {
-    const auto remaining =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
-    const int waitMs =
-        remaining.count() > 0 ? static_cast<int>(remaining.count()) : 1;
+  while (Clock::now() < deadline) {
+    const int waitMs = waitMsUntil(deadline);
     const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
     if (readBytes <= 0) {
       continue;
@@ -282,18 +327,13 @@ std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
     uint8_t expectedCmd,
     bool acceptAnySource,
     SmaReadStats* stats) {
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  const auto deadline = makeDeadline(timeoutMs);
   uint8_t buffer[256];
 
   port_.prepareRecv();
 
-  while (std::chrono::steady_clock::now() < deadline) {
-    const auto remaining =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
-    const int waitMs =
-        remaining.count() > 0 ? static_cast<int>(remaining.count()) : 1;
+  while (Clock::now() < deadline) {
+    const int waitMs = waitMsUntil(deadline);
     const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
     if (readBytes < 0) {
       SUPLA_LOG_WARNING("SmaBus: serial read error while waiting for %s",
@@ -577,19 +617,15 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
 
   // YASDI waits the full DetectionTimeout when discovering multiple devices;
   // stop early once the configured profile (or any device if unset) is found.
-  const auto started = std::chrono::steady_clock::now();
-  const auto deadline = started + std::chrono::milliseconds(timeoutMs);
+  const auto started = Clock::now();
+  const auto deadline = makeDeadline(timeoutMs);
   std::optional<SmaDetectedDevice> device;
   SmaReadStats stats;
   uint8_t buffer[256];
   bool found = false;
 
-  while (!found && std::chrono::steady_clock::now() < deadline) {
-    const auto remaining =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
-    const int waitMs =
-        remaining.count() > 0 ? static_cast<int>(remaining.count()) : 1;
+  while (!found && Clock::now() < deadline) {
+    const int waitMs = waitMsUntil(deadline);
     const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
     if (readBytes <= 0) {
       continue;
@@ -613,42 +649,24 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
         stats.lastSeenSrc = head.sourceAddr;
         stats.lastSeenDest = head.destAddr;
 
-        if (head.cmd != kCmdGetNetStart || !(head.ctrl & kCtrlAck) ||
-            head.destAddr != masterAddr_ || head.sourceAddr == 0) {
-          continue;
-        }
-        if (frame->payload.size() < 19) {
+        auto detected = parseDetectedDevice(head, frame->payload, masterAddr_);
+        if (!detected) {
           continue;
         }
 
-        SmaDetectedDevice detected;
-        detected.netAddress = head.sourceAddr;
-        const uint8_t* payload = frame->payload.data() + 7;
-        const size_t payloadLen = frame->payload.size() - 7;
-        if (payloadLen < 12) {
-          continue;
-        }
-        detected.serial = SmaChannelCodec::le32ToHost(payload);
-        detected.type.assign(reinterpret_cast<const char*>(&payload[4]), 8);
-        while (!detected.type.empty() && detected.type.back() == ' ') {
-          detected.type.pop_back();
-        }
-        const auto start = detected.type.find_first_not_of(' ');
-        if (start != std::string::npos) {
-          detected.type = detected.type.substr(start);
-        }
-
-        if (!detectedDeviceMatchesProfile(detected, deviceProfile)) {
+        if (!detectedDeviceMatchesProfile(*detected, deviceProfile)) {
           SUPLA_LOG_DEBUG(
               "SmaBus: ignoring detected %s SN=%u (profile filter \"%s\")",
-              detected.type.c_str(),
-              detected.serial,
+              detected->type.c_str(),
+              detected->serial,
               deviceProfile.c_str());
           continue;
         }
 
         device = std::move(detected);
         found = true;
+        const uint8_t* payload = frame->payload.data() + 7;
+        const size_t payloadLen = frame->payload.size() - 7;
 
         smaLogSmadataRx(head.cmd,
                         head.sourceAddr,
@@ -675,7 +693,7 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
   }
 
   const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - started);
+      Clock::now() - started);
   SUPLA_LOG_DEBUG("SmaBus: detection done in %" PRId64
                   " ms (rawBytes=%d hdlcFrames=%d)",
                   static_cast<int64_t>(elapsedMs.count()),

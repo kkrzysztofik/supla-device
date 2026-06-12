@@ -10,10 +10,11 @@
 #include "sma_dc_meter.h"
 
 #include <cmath>
-#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
+
+#include "sma_channel_helpers.h"
 
 namespace Supla {
 namespace PV {
@@ -21,15 +22,15 @@ namespace PV {
 namespace {
 
 bool mappingIsPower(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "power_active") == 0;
+  return smaMappingIs(mapping, "power_active");
 }
 
 bool mappingIsVoltage(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "voltage") == 0;
+  return smaMappingIs(mapping, "voltage");
 }
 
 bool mappingIsCurrent(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "current") == 0;
+  return smaMappingIs(mapping, "current");
 }
 
 }  // namespace

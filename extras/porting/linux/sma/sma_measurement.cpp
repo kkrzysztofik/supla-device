@@ -15,17 +15,10 @@
 #include <utility>
 #include <vector>
 
+#include "sma_channel_helpers.h"
+
 namespace Supla {
 namespace PV {
-
-namespace {
-
-int normalizePollIntervalSec(int pollIntervalSec) {
-  return pollIntervalSec > 0 ? pollIntervalSec
-                             : Supla::Linux::Sma::kDefaultPollIntervalSec;
-}
-
-}  // namespace
 
 SmaMeasurement::SmaMeasurement(std::string serialDevice,
                                int baud,
@@ -37,16 +30,14 @@ SmaMeasurement::SmaMeasurement(std::string serialDevice,
     : Supla::Sensor::GeneralPurposeMeasurement(nullptr, false),
       channelKey_(channels.empty() ? std::string() : channels.front().key),
       busClient_(this,
-                 Supla::Linux::Sma::SmaBusConfig{
-                     std::move(serialDevice),
-                     baud,
-                     media,
-                     netAddress,
-                     normalizePollIntervalSec(pollIntervalSec),
-                     // NOLINTNEXTLINE(whitespace/indent_namespace)
-                     std::move(deviceProfile)},
+                 makeSmaBusConfig(std::move(serialDevice),
+                                  baud,
+                                  media,
+                                  netAddress,
+                                  pollIntervalSec,
+                                  std::move(deviceProfile)),
                  std::move(channels)) {
-  const int intervalSec = normalizePollIntervalSec(pollIntervalSec);
+  const int intervalSec = normalizeSmaPollIntervalSec(pollIntervalSec);
   setRefreshIntervalMs(intervalSec * 1000);
 }
 

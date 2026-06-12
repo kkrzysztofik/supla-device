@@ -12,11 +12,12 @@
 #include <supla/time.h>
 
 #include <cmath>
-#include <cstring>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "sma_channel_helpers.h"
 
 namespace Supla {
 namespace PV {
@@ -24,27 +25,27 @@ namespace PV {
 namespace {
 
 bool mappingIsPower(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "power_active") == 0;
+  return smaMappingIs(mapping, "power_active");
 }
 
 bool mappingIsRvrEnergy(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "rvr_act_energy") == 0;
+  return smaMappingIs(mapping, "rvr_act_energy");
 }
 
 bool mappingIsFwdEnergy(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "fwd_act_energy") == 0;
+  return smaMappingIs(mapping, "fwd_act_energy");
 }
 
 bool mappingIsVoltage(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "voltage") == 0;
+  return smaMappingIs(mapping, "voltage");
 }
 
 bool mappingIsCurrent(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "current") == 0;
+  return smaMappingIs(mapping, "current");
 }
 
 bool mappingIsFrequency(const char* mapping) {
-  return mapping != nullptr && std::strcmp(mapping, "frequency") == 0;
+  return smaMappingIs(mapping, "frequency");
 }
 
 // SMA Pac is positive when feeding the grid; SUPLA uses negative active power
@@ -57,11 +58,6 @@ unsigned smaAcCurrentToSupla(double amps) {
   return static_cast<unsigned>(std::llround(std::abs(amps) * 1000.0));
 }
 
-int normalizePollIntervalSec(int pollIntervalSec) {
-  return pollIntervalSec > 0 ? pollIntervalSec
-                             : Supla::Linux::Sma::kDefaultPollIntervalSec;
-}
-
 }  // namespace
 
 SmaInverter::SmaInverter(std::string serialDevice,
@@ -72,17 +68,15 @@ SmaInverter::SmaInverter(std::string serialDevice,
                          std::vector<SmaMappedChannel> channels,
                          std::string deviceProfile)
     : busClient_(this,
-                 Supla::Linux::Sma::SmaBusConfig{
-                     std::move(serialDevice),
-                     baud,
-                     media,
-                     netAddress,
-                     normalizePollIntervalSec(pollIntervalSec),
-                     // NOLINTNEXTLINE(whitespace/indent_namespace)
-                     std::move(deviceProfile)},
+                 makeSmaBusConfig(std::move(serialDevice),
+                                  baud,
+                                  media,
+                                  netAddress,
+                                  pollIntervalSec,
+                                  std::move(deviceProfile)),
                  std::move(channels)),
       // NOLINTNEXTLINE(whitespace/indent_namespace)
-      pollIntervalSec_(normalizePollIntervalSec(pollIntervalSec)) {
+      pollIntervalSec_(normalizeSmaPollIntervalSec(pollIntervalSec)) {
   refreshRateSec = pollIntervalSec_;
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
   extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);

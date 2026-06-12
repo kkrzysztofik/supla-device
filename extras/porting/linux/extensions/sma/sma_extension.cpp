@@ -248,6 +248,17 @@ void applyGpmYamlOptions(const Supla::Linux::ChannelFactoryContext& context,
   }
 }
 
+template <typename ChannelT>
+bool addConfiguredChannel(const Supla::Linux::ChannelFactoryContext& context,
+                          std::unique_ptr<ChannelT> channel) {
+  const bool added =
+      context.config.addCommonChannelParameters(context.channel, channel.get());
+  if (added) {
+    channel.release();
+  }
+  return added;
+}
+
 bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
                  const char* typeName,
                  bool useDcMeter) {
@@ -286,12 +297,7 @@ bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
                                            serialConfig.deviceProfile));
   }
 
-  const bool added =
-      context.config.addCommonChannelParameters(context.channel, meter.get());
-  if (added) {
-    meter.release();
-  }
-  return added;
+  return addConfiguredChannel(context, std::move(meter));
 }
 
 bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
@@ -328,12 +334,7 @@ bool AddSmaThermometer(const Supla::Linux::ChannelFactoryContext& context) {
                                     serialConfig.pollIntervalSec,
                                     std::move(mappedChannels),
                                     serialConfig.deviceProfile));
-  const bool added = context.config.addCommonChannelParameters(
-      context.channel, thermometer.get());
-  if (added) {
-    thermometer.release();
-  }
-  return added;
+  return addConfiguredChannel(context, std::move(thermometer));
 }
 
 bool AddSmaMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
@@ -363,12 +364,7 @@ bool AddSmaMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
                                     std::move(mappedChannels),
                                     serialConfig.deviceProfile));
   applyGpmYamlOptions(context, measurement.get());
-  const bool added = context.config.addCommonChannelParameters(
-      context.channel, measurement.get());
-  if (added) {
-    measurement.release();
-  }
-  return added;
+  return addConfiguredChannel(context, std::move(measurement));
 }
 
 }  // namespace

@@ -28,6 +28,10 @@ class SmaBusClient {
   SmaBusClient(void* owner,
                SmaBusConfig config,
                std::vector<Supla::PV::SmaMappedChannel> channels);
+  SmaBusClient(const SmaBusClient&) = delete;
+  SmaBusClient& operator=(const SmaBusClient&) = delete;
+  SmaBusClient(SmaBusClient&&) = delete;
+  SmaBusClient& operator=(SmaBusClient&&) = delete;
   ~SmaBusClient();
 
   void attach();

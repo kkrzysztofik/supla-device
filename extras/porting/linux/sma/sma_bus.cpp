@@ -137,6 +137,101 @@ std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
   return std::nullopt;
 }
 
+int retryDelaySec(const SmaDataClient& client, int pollIntervalSec) {
+  const int backoff = client.backoffSec();
+  return backoff > 0 ? backoff : pollIntervalSec;
+}
+
+void closeAndSleep(SmaSerialPort* port, int delaySec) {
+  if (port != nullptr) {
+    port->close();
+  }
+  std::this_thread::sleep_for(std::chrono::seconds(delaySec));
+}
+
+bool subscribersUseNameResolution(
+    const std::vector<SmaBus::Subscriber>& subscribers) {
+  for (const auto& subscriber : subscribers) {
+    if (subscriberUsesNameResolution(subscriber)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<Supla::PV::SmaMappedChannel> copySubscriberChannels(
+    const std::shared_ptr<SmaBus::Subscriber::State>& state) {
+  std::lock_guard<std::mutex> lock(state->mutex);
+  return state->channels;
+}
+
+void storeSubscriberReadings(
+    const std::shared_ptr<SmaBus::Subscriber::State>& state,
+    const std::map<std::string, double>& readings,
+    bool valid) {
+  std::lock_guard<std::mutex> lock(state->mutex);
+  state->cacheValid = valid;
+  if (valid) {
+    state->valuesByKey = readings;
+  }
+}
+
+bool readSubscriberChannels(
+    SmaDataClient* client,
+    bool useNameBasedConfig,
+    const std::map<std::string, double>& bulkValues,
+    const std::vector<Supla::PV::SmaMappedChannel>& channels,
+    std::map<std::string, double>* readings) {
+  if (client == nullptr || readings == nullptr) {
+    return false;
+  }
+
+  for (const auto& mapped : channels) {
+    const std::string& lookupName =
+        mapped.smaName.empty() ? mapped.key : mapped.smaName;
+
+    if (useNameBasedConfig) {
+      if (mapped.descriptor.ctype == 0 && mapped.resolveByName) {
+        continue;
+      }
+
+      const auto it = bulkValues.find(lookupName);
+      if (it != bulkValues.end()) {
+        (*readings)[mapped.key] = it->second;
+        SUPLA_LOG_VERBOSE("SmaBus: subscriber value %s (%s) = %.6f",
+                          mapped.key.c_str(),
+                          lookupName.c_str(),
+                          it->second);
+        continue;
+      }
+    }
+
+    double value = 0.0;
+    if (!client->readChannel(mapped.descriptor, &value)) {
+      if (useNameBasedConfig) {
+        SUPLA_LOG_DEBUG("SmaBus: read failed for channel %s (%s)",
+                        mapped.key.c_str(),
+                        lookupName.c_str());
+      } else {
+        SUPLA_LOG_DEBUG("SmaBus: read failed for channel %s",
+                        mapped.key.c_str());
+      }
+      return false;
+    }
+
+    (*readings)[mapped.key] = value;
+    if (useNameBasedConfig) {
+      SUPLA_LOG_VERBOSE(
+          "SmaBus: subscriber value %s (%s) = %.6f (single-channel)",
+          mapped.key.c_str(),
+          lookupName.c_str(),
+          value);
+    }
+  }
+
+  return true;
+}
+
 }  // namespace
 
 std::shared_ptr<SmaBus> SmaBus::acquire(const SmaBusConfig& config) {
@@ -259,23 +354,15 @@ void SmaBus::workerLoop() {
     detected =
         client.bringOnline(config_.netAddress, 20000, config_.deviceProfile);
     if (!detected) {
-      const int backoff = client.backoffSec();
+      const int delaySec = retryDelaySec(client, pollIntervalSec);
       SUPLA_LOG_WARNING("SmaBus: SMANet login failed, backoff %d s (errors=%d)",
-                        backoff > 0 ? backoff : pollIntervalSec,
+                        delaySec,
                         client.backoffSec());
-      port.close();
-      std::this_thread::sleep_for(
-          std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
+      closeAndSleep(&port, delaySec);
       continue;
     }
 
-    bool useNameBasedConfig = false;
-    for (const auto& subscriber : subscribers) {
-      if (subscriberUsesNameResolution(subscriber)) {
-        useNameBasedConfig = true;
-        break;
-      }
-    }
+    const bool useNameBasedConfig = subscribersUseNameResolution(subscribers);
 
     if (useNameBasedConfig && channelCatalog_.empty()) {
       auto catalog = loadChannelCatalog(client, config_, *detected);
@@ -283,10 +370,7 @@ void SmaBus::workerLoop() {
         SUPLA_LOG_WARNING(
             "SmaBus: no channel catalog — check net_address, wiring, or set "
             "device.profile (see sma/README.md)");
-        const int backoff = client.backoffSec();
-        port.close();
-        std::this_thread::sleep_for(
-            std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
+        closeAndSleep(&port, retryDelaySec(client, pollIntervalSec));
         continue;
       }
       channelCatalog_ = std::move(*catalog);
@@ -327,86 +411,27 @@ void SmaBus::workerLoop() {
       if (!state) {
         continue;
       }
-      std::vector<Supla::PV::SmaMappedChannel> channels;
-      {
-        std::lock_guard<std::mutex> lock(state->mutex);
-        channels = state->channels;
-      }
+      auto channels = copySubscriberChannels(state);
       if (channels.empty()) {
         continue;
       }
 
-      bool subscriberOk = true;
-
-      if (useNameBasedConfig) {
-        for (const auto& mapped : channels) {
-          if (mapped.descriptor.ctype == 0 && mapped.resolveByName) {
-            continue;
-          }
-          const std::string& lookupName =
-              mapped.smaName.empty() ? mapped.key : mapped.smaName;
-
-          const auto it = bulkValues.find(lookupName);
-          if (it != bulkValues.end()) {
-            readings[mapped.key] = it->second;
-            SUPLA_LOG_VERBOSE("SmaBus: subscriber value %s (%s) = %.6f",
-                              mapped.key.c_str(),
-                              lookupName.c_str(),
-                              it->second);
-            continue;
-          }
-
-          // Bulk GET_DATA payloads are often shorter than the full catalog
-          // (YASDI stops at end of frame); read counters like E-Total per
-          // channel.
-          double value = 0.0;
-          if (!client.readChannel(mapped.descriptor, &value)) {
-            SUPLA_LOG_DEBUG("SmaBus: read failed for channel %s (%s)",
-                            mapped.key.c_str(),
-                            lookupName.c_str());
-            subscriberOk = false;
-            break;
-          }
-          readings[mapped.key] = value;
-          SUPLA_LOG_VERBOSE(
-              "SmaBus: subscriber value %s (%s) = %.6f (single-channel)",
-              mapped.key.c_str(),
-              lookupName.c_str(),
-              value);
-        }
-      } else {
-        for (const auto& mapped : channels) {
-          double value = 0.0;
-          if (!client.readChannel(mapped.descriptor, &value)) {
-            SUPLA_LOG_DEBUG("SmaBus: read failed for channel %s",
-                            mapped.key.c_str());
-            subscriberOk = false;
-            break;
-          }
-          readings[mapped.key] = value;
-        }
-      }
-
-      if (!subscriberOk) {
-        std::lock_guard<std::mutex> lock(state->mutex);
-        state->cacheValid = false;
+      if (!readSubscriberChannels(
+              &client, useNameBasedConfig, bulkValues, channels, &readings)) {
+        storeSubscriberReadings(state, readings, false);
         continue;
       }
 
-      std::lock_guard<std::mutex> lock(state->mutex);
-      state->valuesByKey = readings;
-      state->cacheValid = true;
+      storeSubscriberReadings(state, readings, true);
       anySubscriberUpdated = true;
     }
 
     if (!anySubscriberUpdated) {
-      const int backoff = client.backoffSec();
+      const int delaySec = retryDelaySec(client, pollIntervalSec);
       SUPLA_LOG_WARNING("SmaBus: poll failed, backoff %d s (errors=%d)",
-                        backoff > 0 ? backoff : pollIntervalSec,
+                        delaySec,
                         client.backoffSec());
-      port.close();
-      std::this_thread::sleep_for(
-          std::chrono::seconds(backoff > 0 ? backoff : pollIntervalSec));
+      closeAndSleep(&port, delaySec);
       continue;
     }
 

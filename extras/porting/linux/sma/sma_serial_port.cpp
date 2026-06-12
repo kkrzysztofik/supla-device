@@ -95,6 +95,37 @@ void logDirectionControlError(int fd, const char* operation) {
       std::strerror(errno));
 }
 
+bool waitWritable(int fd, const std::string& devicePath, size_t offset) {
+  while (true) {
+    fd_set writefds;
+    FD_ZERO(&writefds);
+    FD_SET(fd, &writefds);
+
+    timeval tv{};
+    tv.tv_sec = 1;
+    const int ready = select(fd + 1, nullptr, &writefds, nullptr, &tv);
+    if (ready > 0 && FD_ISSET(fd, &writefds)) {
+      return true;
+    }
+    if (ready < 0 && errno == EINTR) {
+      continue;
+    }
+    if (ready < 0) {
+      SUPLA_LOG_WARNING(
+          "SmaBus: wait for write %s failed at offset %zu (errno=%d %s)",
+          devicePath.c_str(),
+          offset,
+          errno,
+          std::strerror(errno));
+    } else {
+      SUPLA_LOG_WARNING("SmaBus: wait for write %s timed out at offset %zu",
+                        devicePath.c_str(),
+                        offset);
+    }
+    return false;
+  }
+}
+
 }  // namespace
 
 SmaSerialPort::SmaSerialPort(std::string devicePath,
@@ -247,16 +278,10 @@ bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
         continue;
       }
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        fd_set writefds;
-        FD_ZERO(&writefds);
-        FD_SET(fd_, &writefds);
-
-        timeval tv{};
-        tv.tv_sec = 1;
-        const int ready = select(fd_ + 1, nullptr, &writefds, nullptr, &tv);
-        if (ready > 0) {
-          continue;
+        if (!waitWritable(fd_, devicePath_, offset)) {
+          return false;
         }
+        continue;
       }
       SUPLA_LOG_WARNING("SmaBus: write %s failed at offset %zu (errno=%d %s)",
                         devicePath_.c_str(),

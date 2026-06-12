@@ -11,7 +11,7 @@ set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_program(CCACHE_FOUND ccache)
-# set(CMAKE_CXX_INCLUDE_WHAT_YOU_USE include-what-you-use)
+#set(CMAKE_CXX_INCLUDE_WHAT_YOU_USE include - what - you - use)
 if(CCACHE_FOUND)
   set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
   set(CMAKE_C_COMPILER_LAUNCHER ccache)
@@ -119,6 +119,9 @@ target_sources(supladevicetests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/smanet_framer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_channel_codec.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_cinfo_parser.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_device_profiles.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_profile_loader.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma/sma_serial_port.cpp
 )
 
 add_executable(sd4linuxtests
