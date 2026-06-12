@@ -84,10 +84,6 @@ size_t countCatalogChannelsForMask(const std::vector<SmaChannelInfo>& catalog,
 }
 
 std::string normalizeProfileRef(std::string profile) {
-  if (profile.size() >= 4 &&
-      profile.compare(profile.size() - 4, 4, ".bin") == 0) {
-    profile.resize(profile.size() - 4);
-  }
   while (!profile.empty() && profile.back() == ' ') {
     profile.pop_back();
   }
@@ -702,10 +698,20 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
   return device;
 }
 
-std::optional<std::vector<SmaChannelInfo>> SmaDataClient::fetchChannelList() {
-  if (!syncOnline(1)) {
-    SUPLA_LOG_DEBUG("SmaDataClient: %s skipped/failed before GET_CINFO",
-                    smaCmdName(kCmdSynOnline));
+std::optional<std::vector<SmaChannelInfo>> SmaDataClient::fetchChannelList(
+    const std::string& deviceProfile) {
+  if (auto detected = detectDevice(kCinfoTimeoutMs, deviceProfile)) {
+    deviceAddr_ = detected->netAddress;
+    SUPLA_LOG_DEBUG(
+        "SmaDataClient: %s refresh before %s OK type=%s net_address=0x%04x",
+        smaCmdName(kCmdGetNetStart),
+        smaCmdName(kCmdGetCinfo),
+        detected->type.c_str(),
+        deviceAddr_);
+  } else {
+    SUPLA_LOG_DEBUG("SmaDataClient: %s refresh skipped/failed before %s",
+                    smaCmdName(kCmdGetNetStart),
+                    smaCmdName(kCmdGetCinfo));
   }
 
   for (int attempt = 0; attempt < kCinfoRepeats; ++attempt) {

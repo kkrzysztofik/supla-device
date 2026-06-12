@@ -72,7 +72,8 @@ class SmaDataClient {
       int timeoutMs = 20000, const std::string& deviceProfile = {});
   bool readChannel(const SmaChannelDescriptor& channel, double* outValue);
   bool verifyCinfo();
-  std::optional<std::vector<SmaChannelInfo>> fetchChannelList();
+  std::optional<std::vector<SmaChannelInfo>> fetchChannelList(
+      const std::string& deviceProfile = {});
   bool readSpotChannelsBulk(const std::vector<SmaChannelInfo>& catalog,
                             std::map<std::string, double>* outValuesByName);
 

@@ -118,7 +118,7 @@ std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
                       config.deviceProfile.c_str());
   }
 
-  if (auto catalog = client.fetchChannelList()) {
+  if (auto catalog = client.fetchChannelList(config.deviceProfile)) {
     return catalog;
   }
 
@@ -129,9 +129,7 @@ std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
   }
 
   SUPLA_LOG_WARNING(
-      "SmaBus: no profile for detected device type \"%s\" — export "
-      "yasdi/build/devices/%s.bin to ./sma-profiles/",
-      detected.type.c_str(),
+      "SmaBus: no built-in profile for detected device type \"%s\"",
       detected.type.c_str());
 
   return std::nullopt;

@@ -34,7 +34,7 @@ struct SmaBusConfig {
   SerialMedia media = SerialMedia::RS485;
   uint16_t netAddress = 1;
   int pollIntervalSec = kDefaultPollIntervalSec;
-  // YASDI devices/<type>.bin name/path, or built-in type (e.g. WR33-008).
+  // Optional built-in type (e.g. WR33-008) used when CMD_GET_CINFO fails.
   std::string deviceProfile;
 };
 

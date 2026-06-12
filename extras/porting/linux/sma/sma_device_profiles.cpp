@@ -7,8 +7,6 @@
  of the License, or (at your option) any later version.
 
  Built-in catalogs mirror YASDI spot bulk order (CMD_GET_DATA mask 0x090f).
- Prefer a YASDI-exported profile file when available:
-   cp yasdi/build/devices/WR33-008.bin ./sma-profiles/
 */
 
 #include "sma_device_profiles.h"
@@ -105,7 +103,7 @@ std::string normalizeDeviceType(std::string type) {
 std::optional<std::vector<SmaChannelInfo>> SmaDeviceProfiles::catalogForType(
     const std::string& deviceType) {
   const std::string normalized = normalizeDeviceType(deviceType);
-  if (normalized == "WR33-008" || normalized == "WR33-008.bin") {
+  if (normalized == "WR33-008") {
     return wr33_008Catalog();
   }
   return std::nullopt;

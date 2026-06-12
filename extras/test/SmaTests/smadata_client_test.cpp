@@ -27,9 +27,14 @@
 #include "sma_serial_port.h"
 #include "smanet_framer.h"
 
+using Supla::Linux::Sma::kChAnalog;
+using Supla::Linux::Sma::kChIn;
+using Supla::Linux::Sma::kChSpot;
 using Supla::Linux::Sma::kCmdCfgNetAddr;
+using Supla::Linux::Sma::kCmdGetCinfo;
 using Supla::Linux::Sma::kCmdGetNetStart;
 using Supla::Linux::Sma::kCtrlAck;
+using Supla::Linux::Sma::kNtypeWord;
 using Supla::Linux::Sma::kProtPppSmadata1;
 using Supla::Linux::Sma::SerialMedia;
 using Supla::Linux::Sma::SmaChannelCodec;
@@ -87,6 +92,12 @@ void appendLe32(std::vector<uint8_t>* out, uint32_t value) {
   out->push_back(static_cast<uint8_t>((value >> 8) & 0xff));
   out->push_back(static_cast<uint8_t>((value >> 16) & 0xff));
   out->push_back(static_cast<uint8_t>((value >> 24) & 0xff));
+}
+
+void appendLe32f(std::vector<uint8_t>* out, float value) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  appendLe32(out, bits);
 }
 
 std::vector<uint8_t> makeSmadataPayload(uint16_t source,
@@ -180,6 +191,62 @@ void runResponder(int fd,
   }
 }
 
+std::vector<uint8_t> makeDetectedDeviceBody() {
+  std::vector<uint8_t> body;
+  appendLe32(&body, 0x12345678);
+  const char type[] = "WR33-008";
+  body.insert(body.end(), type, type + 8);
+  return body;
+}
+
+std::vector<uint8_t> makeCinfoBody() {
+  std::vector<uint8_t> body;
+  const uint16_t ctype = kChSpot | kChIn | kChAnalog;
+  body.push_back(0x50);
+  appendLe16(&body, ctype);
+  appendLe16(&body, kNtypeWord);
+  appendLe16(&body, 0);
+  const char name[] = "Pac             ";
+  body.insert(body.end(), name, name + 16);
+  const char unit[] = "W       ";
+  body.insert(body.end(), unit, unit + 8);
+  appendLe32f(&body, 1.0f);
+  appendLe32f(&body, 0.0f);
+  return body;
+}
+
+void runBringOnlineThenCinfoResponder(int fd,
+                                      std::atomic<int>* detectRequests,
+                                      std::atomic<int>* cinfoRequests) {
+  for (int i = 0; i < 4; ++i) {
+    auto request = readFrame(fd, 2000);
+    if (!request) {
+      return;
+    }
+
+    SmaDataHead head{};
+    if (!parseHead(*request, &head)) {
+      return;
+    }
+
+    if (head.cmd == kCmdGetNetStart) {
+      const int detectCount = ++(*detectRequests);
+      const uint16_t responseSource = detectCount == 1 ? 0x0003 : 0x0007;
+      writeFrame(fd,
+                 responseSource,
+                 head.sourceAddr,
+                 kCmdGetNetStart,
+                 makeDetectedDeviceBody());
+    } else if (head.cmd == kCmdCfgNetAddr) {
+      writeFrame(fd, 0x0007, head.sourceAddr, kCmdCfgNetAddr);
+    } else if (head.cmd == kCmdGetCinfo) {
+      ++(*cinfoRequests);
+      writeFrame(fd, 0x0007, head.sourceAddr, kCmdGetCinfo, makeCinfoBody());
+      return;
+    }
+  }
+}
+
 }  // namespace
 
 TEST(SmaDataClientTest, ConfigureNetAddressSendsCommandAndAcceptsAck) {
@@ -229,4 +296,29 @@ TEST(SmaDataClientTest, DetectDeviceParsesSerialAndTrimmedDeviceType) {
   EXPECT_EQ(detected->serial, 0x12345678u);
   EXPECT_EQ(detected->type, "WR33-008");
   EXPECT_EQ(detected->netAddress, 0x0003);
+}
+
+TEST(SmaDataClientTest, FetchChannelListRefreshesDetectionBeforeGetCinfo) {
+  PtyPair pty;
+  SmaSerialPort port(pty.slavePath(), 9600, SerialMedia::RS232);
+  ASSERT_TRUE(port.open());
+
+  std::atomic<int> detectRequests{0};
+  std::atomic<int> cinfoRequests{0};
+  std::thread responder(runBringOnlineThenCinfoResponder,
+                        pty.masterFd(),
+                        &detectRequests,
+                        &cinfoRequests);
+
+  SmaDataClient client(port, 0, 1);
+  ASSERT_TRUE(client.bringOnline(7, 2000, "WR33-008").has_value());
+  const auto catalog = client.fetchChannelList("WR33-008");
+
+  responder.join();
+  ASSERT_TRUE(catalog.has_value());
+  ASSERT_EQ(catalog->size(), 1u);
+  EXPECT_EQ((*catalog)[0].name, "Pac");
+  EXPECT_EQ((*catalog)[0].descriptor.cindex, 0x50);
+  EXPECT_EQ(detectRequests.load(), 2);
+  EXPECT_EQ(cinfoRequests.load(), 1);
 }

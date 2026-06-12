@@ -22,11 +22,7 @@ namespace Sma {
 
 class SmaProfileLoader {
  public:
-  // YASDI repository cache: leading version byte (10) + raw CINFO bytes.
-  static std::optional<std::vector<SmaChannelInfo>> loadYasdiBinFile(
-      const std::string& path);
-
-  // Resolves profile name or path (e.g. "WR33-008" or "/path/to/WR33-008.bin").
+  // Resolves a built-in profile name (e.g. "WR33-008").
   static std::optional<std::vector<SmaChannelInfo>> resolveProfile(
       const std::string& profileRef);
 
