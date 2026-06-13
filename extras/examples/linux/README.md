@@ -1384,40 +1384,74 @@ powered. Multiplier parameter allows to do some simple conversion. I.e. if batte
 in source is in 0 to 1 range, then you can provide multiplier with value 100 to convert it to
 0 to 100 range.
 
-# Running supla-device as a service
+# Running supla-device as a systemd service
 
-Following example will use `systemctl` for running supla-device as a service.
+This example installs `supla-device-linux` as a systemd service on Debian 13.
+The repository provides a ready service unit:
 
-First, prepare configuration file in `/etc/supla-device.yaml`.
+    extras/examples/linux/supla-device-linux.service
 
-Create directory for GUID and state files with proper access rights:
+The unit runs the binary in service mode (`-s`) and uses an explicit config
+file path:
 
-    sudo mkdir -p /var/lib/supla-device
-    sudo chown supla_user_name /var/lib/supla-device
+    /usr/local/bin/supla-device-linux -s -c /etc/supla-device.yaml
 
-Prepare service file: `/etc/systemd/system/supla-device.service`:
+First, install the binary and prepare the runtime user:
 
-    [Unit]
-    Description=Supla Device
-    After=network-online.target
+    sudo useradd --system --user-group \
+      --home-dir /var/lib/supla-device \
+      --shell /usr/sbin/nologin \
+      --groups dialout \
+      supla-device
+    sudo install -m 0755 build/supla-device-linux /usr/local/bin/supla-device-linux
 
-    [Service]
-    User=supla_user_name
-    ExecStart=/home/supla/supla-device/extras/examples/linux/build/supla-device-linux -s
+Prepare the configuration file:
 
-    [Install]
-    WantedBy=multi-user.target
+    sudo install -m 0644 supla-device.yaml /etc/supla-device.yaml
 
-Please adjust `supla_user_name` and ExecStart path to your needs.
+Make sure `state_files_path` in `/etc/supla-device.yaml` matches the service
+state directory:
 
-Then call:
+    state_files_path: "/var/lib/supla-device"
 
-    sudo systemctl enable supla-device.service
-    sudo systemctl start supla-device.service
+Install and start the service:
 
-And check if it works:
+    sudo install -m 0644 extras/examples/linux/supla-device-linux.service \
+      /etc/systemd/system/supla-device.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now supla-device.service
+
+Check if it works:
 
     sudo systemctl status supla-device.service
+    journalctl -u supla-device.service -n 100
+
+## Create a Debian package
+
+As a final deployment step, you can build a `.deb` package from the existing
+`build/supla-device-linux` binary:
+
+    sudo apt install dpkg-dev
+    ./package-deb.sh
+
+The script creates a package under `build/deb/`. It installs:
+
+- `/usr/bin/supla-device-linux`
+- `/etc/supla-device.yaml`
+- `/lib/systemd/system/supla-device.service`
+- `/var/lib/supla-device`
+
+It also derives shared library dependencies from the built binary using
+`dpkg-shlibdeps`, creates the `supla-device` system user during package install,
+and adds it to the `dialout` group when that group exists.
+
+Install and start the package on the target Debian 13 host:
+
+    sudo apt install ./build/deb/supla-device-linux_*.deb
+    sudo systemctl enable --now supla-device.service
+
+The package does not start the service automatically during installation. This
+keeps `/etc/supla-device.yaml` reviewable before first start.
 
 Example output:
 
