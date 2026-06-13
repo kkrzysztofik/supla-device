@@ -47,6 +47,11 @@ class SmaSerialPort {
   void flushRx();
 
   bool prepareSend();
+  // Switches the RS485 port to receive mode. Returns true on success, false
+  // on failure (e.g., tcdrain or modem status control error). When skipDrain
+  // is false (default), pending transmit data is drained via tcdrain() before
+  // switching; pass true to skip the drain for rapid mode switches or when
+  // the upstream has already flushed the bus. Only has effect for RS485 media.
   bool prepareRecv(bool skipDrain = false);
   void waitBusFree();
 

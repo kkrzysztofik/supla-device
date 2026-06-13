@@ -11,6 +11,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,7 +28,7 @@
 
 namespace {
 
-bool smaShutdownRegistered = false;
+static std::once_flag smaShutdownOnce;
 
 enum class SmaMappingKind { Meter, Thermometer, Measurement };
 
@@ -377,10 +378,15 @@ namespace Supla {
 namespace Linux {
 
 void initSmaExtension() {
-  if (!smaShutdownRegistered) {
-    std::atexit(&Supla::Linux::Sma::shutdownAllClients);
-    smaShutdownRegistered = true;
-  }
+  std::call_once(smaShutdownOnce, [] {
+    int rc = std::atexit(&Supla::Linux::Sma::shutdownAllClients);
+    if (rc != 0) {
+      SUPLA_LOG_ERROR(
+          "sma_extension: std::atexit(shutdownAllClients) failed (code=%d)",
+          rc);
+      std::abort();
+    }
+  });
 
   ChannelFactoryRegistry::instance().registerFactory(
       "sma", "SmaInverter", AddSmaInverter);

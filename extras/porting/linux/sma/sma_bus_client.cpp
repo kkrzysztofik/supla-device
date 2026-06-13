@@ -91,11 +91,10 @@ void shutdownAllClients() {
   {
     std::lock_guard<std::mutex> lock(gClientsMutex);
     clients = gClients;
-  }
-
-  for (auto* client : clients) {
-    if (client) {
-      client->detach();
+    for (auto* client : clients) {
+      if (client) {
+        client->detach();
+      }
     }
   }
 }
