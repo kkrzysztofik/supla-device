@@ -174,6 +174,17 @@ void storeSubscriberReadings(
   }
 }
 
+void invalidateSubscriberReadings(
+    const std::vector<SmaBus::Subscriber>& subscribers) {
+  for (const auto& subscriber : subscribers) {
+    if (!subscriber.state) {
+      continue;
+    }
+    std::lock_guard<std::mutex> lock(subscriber.state->mutex);
+    subscriber.state->cacheValid = false;
+  }
+}
+
 bool readSubscriberChannels(
     SmaDataClient* client,
     bool useNameBasedConfig,
@@ -251,6 +262,13 @@ std::shared_ptr<SmaBus> SmaBus::acquire(const SmaBusConfig& config) {
 
 SmaBus::SmaBus(SmaBusConfig config) : config_(std::move(config)) {
 }
+
+#ifdef SUPLA_TEST
+void SmaBus::invalidateCachedReadingsForTest(
+    const std::vector<Subscriber>& subscribers) {
+  invalidateSubscriberReadings(subscribers);
+}
+#endif
 
 void SmaBus::subscribe(Subscriber subscriber) {
   if (!subscriber.state || subscriber.state->owner == nullptr) {
@@ -334,6 +352,7 @@ void SmaBus::workerLoop() {
     if (!port.isOpen() && !port.open()) {
       SUPLA_LOG_WARNING("SmaBus: failed to open %s",
                         config_.serialDevice.c_str());
+      invalidateSubscriberReadings(subscribers);
       std::this_thread::sleep_for(std::chrono::seconds(5));
       continue;
     }
@@ -353,9 +372,8 @@ void SmaBus::workerLoop() {
         client.bringOnline(config_.netAddress, 20000, config_.deviceProfile);
     if (!detected) {
       const int delaySec = retryDelaySec(client, pollIntervalSec);
-      SUPLA_LOG_WARNING("SmaBus: SMANet login failed, backoff %d s (errors=%d)",
-                        delaySec,
-                        client.backoffSec());
+      SUPLA_LOG_WARNING("SmaBus: SMANet login failed, backoff=%d s", delaySec);
+      invalidateSubscriberReadings(subscribers);
       closeAndSleep(&port, delaySec);
       continue;
     }
@@ -368,6 +386,7 @@ void SmaBus::workerLoop() {
         SUPLA_LOG_WARNING(
             "SmaBus: no channel catalog — check net_address, wiring, or set "
             "device.profile (see sma/README.md)");
+        invalidateSubscriberReadings(subscribers);
         closeAndSleep(&port, retryDelaySec(client, pollIntervalSec));
         continue;
       }
@@ -426,9 +445,8 @@ void SmaBus::workerLoop() {
 
     if (!anySubscriberUpdated) {
       const int delaySec = retryDelaySec(client, pollIntervalSec);
-      SUPLA_LOG_WARNING("SmaBus: poll failed, backoff %d s (errors=%d)",
-                        delaySec,
-                        client.backoffSec());
+      SUPLA_LOG_WARNING("SmaBus: poll failed, backoff=%d s", delaySec);
+      invalidateSubscriberReadings(subscribers);
       closeAndSleep(&port, delaySec);
       continue;
     }

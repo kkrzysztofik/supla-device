@@ -54,6 +54,11 @@ class SmaBus : public std::enable_shared_from_this<SmaBus> {
 
   static std::shared_ptr<SmaBus> acquire(const SmaBusConfig& config);
 
+#ifdef SUPLA_TEST
+  static void invalidateCachedReadingsForTest(
+      const std::vector<Subscriber>& subscribers);
+#endif
+
   void subscribe(Subscriber subscriber);
   void unsubscribe(void* owner);
 
