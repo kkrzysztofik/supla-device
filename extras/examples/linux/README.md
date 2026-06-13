@@ -463,6 +463,8 @@ Supported channel types:
 * `SmaDcMeter` - related class `Supla::PV::SmaDcMeter` (extension, DC PV meter on shared RS485 bus)
 * `SmaThermometer` - related class `Supla::PV::SmaThermometer` (extension, e.g. `Tkk`)
 * `SmaMeasurement` - related class `Supla::PV::SmaMeasurement` (extension, GPM e.g. `Zac`)
+* `IngeconInverter` - related class `Supla::PV::IngeconInverter` (extension, Modbus RTU/RS485 AC meter; see `supla-device-ingecon.yaml`)
+* `IngeconMeasurement` - related class `Supla::PV::IngeconMeasurement` (extension, GPM for INGECON status/alarm/DC registers)
 * `SolarEdge` - related class `Supla::PV::SolarEdge`
 * `Afore` - related class `Supla::PV::Afore`
 * `ThermometerParsed` - related class `Supla::Sensor::ThermometerParsed`

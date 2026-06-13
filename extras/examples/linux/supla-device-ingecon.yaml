@@ -1,0 +1,36 @@
+# Example sd4linux config with INGECON Modbus RTU/RS485 extension enabled:
+#   cmake -B build -S . \
+#     -DSUPLA_LINUX_EXTENSION_DIRS=extras/porting/linux/extensions/ingecon
+#
+# Set supla.mail, supla.server, and serial.device before running.
+
+name: supla-device-ingecon
+log_level: info
+proto_verbose_log: false
+state_files_path: "./var/supla-device-ingecon"
+security_level: 0
+
+supla:
+  server: svr1.supla.org
+  mail: user@example.com
+  proto: 23
+
+channels:
+  - type: IngeconInverter
+    caption: INGECON AC
+    serial: &ingecon_serial
+      device: /dev/ttyUSB0
+      baud: 9600
+    device: &ingecon_device
+      modbus_address: 1
+    poll_interval_sec: 15
+    energy_mapping: reverse
+
+  - type: IngeconMeasurement
+    caption: INGECON alarms
+    serial: *ingecon_serial
+    device: *ingecon_device
+    poll_interval_sec: 15
+    ingecon_value: alarms
+    default_unit_after_value: ""
+    default_value_precision: 0

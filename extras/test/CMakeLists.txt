@@ -76,6 +76,7 @@ file(GLOB TEST_SRC CONFIGURE_DEPENDS
   SwUpdateTests/*.cpp
   ModbusTests/*.cpp
   SmaTests/*.cpp
+  IngeconTests/*.cpp
   )
 
 file(GLOB SD4LINUX_TEST_SRC CONFIGURE_DEPENDS
@@ -120,6 +121,16 @@ set(SMA_PORT_SRC
   ../porting/linux/sma/smadata_client.cpp
   )
 
+set(INGECON_PORT_SRC
+  ../porting/linux/ingecon/ingecon_types.cpp
+  ../porting/linux/ingecon/ingecon_modbus_rtu.cpp
+  ../porting/linux/ingecon/ingecon_serial_port.cpp
+  ../porting/linux/ingecon/ingecon_bus.cpp
+  ../porting/linux/ingecon/ingecon_bus_client.cpp
+  ../porting/linux/ingecon/ingecon_inverter.cpp
+  ../porting/linux/ingecon/ingecon_measurement.cpp
+  )
+
 add_library(supladevicelib SHARED)
 supla_device(supladevicelib)
 target_sources(supladevicelib PRIVATE
@@ -133,25 +144,29 @@ target_include_directories(supladevicelib PUBLIC
 )
 
 add_executable(supladevicetests ${TEST_SRC} ${DOUBLE_SRC})
-target_sources(supladevicetests PRIVATE ${SMA_PORT_SRC})
+target_sources(supladevicetests PRIVATE ${SMA_PORT_SRC} ${INGECON_PORT_SRC})
 
 add_executable(sd4linuxtests
   ${SD4LINUX_TEST_SRC}
   ${DOUBLE_SRC}
   ${SD4LINUX_PORT_SRC}
   ${SMA_PORT_SRC}
+  ${INGECON_PORT_SRC}
   ../porting/linux/extensions/sma/sma_extension.cpp
+  ../porting/linux/extensions/ingecon/ingecon_extension.cpp
   )
 
 target_include_directories(supladevicetests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/ingecon
 )
 
 target_include_directories(sd4linuxtests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/ingecon
 )
 
 target_link_libraries(supladevicetests
