@@ -59,6 +59,10 @@ struct SmaDetectedDevice {
 class SmaDataClient {
  public:
   SmaDataClient(SmaSerialPort& port, uint16_t masterAddr, uint16_t deviceAddr);
+  SmaDataClient(const SmaDataClient&) = delete;
+  SmaDataClient& operator=(const SmaDataClient&) = delete;
+  SmaDataClient(SmaDataClient&&) = delete;
+  SmaDataClient& operator=(SmaDataClient&&) = delete;
 
   void setDeviceAddr(uint16_t addr);
   bool configureNetAddress(uint32_t serial, uint16_t newAddr);

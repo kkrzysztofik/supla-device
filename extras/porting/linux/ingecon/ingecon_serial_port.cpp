@@ -50,6 +50,8 @@ speed_t baudToFlag(int baud) {
 }
 
 bool waitWritable(int fd, const std::string& devicePath, size_t offset) {
+  int retries = 0;
+  constexpr int max_retries = 5;
   while (true) {
     fd_set writefds;
     FD_ZERO(&writefds);
@@ -64,10 +66,14 @@ bool waitWritable(int fd, const std::string& devicePath, size_t offset) {
     if (ready < 0 && errno == EINTR) {
       continue;
     }
-    SUPLA_LOG_WARNING("IngeconBus: wait for write %s failed at offset %zu",
-                      devicePath.c_str(),
-                      offset);
-    return false;
+    retries++;
+    if (retries >= max_retries) {
+      SUPLA_LOG_WARNING("IngeconBus: wait for write %s failed after %d retries at offset %zu",
+                        devicePath.c_str(),
+                        retries,
+                        offset);
+      return false;
+    }
   }
 }
 

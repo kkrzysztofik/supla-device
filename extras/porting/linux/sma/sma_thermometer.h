@@ -23,13 +23,17 @@ namespace PV {
 
 class SmaThermometer : public Supla::Sensor::Thermometer {
  public:
-  SmaThermometer(std::string serialDevice,
-                 int baud,
-                 Supla::Linux::Sma::SerialMedia media,
-                 uint16_t netAddress,
-                 int pollIntervalSec,
-                 std::vector<SmaMappedChannel> channels,
-                 std::string deviceProfile = {});
+  struct Config {
+    std::string serialDevice;
+    int baud = 9600;
+    Supla::Linux::Sma::SerialMedia media = Supla::Linux::Sma::SerialMedia::RS485;
+    uint16_t netAddress = 1;
+    int pollIntervalSec = 5;
+    std::vector<SmaMappedChannel> channels;
+    std::string deviceProfile;
+  };
+
+  SmaThermometer(Config config);
   ~SmaThermometer() override;
 
   void onInit() override;

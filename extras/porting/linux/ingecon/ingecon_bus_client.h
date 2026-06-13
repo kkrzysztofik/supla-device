@@ -24,10 +24,14 @@ class BusClient {
   BusClient(void* owner, BusConfig config);
   BusClient(const BusClient&) = delete;
   BusClient& operator=(const BusClient&) = delete;
+  BusClient(BusClient&&) noexcept = default;
+  BusClient& operator=(BusClient&&) noexcept = default;
   ~BusClient();
 
   void attach();
   void detach();
+  // Returns false if readings or valid is null, or if the underlying bus has
+  // no valid cached readings. Callers must pass non-null pointers.
   bool copyReadings(Readings* readings, bool* valid) const;
 
 #ifdef SUPLA_TEST

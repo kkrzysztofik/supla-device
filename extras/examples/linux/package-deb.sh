@@ -174,7 +174,7 @@ install -d "${PKG_ROOT}/var/lib/supla-device"
 install -m 0755 "$BINARY_PATH" "${PKG_ROOT}/usr/bin/supla-device-linux"
 
 if grep -q '^state_files_path:' "$CONFIG_PATH"; then
-  sed 's#^state_files_path:.*#state_files_path: "/var/lib/supla-device"#' \
+  sed 's#^state_files_path:.*$#state_files_path: "/var/lib/supla-device"#' \
     "$CONFIG_PATH" >"${PKG_ROOT}/etc/supla-device.yaml"
 else
   cp "$CONFIG_PATH" "${PKG_ROOT}/etc/supla-device.yaml"

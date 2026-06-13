@@ -42,8 +42,9 @@ class IngeconInverter : public Supla::Sensor::ElectricityMeter {
 
   Supla::Linux::Ingecon::BusClient busClient_;
   IngeconEnergyMapping energyMapping_ = IngeconEnergyMapping::Reverse;
-  int pollIntervalSec_ = Supla::Linux::Ingecon::kDefaultPollIntervalSec;
-  int staleReadCounter_ = 0;
+ int pollIntervalSec_ = Supla::Linux::Ingecon::kDefaultPollIntervalSec;
+   int staleReadCounter_ = 0;
+   uint64_t lastReadTime = 0;
 };
 
 }  // namespace PV

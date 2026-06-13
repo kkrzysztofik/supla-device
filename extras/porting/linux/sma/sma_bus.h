@@ -67,9 +67,9 @@ class SmaBus : public std::enable_shared_from_this<SmaBus> {
   std::mutex subscribersMutex_;
   std::vector<Subscriber> subscribers_;
 
-  std::thread worker_;
-  std::atomic<bool> stopWorker_{false};
-  bool workerRunning_ = false;
+ std::thread worker_;
+   std::atomic<bool> stopWorker_{false};
+   std::atomic<bool> workerRunning_{false};
 
   std::vector<SmaChannelInfo> channelCatalog_;
   bool cinfoChecked_ = false;

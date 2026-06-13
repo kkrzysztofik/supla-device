@@ -13,9 +13,11 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
+#include "ingecon_serial_port.h"
 #include "ingecon_types.h"
 
 namespace Supla {
@@ -56,11 +58,12 @@ class Bus : public std::enable_shared_from_this<Bus> {
                       std::vector<uint16_t>* registers);
 
   BusConfig config_;
-  std::mutex subscribersMutex_;
-  std::vector<Subscriber> subscribers_;
-  std::thread worker_;
-  std::atomic<bool> stopWorker_{false};
-  bool workerRunning_ = false;
+   std::mutex subscribersMutex_;
+   std::vector<Subscriber> subscribers_;
+   std::thread worker_;
+   std::atomic<bool> stopWorker_{false};
+   std::atomic<bool> workerRunning_{false};
+   SerialPort serialPort_;
 };
 
 }  // namespace Ingecon

@@ -22,23 +22,21 @@
 namespace Supla {
 namespace PV {
 
-SmaThermometer::SmaThermometer(std::string serialDevice,
-                               int baud,
-                               Supla::Linux::Sma::SerialMedia media,
-                               uint16_t netAddress,
-                               int pollIntervalSec,
-                               std::vector<SmaMappedChannel> channels,
-                               std::string deviceProfile)
-    : channelKey_(channels.empty() ? std::string() : channels.front().key),
+namespace {
+constexpr int kMaxStaleReads = 3;
+}  // namespace
+
+SmaThermometer::SmaThermometer(Config config)
+    : channelKey_(config.channels.empty() ? std::string() : config.channels.front().key),
       busClient_(this,
-                 makeSmaBusConfig(std::move(serialDevice),
-                                  baud,
-                                  media,
-                                  netAddress,
-                                  pollIntervalSec,
-                                  std::move(deviceProfile)),
-                 std::move(channels)) {
-  const int intervalSec = normalizeSmaPollIntervalSec(pollIntervalSec);
+                 makeSmaBusConfig(std::move(config.serialDevice),
+                                  config.baud,
+                                  config.media,
+                                  config.netAddress,
+                                  config.pollIntervalSec,
+                                  std::move(config.deviceProfile)),
+                 std::move(config.channels)) {
+  const int intervalSec = normalizeSmaPollIntervalSec(config.pollIntervalSec);
   setRefreshIntervalMs(intervalSec * 1000);
 }
 
@@ -54,7 +52,7 @@ double SmaThermometer::getValue() {
   bool valid = false;
   if (!busClient_.copyReadings(&values, &valid) || !valid) {
     staleReadCounter_++;
-    if (staleReadCounter_ > 3) {
+    if (staleReadCounter_ > kMaxStaleReads) {
       return TEMPERATURE_NOT_AVAILABLE;
     }
     return channel.getValueDouble();

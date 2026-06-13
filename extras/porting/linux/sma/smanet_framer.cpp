@@ -201,6 +201,7 @@ void SmaNetFramer::feed(uint8_t byte) {
   } else {
     pktBuffer_.clear();
     fcsIn_ = kPppInitFcs16;
+    escapeNext_ = false;
   }
 }
 

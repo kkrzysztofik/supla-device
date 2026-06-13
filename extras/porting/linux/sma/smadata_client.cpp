@@ -83,28 +83,26 @@ size_t countCatalogChannelsForMask(const std::vector<SmaChannelInfo>& catalog,
   return count;
 }
 
-std::string normalizeProfileRef(std::string profile) {
-  while (!profile.empty() && profile.back() == ' ') {
-    profile.pop_back();
+static std::string trimSpaces(std::string s) {
+  while (!s.empty() && s.back() == ' ') {
+    s.pop_back();
   }
-  const auto start = profile.find_first_not_of(' ');
+  const auto start = s.find_first_not_of(' ');
   if (start == std::string::npos) {
     return {};
   }
-  return profile.substr(start);
+  return s.substr(start);
+}
+
+std::string normalizeProfileRef(std::string profile) {
+  return trimSpaces(std::move(profile));
 }
 
 void trimDeviceType(std::string* type) {
   if (type == nullptr) {
     return;
   }
-  while (!type->empty() && type->back() == ' ') {
-    type->pop_back();
-  }
-  const auto start = type->find_first_not_of(' ');
-  if (start != std::string::npos) {
-    *type = type->substr(start);
-  }
+  *type = trimSpaces(*type);
 }
 
 bool detectedDeviceMatchesProfile(const SmaDetectedDevice& device,

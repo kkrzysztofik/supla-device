@@ -93,7 +93,9 @@ std::shared_ptr<Bus> Bus::acquire(const BusConfig& config) {
   return bus;
 }
 
-Bus::Bus(BusConfig config) : config_(std::move(config)) {
+Bus::Bus(BusConfig config)
+    : config_(std::move(config)),
+      serialPort_(config_.serialDevice, config_.baud) {
   config_.pollIntervalSec = normalizePollIntervalSec(config_.pollIntervalSec);
   config_.timeoutMs = normalizeTimeoutMs(config_.timeoutMs);
   config_.retries = normalizeRetries(config_.retries);
@@ -134,19 +136,19 @@ void Bus::unsubscribe(void* owner) {
 
 void Bus::startWorkerIfNeeded() {
   std::lock_guard<std::mutex> lock(subscribersMutex_);
-  if (workerRunning_ || subscribers_.empty()) {
+  if (workerRunning_.load() || subscribers_.empty()) {
     return;
   }
   stopWorker_ = false;
   worker_ = std::thread(&Bus::workerLoop, this);
-  workerRunning_ = true;
+  workerRunning_.store(true);
 }
 
 void Bus::stopWorkerIfIdle() {
   bool shouldStop = false;
   {
     std::lock_guard<std::mutex> lock(subscribersMutex_);
-    shouldStop = workerRunning_ && subscribers_.empty();
+    shouldStop = workerRunning_.load() && subscribers_.empty();
   }
   if (!shouldStop) {
     return;
@@ -159,7 +161,7 @@ void Bus::stopWorkerIfIdle() {
   stopWorker_ = false;
 
   std::lock_guard<std::mutex> lock(subscribersMutex_);
-  workerRunning_ = false;
+  workerRunning_.store(false);
 }
 
 void Bus::workerLoop() {
@@ -240,15 +242,16 @@ bool Bus::poll(Readings* readings) {
 }
 
 bool Bus::readInputBlock(uint16_t address,
-                         uint16_t count,
-                         std::vector<uint16_t>* registers) {
+                          uint16_t count,
+                          std::vector<uint16_t>* registers) {
   if (registers == nullptr) {
     return false;
   }
 
-  SerialPort port(config_.serialDevice, config_.baud);
-  if (!port.open()) {
-    return false;
+  if (!serialPort_.isOpen()) {
+    if (!serialPort_.open()) {
+      return false;
+    }
   }
 
   const auto request =
@@ -262,8 +265,8 @@ bool Bus::readInputBlock(uint16_t address,
       address,
       count,
       bytesToHex(request.data(), request.size()).c_str());
-  port.flushRx();
-  if (!port.writeAll(request.data(), request.size())) {
+  serialPort_.flushRx();
+  if (!serialPort_.writeAll(request.data(), request.size())) {
     SUPLA_LOG_WARNING("IngeconBus: write failed for register=%u count=%u",
                       static_cast<unsigned>(30001 + address),
                       count);
@@ -275,7 +278,7 @@ bool Bus::readInputBlock(uint16_t address,
   size_t received = 0;
   while (received < expectedFrameLen) {
     const ssize_t read =
-        port.readSome(response.data() + received,
+        serialPort_.readSome(response.data() + received,
                       expectedFrameLen - received,
                       config_.timeoutMs);
     if (read < 0) {
@@ -324,6 +327,7 @@ bool Bus::readInputBlock(uint16_t address,
         received,
         bytesToHex(response.data(), received).c_str());
   }
+  serialPort_.close();
   return parsed;
 }
 

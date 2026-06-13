@@ -279,23 +279,29 @@ void SmaBus::unsubscribe(void* owner) {
 }
 
 void SmaBus::startWorkerIfNeeded() {
-  std::lock_guard<std::mutex> lock(subscribersMutex_);
-  if (workerRunning_) {
-    return;
+  bool shouldStart = false;
+  {
+    std::lock_guard<std::mutex> lock(subscribersMutex_);
+    if (workerRunning_.load()) {
+      return;
+    }
+    if (worker_.joinable()) {
+      worker_.join();
+    }
+    stopWorker_ = false;
+    shouldStart = true;
   }
-  if (worker_.joinable()) {
-    worker_.join();
+  if (shouldStart) {
+    workerRunning_.store(true);
+    worker_ = std::thread([this]() { workerLoop(); });
   }
-  stopWorker_ = false;
-  workerRunning_ = true;
-  worker_ = std::thread([this]() { workerLoop(); });
 }
 
 void SmaBus::stopWorkerIfIdle() {
   bool shouldStop = false;
   {
     std::lock_guard<std::mutex> lock(subscribersMutex_);
-    shouldStop = subscribers_.empty() && workerRunning_;
+    shouldStop = subscribers_.empty() && workerRunning_.load();
   }
 
   if (!shouldStop) {
@@ -308,7 +314,7 @@ void SmaBus::stopWorkerIfIdle() {
   }
   {
     std::lock_guard<std::mutex> lock(subscribersMutex_);
-    workerRunning_ = false;
+    workerRunning_.store(false);
   }
   channelCatalog_.clear();
   cinfoChecked_ = false;
@@ -440,7 +446,7 @@ void SmaBus::workerLoop() {
   port.close();
   {
     std::lock_guard<std::mutex> lock(subscribersMutex_);
-    workerRunning_ = false;
+    workerRunning_.store(false);
   }
 }
 
