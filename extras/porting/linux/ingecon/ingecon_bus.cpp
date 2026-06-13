@@ -201,13 +201,21 @@ bool Bus::poll(Readings* readings) {
 
   for (int attempt = 0; attempt <= config_.retries; ++attempt) {
     std::vector<uint16_t> mainRegisters;
+    SUPLA_LOG_DEBUG("IngeconBus: poll attempt %d/%d for %s address=%u",
+                    attempt + 1,
+                    config_.retries + 1,
+                    config_.serialDevice.c_str(),
+                    config_.modbusAddress);
     if (!readInputBlock(
             kMainRegisterAddress, kMainInputRegisterCount, &mainRegisters)) {
+      SUPLA_LOG_DEBUG("IngeconBus: main block read failed on attempt %d",
+                      attempt + 1);
       continue;
     }
 
     Readings parsed;
     if (!parseMainInputRegisters(mainRegisters, &parsed)) {
+      SUPLA_LOG_WARNING("IngeconBus: main block parse failed");
       continue;
     }
 
@@ -216,9 +224,12 @@ bool Bus::poll(Readings* readings) {
                        kDisplayFwRegisterCount,
                        &displayRegisters)) {
       parseDisplayFwRegisters(displayRegisters, &parsed);
+    } else {
+      SUPLA_LOG_DEBUG("IngeconBus: optional display FW block unavailable");
     }
 
     *readings = parsed;
+    SUPLA_LOG_DEBUG("IngeconBus: poll successful on attempt %d", attempt + 1);
     return true;
   }
 
@@ -242,8 +253,20 @@ bool Bus::readInputBlock(uint16_t address,
 
   const auto request =
       buildReadInputRegistersRequest(config_.modbusAddress, address, count);
+  SUPLA_LOG_VERBOSE(
+      "IngeconBus: TX input registers device=%s slave=%u register=%u "
+      "protocolAddress=%u count=%u frame=[%s]",
+      config_.serialDevice.c_str(),
+      config_.modbusAddress,
+      static_cast<unsigned>(30001 + address),
+      address,
+      count,
+      bytesToHex(request.data(), request.size()).c_str());
   port.flushRx();
   if (!port.writeAll(request.data(), request.size())) {
+    SUPLA_LOG_WARNING("IngeconBus: write failed for register=%u count=%u",
+                      static_cast<unsigned>(30001 + address),
+                      count);
     return false;
   }
 
@@ -256,19 +279,52 @@ bool Bus::readInputBlock(uint16_t address,
                       expectedFrameLen - received,
                       config_.timeoutMs);
     if (read < 0) {
+      SUPLA_LOG_WARNING(
+          "IngeconBus: serial read error register=%u received=%zu expected=%zu",
+          static_cast<unsigned>(30001 + address),
+          received,
+          expectedFrameLen);
       return false;
     }
     if (read == 0) {
+      SUPLA_LOG_DEBUG(
+          "IngeconBus: serial read timeout register=%u received=%zu expected=%zu",
+          static_cast<unsigned>(30001 + address),
+          received,
+          expectedFrameLen);
       break;
     }
     received += static_cast<size_t>(read);
+    SUPLA_LOG_VERBOSE(
+        "IngeconBus: RX chunk register=%u bytes=%zd total=%zu/%zu data=[%s]",
+        static_cast<unsigned>(30001 + address),
+        read,
+        received,
+        expectedFrameLen,
+        bytesToHex(response.data(), received).c_str());
   }
 
-  return parseReadInputRegistersResponse(response.data(),
-                                         received,
-                                         config_.modbusAddress,
-                                         count,
-                                         registers);
+  const bool parsed = parseReadInputRegistersResponse(response.data(),
+                                                      received,
+                                                      config_.modbusAddress,
+                                                      count,
+                                                      registers);
+  if (parsed) {
+    SUPLA_LOG_DEBUG(
+        "IngeconBus: RX parsed register=%u count=%u frame=[%s]",
+        static_cast<unsigned>(30001 + address),
+        count,
+        bytesToHex(response.data(), received).c_str());
+  } else {
+    SUPLA_LOG_WARNING(
+        "IngeconBus: RX parse failed register=%u count=%u received=%zu "
+        "frame=[%s]",
+        static_cast<unsigned>(30001 + address),
+        count,
+        received,
+        bytesToHex(response.data(), received).c_str());
+  }
+  return parsed;
 }
 
 }  // namespace Ingecon

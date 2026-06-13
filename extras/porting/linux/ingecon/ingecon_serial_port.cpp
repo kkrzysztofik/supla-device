@@ -105,6 +105,9 @@ bool SerialPort::open() {
 
 void SerialPort::close() {
   if (fd_ >= 0) {
+    SUPLA_LOG_DEBUG("IngeconBus: closing %s fd=%d",
+                    devicePath_.c_str(),
+                    fd_);
     ::close(fd_);
     fd_ = -1;
   }
@@ -141,9 +144,15 @@ bool SerialPort::configureTermios() {
 
 bool SerialPort::writeAll(const uint8_t* data, size_t len) {
   if (fd_ < 0 || data == nullptr || len == 0) {
+    SUPLA_LOG_WARNING("IngeconBus: invalid write request fd=%d len=%zu",
+                      fd_,
+                      len);
     return false;
   }
 
+  SUPLA_LOG_VERBOSE("IngeconBus: serial write start %s len=%zu",
+                    devicePath_.c_str(),
+                    len);
   size_t offset = 0;
   while (offset < len) {
     const ssize_t written = ::write(fd_, data + offset, len - offset);
@@ -161,12 +170,29 @@ bool SerialPort::writeAll(const uint8_t* data, size_t len) {
       return false;
     }
     if (written == 0) {
+      SUPLA_LOG_WARNING("IngeconBus: write %s made no progress at offset %zu",
+                        devicePath_.c_str(),
+                        offset);
       return false;
     }
     offset += static_cast<size_t>(written);
+    SUPLA_LOG_VERBOSE("IngeconBus: serial wrote %zd bytes total=%zu/%zu",
+                      written,
+                      offset,
+                      len);
   }
 
-  return tcdrain(fd_) == 0;
+  if (tcdrain(fd_) != 0) {
+    SUPLA_LOG_WARNING("IngeconBus: tcdrain %s failed (errno=%d %s)",
+                      devicePath_.c_str(),
+                      errno,
+                      std::strerror(errno));
+    return false;
+  }
+  SUPLA_LOG_VERBOSE("IngeconBus: serial write complete %s len=%zu",
+                    devicePath_.c_str(),
+                    len);
+  return true;
 }
 
 ssize_t SerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {
@@ -194,14 +220,29 @@ ssize_t SerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {
     return -1;
   }
   if (ready == 0) {
+    SUPLA_LOG_VERBOSE("IngeconBus: read timeout on %s after %d ms",
+                      devicePath_.c_str(),
+                      timeoutMs);
     return 0;
   }
 
-  return ::read(fd_, buffer, maxLen);
+  const ssize_t read = ::read(fd_, buffer, maxLen);
+  if (read < 0) {
+    SUPLA_LOG_VERBOSE("IngeconBus: read %s failed (errno=%d %s)",
+                      devicePath_.c_str(),
+                      errno,
+                      std::strerror(errno));
+  } else {
+    SUPLA_LOG_VERBOSE("IngeconBus: serial read %zd bytes from %s",
+                      read,
+                      devicePath_.c_str());
+  }
+  return read;
 }
 
 void SerialPort::flushRx() {
   if (fd_ >= 0) {
+    SUPLA_LOG_VERBOSE("IngeconBus: flush RX %s", devicePath_.c_str());
     tcflush(fd_, TCIFLUSH);
   }
 }

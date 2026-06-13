@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "ingecon_types.h"
@@ -21,6 +22,8 @@ namespace Linux {
 namespace Ingecon {
 
 uint16_t modbusCrc16(const uint8_t* data, size_t len);
+
+std::string bytesToHex(const uint8_t* data, size_t len);
 
 std::vector<uint8_t> buildReadInputRegistersRequest(uint8_t slave,
                                                     uint16_t address,

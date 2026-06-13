@@ -9,8 +9,12 @@
 
 #include "ingecon_modbus_rtu.h"
 
+#include <supla/log_wrapper.h>
+
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 
 namespace Supla {
 namespace Linux {
@@ -41,6 +45,24 @@ uint16_t modbusCrc16(const uint8_t* data, size_t len) {
   return crc;
 }
 
+std::string bytesToHex(const uint8_t* data, size_t len) {
+  if (data == nullptr || len == 0) {
+    return {};
+  }
+
+  std::string output;
+  output.reserve(len * 3);
+  for (size_t i = 0; i < len; ++i) {
+    char byteText[4] = {};
+    std::snprintf(byteText, sizeof(byteText), "%02X", data[i]);
+    if (!output.empty()) {
+      output.push_back(' ');
+    }
+    output += byteText;
+  }
+  return output;
+}
+
 std::vector<uint8_t> buildReadInputRegistersRequest(uint8_t slave,
                                                     uint16_t address,
                                                     uint16_t count) {
@@ -55,6 +77,15 @@ std::vector<uint8_t> buildReadInputRegistersRequest(uint8_t slave,
   const uint16_t crc = modbusCrc16(frame.data(), frame.size());
   frame.push_back(static_cast<uint8_t>(crc & 0xFF));
   frame.push_back(static_cast<uint8_t>((crc >> 8) & 0xFF));
+  SUPLA_LOG_VERBOSE(
+      "IngeconModbus: built request slave=%u function=0x%02X "
+      "address=%u count=%u crc=0x%04X frame=[%s]",
+      slave,
+      kReadInputRegisters,
+      address,
+      count,
+      crc,
+      bytesToHex(frame.data(), frame.size()).c_str());
   return frame;
 }
 
@@ -64,23 +95,56 @@ bool parseReadInputRegistersResponse(const uint8_t* frame,
                                      uint16_t expectedCount,
                                      std::vector<uint16_t>* registers) {
   if (frame == nullptr || registers == nullptr || expectedCount == 0) {
+    SUPLA_LOG_WARNING(
+        "IngeconModbus: invalid parser input frame=%p registers=%p count=%u",
+        frame,
+        registers,
+        expectedCount);
     return false;
   }
 
   const size_t expectedByteCount = static_cast<size_t>(expectedCount) * 2;
   const size_t expectedFrameLen = expectedByteCount + 5;
   if (frameLen != expectedFrameLen) {
+    SUPLA_LOG_WARNING(
+        "IngeconModbus: invalid response length got=%zu expected=%zu "
+        "registers=%u frame=[%s]",
+        frameLen,
+        expectedFrameLen,
+        expectedCount,
+        bytesToHex(frame, frameLen).c_str());
     return false;
   }
-  if (frame[0] != slave || frame[1] != kReadInputRegisters ||
-      frame[2] != expectedByteCount) {
+  if (frame[0] != slave) {
+    SUPLA_LOG_WARNING("IngeconModbus: invalid slave got=%u expected=%u",
+                      frame[0],
+                      slave);
+    return false;
+  }
+  if (frame[1] != kReadInputRegisters) {
+    SUPLA_LOG_WARNING("IngeconModbus: invalid function got=0x%02X expected=0x%02X",
+                      frame[1],
+                      kReadInputRegisters);
+    return false;
+  }
+  if (frame[2] != expectedByteCount) {
+    SUPLA_LOG_WARNING(
+        "IngeconModbus: invalid byte count got=%u expected=%zu",
+        frame[2],
+        expectedByteCount);
     return false;
   }
 
   const uint16_t expectedCrc =
       static_cast<uint16_t>(frame[frameLen - 2]) |
       (static_cast<uint16_t>(frame[frameLen - 1]) << 8);
-  if (modbusCrc16(frame, frameLen - 2) != expectedCrc) {
+  const uint16_t calculatedCrc = modbusCrc16(frame, frameLen - 2);
+  if (calculatedCrc != expectedCrc) {
+    SUPLA_LOG_WARNING(
+        "IngeconModbus: CRC mismatch got=0x%04X expected=0x%04X frame=[%s]",
+        expectedCrc,
+        calculatedCrc,
+        bytesToHex(frame, frameLen).c_str());
     return false;
   }
 
@@ -91,12 +155,18 @@ bool parseReadInputRegistersResponse(const uint8_t* frame,
     registers->push_back(
         static_cast<uint16_t>((frame[offset] << 8) | frame[offset + 1]));
   }
+  SUPLA_LOG_VERBOSE("IngeconModbus: parsed %u input registers",
+                    expectedCount);
   return true;
 }
 
 bool parseMainInputRegisters(const std::vector<uint16_t>& registers,
                              Readings* readings) {
   if (readings == nullptr || registers.size() != kMainInputRegisterCount) {
+    SUPLA_LOG_WARNING(
+        "IngeconModbus: invalid main register block size=%zu expected=%d",
+        registers.size(),
+        kMainInputRegisterCount);
     return false;
   }
 
@@ -121,12 +191,41 @@ bool parseMainInputRegisters(const std::vector<uint16_t>& registers,
   readings->hour = registers[24];
   readings->minute = registers[25];
   readings->second = registers[26];
+  SUPLA_LOG_DEBUG(
+      "IngeconModbus: main readings energy=%u h=%u grid=%u status1=0x%08X "
+      "status2=0x%08X alarms=0x%08X vdc=%u idc=%u vbus=%u iac=%u pac=%d "
+      "cos=%u sinSign=%u vac=%u fac=%u time=%04u-%02u-%02u %02u:%02u:%02u",
+      readings->totalEnergyKwh,
+      readings->hoursRunning,
+      readings->gridConnections,
+      readings->status1,
+      readings->status2,
+      readings->alarms,
+      readings->vdc,
+      readings->idc,
+      readings->vbus,
+      readings->iac,
+      readings->pac,
+      readings->cosPhi,
+      readings->sinSign,
+      readings->vac,
+      readings->fac,
+      readings->year,
+      readings->month,
+      readings->day,
+      readings->hour,
+      readings->minute,
+      readings->second);
   return true;
 }
 
 bool parseDisplayFwRegisters(const std::vector<uint16_t>& registers,
                              Readings* readings) {
   if (readings == nullptr || registers.size() != kDisplayFwRegisterCount) {
+    SUPLA_LOG_WARNING(
+        "IngeconModbus: invalid display FW block size=%zu expected=%d",
+        registers.size(),
+        kDisplayFwRegisterCount);
     return false;
   }
 
@@ -134,6 +233,18 @@ bool parseDisplayFwRegisters(const std::vector<uint16_t>& registers,
     readings->displayFw[i] = registers[i];
   }
   readings->displayFwValid = true;
+  SUPLA_LOG_DEBUG(
+      "IngeconModbus: display FW words=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
+      readings->displayFw[0],
+      readings->displayFw[1],
+      readings->displayFw[2],
+      readings->displayFw[3],
+      readings->displayFw[4],
+      readings->displayFw[5],
+      readings->displayFw[6],
+      readings->displayFw[7],
+      readings->displayFw[8],
+      readings->displayFw[9]);
   return true;
 }
 
