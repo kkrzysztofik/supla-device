@@ -29,6 +29,8 @@ mark_as_advanced(
 
 include(FetchContent)
 find_package(yaml-cpp REQUIRED)
+find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 FetchContent_Declare(
   json
@@ -115,6 +117,7 @@ file(GLOB TEST_SRC CONFIGURE_DEPENDS
   SupletTests/*.cpp
   DebugTests/*.cpp
   SpiTests/*.cpp
+  BydTests/*.cpp
   )
 
 file(GLOB SD4LINUX_TEST_SRC CONFIGURE_DEPENDS
@@ -243,6 +246,25 @@ target_include_directories(supladevicelib PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
 )
 
+set(BYD_PORT_SRC
+  ../porting/linux/byd/byd_types.cpp
+  ../porting/linux/byd/byd_hash.cpp
+  ../porting/linux/byd/byd_pkcs7.cpp
+  ../porting/linux/byd/byd_bangcle.cpp
+  ../porting/linux/byd/byd_aes.cpp
+  ../porting/linux/byd/byd_sign.cpp
+  ../porting/linux/byd/byd_session.cpp
+  ../porting/linux/byd/byd_http_client.cpp
+  ../porting/linux/byd/byd_cloud_client.cpp
+  ../porting/linux/byd/byd_readings.cpp
+  ../porting/linux/byd/byd_vehicle_poller.cpp
+  ../porting/linux/byd/byd_poller_client.cpp
+  ../porting/linux/byd/byd_measurement.cpp
+  ../porting/linux/byd/byd_meter.cpp
+  ../porting/linux/byd/byd_thermometer.cpp
+  ../porting/linux/byd/byd_binary.cpp
+  )
+
 add_executable(supladevicetests
   ${TEST_SRC}
   ${DOUBLE_SRC}
@@ -252,7 +274,8 @@ add_executable(supladevicetests
 target_sources(supladevicetests PRIVATE
   ../porting/linux/linux_serial_port.cpp
   ${SMA_PORT_SRC}
-  ${INGECON_PORT_SRC})
+  ${INGECON_PORT_SRC}
+  ${BYD_PORT_SRC})
 
 add_executable(sd4linuxtests
   ${SD4LINUX_TEST_SRC}
@@ -260,8 +283,10 @@ add_executable(sd4linuxtests
   ${SD4LINUX_PORT_SRC}
   ${SMA_PORT_SRC}
   ${INGECON_PORT_SRC}
+  ${BYD_PORT_SRC}
   ../porting/linux/extensions/sma/sma_extension.cpp
   ../porting/linux/extensions/ingecon/ingecon_extension.cpp
+  ../porting/linux/extensions/byd/byd_extension.cpp
   )
 
 add_executable(arduinoesp8266_tls_lifetime_tests
@@ -298,6 +323,7 @@ target_include_directories(supladevicetests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../esp-idf/supla-spi-driver
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/esp-idf
   ${cjson_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/byd
 )
 
 target_include_directories(sd4linuxtests PRIVATE
@@ -305,6 +331,7 @@ target_include_directories(sd4linuxtests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/ingecon
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/byd
 )
 
 target_link_libraries(supladevicetests
@@ -315,6 +342,8 @@ target_link_libraries(supladevicetests
     gtest
     gmock
     gtest_main
+    CURL::libcurl
+    OpenSSL::Crypto
   )
 
 target_link_libraries(sd4linuxtests
@@ -326,6 +355,8 @@ target_link_libraries(sd4linuxtests
     gtest
     gmock
     gtest_main
+    CURL::libcurl
+    OpenSSL::Crypto
   )
 
 if(SUPLA_TEST_CURL_HTTP_ENABLED)

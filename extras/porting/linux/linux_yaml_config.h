@@ -135,6 +135,7 @@ class LinuxYamlConfig : public KeyValue {
   void markChannelParameterUsed();
   YAML::Node getAndMarkChannelParameter(const YAML::Node& channel,
                                          const char* parameter);
+  const YAML::Node& yamlRoot() const { return config; }
   bool addCommonChannelParameters(const YAML::Node& ch,
                                   Supla::Element* element);
 
