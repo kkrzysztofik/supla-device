@@ -23,7 +23,8 @@ namespace Supla {
 namespace Linux {
 namespace Timers {
 void init();
-};
-};      // namespace Linux
-};      // namespace Supla
+void stop();
+};  // namespace Timers
+};  // namespace Linux
+};  // namespace Supla
 #endif  // EXTRAS_PORTING_LINUX_LINUX_TIMERS_H_

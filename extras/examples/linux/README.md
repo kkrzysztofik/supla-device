@@ -10,11 +10,97 @@ https://cloud.supla.org.
 
 # Build
 
-## Install dependencies
+## Dependencies (Debian / Ubuntu)
 
-For Debian based distributions:
+### Build from source
 
-    sudo apt install git libssl-dev build-essential libyaml-cpp-dev cmake
+Install packages needed to compile `supla-device-linux`:
+
+```bash
+sudo apt install \
+  build-essential \
+  cmake \
+  git \
+  libssl-dev \
+  libyaml-cpp-dev
+```
+
+| Package | Purpose |
+|---------|---------|
+| `build-essential` | GCC/G++ toolchain and `make` |
+| `cmake` | Configure the build (minimum 3.15) |
+| `git` | CMake `FetchContent` clones nlohmann/json, cxxopts, and MQTT-C at build time |
+| `libssl-dev` | OpenSSL headers/libs for TLS (SUPLA Cloud) and MQTT-over-SSL |
+| `libyaml-cpp-dev` | Parse `supla-device.yaml` configuration |
+
+These libraries are **vendored at build time** (no separate apt packages):
+
+- [nlohmann/json](https://github.com/nlohmann/json)
+- [cxxopts](https://github.com/jarro2783/cxxopts) (CLI: `-c`, `-d`, `--verbose`, …)
+- [MQTT-C](https://github.com/LiamBindle/MQTT-C) (optional MQTT channel integration)
+
+Optional: `ccache` speeds up rebuilds if installed (CMake uses it automatically).
+
+### Run a pre-built binary
+
+If you only copy `supla-device-linux` to another machine (without compiling
+there), install the **runtime** libraries it links against:
+
+```bash
+sudo apt install \
+  libssl3 \
+  libyaml-cpp0.8 \
+  ca-certificates
+```
+
+| Package | Purpose |
+|---------|---------|
+| `libssl3` | TLS to SUPLA server (`libssl.so.3`, `libcrypto.so.3`) |
+| `libyaml-cpp0.8` | Load YAML config (`libyaml-cpp.so.0.8`; package name may differ slightly on older releases, e.g. `libyaml-cpp0.7`) |
+| `ca-certificates` | Verify SUPLA Cloud server certificate when `security_level: 0` is not used |
+
+Standard C/C++ runtime (`libc`, `libstdc++`, `libm`, `libgcc_s`) comes with the
+base system. `libz1` / `libzstd1` are usually already installed as OpenSSL
+dependencies.
+
+Check missing libraries on the target host:
+
+```bash
+ldd ./supla-device-linux
+```
+
+### GLIBC / distro compatibility
+
+`supla-device-linux` is linked against the **glibc on the machine where it was
+built**. A binary compiled on a newer distro (e.g. Ubuntu 25.04 with glibc 2.43)
+may fail on Debian 13 (glibc 2.41) with:
+
+```text
+./supla-device-linux: version `GLIBC_2.42' not found
+```
+
+**Fix:** build on the same machine (or same or older glibc) that will run the
+binary:
+
+```bash
+sudo apt install build-essential cmake git libssl-dev libyaml-cpp-dev
+cd /home/kmk/supla-device/extras/examples/linux
+./build-sma-ingecon.sh
+./build/supla-device-linux --version
+```
+
+Copy `build/supla-device-linux` only after building on Debian 13, or build
+inside a Debian 13 container/VM from your dev tree.
+
+### RS485 / serial extensions (e.g. SMA)
+
+No extra Debian packages beyond the lists above. Access to `/dev/ttyUSB0` (or your
+adapter) typically requires membership in the `dialout` group:
+
+```bash
+sudo usermod -aG dialout $USER
+# log out and back in
+```
 
 ## Get supla-device sources
 
@@ -80,6 +166,32 @@ code. Timings are configured in YAML with:
         short_ms: 200
         long_ms: 600
         pause_ms: 200
+
+### SMA and Ingecon RS485 inverter extensions
+
+Build with the native SMA extension (read-only RS485/SMANet, no `libyasdi`)
+and the native Ingecon Modbus RTU/RS485 extension:
+
+    cd extras/examples/linux
+    ./build-sma-ingecon.sh
+    ./build/supla-device-linux -c supla-device-sma.yaml --verbose
+    ./build/supla-device-linux -c supla-device-ingecon.yaml --verbose
+
+Manual equivalent:
+
+    cmake -B build \
+      -DSUPLA_LINUX_EXTENSION_DIRS="../../../porting/linux/extensions/sma;../../../porting/linux/extensions/ingecon"
+    cmake --build build -j$(nproc)
+
+Copy `supla-device-sma.yaml`, set SUPLA credentials, serial port (`/dev/ttyUSB0`),
+and channel metadata from `yasdishell` profiling. Full instructions:
+[extras/porting/linux/sma/README.md](../../porting/linux/sma/README.md).
+
+Migration note: SMA `E-Total` is inverter lifetime yield/production, so the
+example maps it to `rvr_act_energy`. Existing deployments that copied an older
+`fwd_act_energy` mapping should move dashboards and automations to reverse
+active energy, or keep the old local mapping only if they intentionally stored
+production in the forward/consumption field.
 
 # Usage
 
@@ -354,6 +466,12 @@ Supported channel types:
 * `CmdValve` - related class `Supla::Control::CmdValve`
 * `CmdRollerShutter` - related class `Supla::Control::CmdRollerShutter`
 * `Fronius` - related class `Supla::PV::Fronius`
+* `SmaInverter` - related class `Supla::PV::SmaInverter` (extension, RS485/SMANet AC meter; see `supla-device-sma.yaml`)
+* `SmaDcMeter` - related class `Supla::PV::SmaDcMeter` (extension, DC PV meter on shared RS485 bus)
+* `SmaThermometer` - related class `Supla::PV::SmaThermometer` (extension, e.g. `Tkk`)
+* `SmaMeasurement` - related class `Supla::PV::SmaMeasurement` (extension, GPM e.g. `Zac`)
+* `IngeconInverter` - related class `Supla::PV::IngeconInverter` (extension, Modbus RTU/RS485 AC meter; see `supla-device-ingecon.yaml`)
+* `IngeconMeasurement` - related class `Supla::PV::IngeconMeasurement` (extension, GPM for INGECON status/alarm/DC registers)
 * `SolarEdge` - related class `Supla::PV::SolarEdge`
 * `Afore` - related class `Supla::PV::Afore`
 * `ThermometerParsed` - related class `Supla::Sensor::ThermometerParsed`
@@ -1275,40 +1393,74 @@ powered. Multiplier parameter allows to do some simple conversion. I.e. if batte
 in source is in 0 to 1 range, then you can provide multiplier with value 100 to convert it to
 0 to 100 range.
 
-# Running supla-device as a service
+# Running supla-device as a systemd service
 
-Following example will use `systemctl` for running supla-device as a service.
+This example installs `supla-device-linux` as a systemd service on Debian 13.
+The repository provides a ready service unit:
 
-First, prepare configuration file in `/etc/supla-device.yaml`.
+    extras/examples/linux/supla-device-linux.service
 
-Create directory for GUID and state files with proper access rights:
+The unit runs the binary in service mode (`-s`) and uses an explicit config
+file path:
 
-    sudo mkdir -p /var/lib/supla-device
-    sudo chown supla_user_name /var/lib/supla-device
+    /usr/local/bin/supla-device-linux -s -c /etc/supla-device.yaml
 
-Prepare service file: `/etc/systemd/system/supla-device.service`:
+First, install the binary and prepare the runtime user:
 
-    [Unit]
-    Description=Supla Device
-    After=network-online.target
+    sudo useradd --system --user-group \
+      --home-dir /var/lib/supla-device \
+      --shell /usr/sbin/nologin \
+      --groups dialout \
+      supla-device
+    sudo install -m 0755 build/supla-device-linux /usr/local/bin/supla-device-linux
 
-    [Service]
-    User=supla_user_name
-    ExecStart=/home/supla/supla-device/extras/examples/linux/build/supla-device-linux -s
+Prepare the configuration file:
 
-    [Install]
-    WantedBy=multi-user.target
+    sudo install -m 0644 supla-device.yaml /etc/supla-device.yaml
 
-Please adjust `supla_user_name` and ExecStart path to your needs.
+Make sure `state_files_path` in `/etc/supla-device.yaml` matches the service
+state directory:
 
-Then call:
+    state_files_path: "/var/lib/supla-device"
 
-    sudo systemctl enable supla-device.service
-    sudo systemctl start supla-device.service
+Install and start the service:
 
-And check if it works:
+    sudo install -m 0644 extras/examples/linux/supla-device-linux.service \
+      /etc/systemd/system/supla-device.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now supla-device.service
+
+Check if it works:
 
     sudo systemctl status supla-device.service
+    journalctl -u supla-device.service -n 100
+
+## Create a Debian package
+
+As a final deployment step, you can build a `.deb` package from the existing
+`build/supla-device-linux` binary:
+
+    sudo apt install dpkg-dev
+    ./package-deb.sh
+
+The script creates a package under `build/deb/`. It installs:
+
+- `/usr/bin/supla-device-linux`
+- `/etc/supla-device.yaml`
+- `/lib/systemd/system/supla-device.service`
+- `/var/lib/supla-device`
+
+It also derives shared library dependencies from the built binary using
+`dpkg-shlibdeps`, creates the `supla-device` system user during package install,
+and adds it to the `dialout` group when that group exists.
+
+Install and start the package on the target Debian 13 host:
+
+    sudo apt install ./build/deb/supla-device-linux_*.deb
+    sudo systemctl enable --now supla-device.service
+
+The package does not start the service automatically during installation. This
+keeps `/etc/supla-device.yaml` reviewable before first start.
 
 Example output:
 

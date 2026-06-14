@@ -1,0 +1,32 @@
+# Placeholder profile — run yasdishell on your inverter and replace values.
+#
+# Reference only; include fields inline in supla-device.yaml or merge manually.
+
+model: Sunny Boy (example)
+serial:
+  baud: 9600
+  media: RS485
+
+device:
+  net_address: 1
+  # serial_number: 12345678  # optional validation
+
+poll_interval_sec: 15
+
+sma_channels:
+  pac:
+    name: Pac
+    ctype: 0x0801
+    cindex: 0
+    ntype: 0x0004
+    gain: 1.0
+    offset: 0.0
+    supla: power_active
+  totwh:
+    name: TotWh
+    ctype: 0x0804
+    cindex: 0
+    ntype: 0x0002
+    gain: 1.0
+    offset: 0.0
+    supla: rvr_act_energy

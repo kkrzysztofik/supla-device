@@ -1,0 +1,60 @@
+# Example sd4linux config with SMA and Ingecon extensions enabled at build time:
+#   ./build-sma-ingecon.sh
+#
+# Copy to your own file or use supla-device-wr33-008.yaml as a hardware-specific
+# template. Set supla.mail, supla.server, and serial.device before running.
+
+name: supla-device-sma
+log_level: info
+proto_verbose_log: false
+state_files_path: "./var/supla-device-sma"
+security_level: 0
+
+supla:
+  server: svr1.supla.org
+  mail: user@example.com
+  proto: 23
+
+channels:
+  - type: SmaInverter
+    caption: SMA WR33 AC
+    serial: &sma_serial
+      device: /dev/ttyUSB0
+      baud: 1200
+      media: RS485
+    device: &sma_device
+      net_address: 1
+    poll_interval_sec: 15
+    sma_channels:
+      Pac: power_active
+      Uac: voltage
+      Fac: frequency
+      "Iac-Ist": current
+      "E-Total": rvr_act_energy
+
+  - type: SmaDcMeter
+    caption: SMA WR33 DC
+    serial: *sma_serial
+    device: *sma_device
+    poll_interval_sec: 15
+    sma_channels:
+      "Upv-Ist": voltage
+      Ipv: current
+
+  - type: SmaThermometer
+    caption: SMA WR33 temperature
+    serial: *sma_serial
+    device: *sma_device
+    poll_interval_sec: 15
+    sma_channels:
+      Tkk: temperature
+
+  - type: SmaMeasurement
+    caption: SMA WR33 grid impedance
+    serial: *sma_serial
+    device: *sma_device
+    poll_interval_sec: 15
+    default_unit_after_value: "Ohm"
+    default_value_precision: 3
+    sma_channels:
+      Zac: measurement

@@ -11,7 +11,7 @@ set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_program(CCACHE_FOUND ccache)
-# set(CMAKE_CXX_INCLUDE_WHAT_YOU_USE include-what-you-use)
+#set(CMAKE_CXX_INCLUDE_WHAT_YOU_USE include - what - you - use)
 if(CCACHE_FOUND)
   set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
   set(CMAKE_C_COMPILER_LAUNCHER ccache)
@@ -28,6 +28,7 @@ mark_as_advanced(
 )
 
 include(FetchContent)
+find_package(yaml-cpp REQUIRED)
 
 FetchContent_Declare(
   json
@@ -74,6 +75,8 @@ file(GLOB TEST_SRC CONFIGURE_DEPENDS
   GpmTests/*.cpp
   SwUpdateTests/*.cpp
   ModbusTests/*.cpp
+  SmaTests/*.cpp
+  IngeconTests/*.cpp
   )
 
 file(GLOB SD4LINUX_TEST_SRC CONFIGURE_DEPENDS
@@ -86,6 +89,7 @@ file(GLOB DOUBLE_SRC CONFIGURE_DEPENDS doubles/*.cpp)
 
 set(SD4LINUX_PORT_SRC
   ../porting/linux/linux_channel_factory.cpp
+  ../porting/linux/linux_serial_port.cpp
   ../porting/linux/supla/control/cmd_relay.cpp
   ../porting/linux/supla/control/control_payload.cpp
   ../porting/linux/supla/control/custom_relay.cpp
@@ -101,6 +105,34 @@ set(SD4LINUX_PORT_SRC
   ../porting/linux/supla/payload/payload.cpp
   )
 
+set(SMA_PORT_SRC
+  ../porting/linux/sma/smanet_framer.cpp
+  ../porting/linux/sma/sma_bus.cpp
+  ../porting/linux/sma/sma_bus_client.cpp
+  ../porting/linux/sma/sma_channel_codec.cpp
+  ../porting/linux/sma/sma_cinfo_parser.cpp
+  ../porting/linux/sma/sma_dc_meter.cpp
+  ../porting/linux/sma/sma_device_profiles.cpp
+  ../porting/linux/sma/sma_inverter.cpp
+  ../porting/linux/sma/sma_log.cpp
+  ../porting/linux/sma/sma_measurement.cpp
+  ../porting/linux/sma/sma_profile_loader.cpp
+  ../porting/linux/sma/sma_serial_port.cpp
+  ../porting/linux/sma/sma_thermometer.cpp
+  ../porting/linux/sma/smadata_client.cpp
+  )
+
+set(INGECON_PORT_SRC
+  ../porting/linux/ingecon/ingecon_types.cpp
+  ../porting/linux/ingecon/ingecon_modbus_rtu.cpp
+  ../porting/linux/ingecon/ingecon_serial_port.cpp
+  ../porting/linux/ingecon/ingecon_bus.cpp
+  ../porting/linux/ingecon/ingecon_bus_client.cpp
+  ../porting/linux/ingecon/ingecon_inverter.cpp
+  ../porting/linux/ingecon/ingecon_dc_meter.cpp
+  ../porting/linux/ingecon/ingecon_measurement.cpp
+  )
+
 add_library(supladevicelib SHARED)
 supla_device(supladevicelib)
 target_sources(supladevicelib PRIVATE
@@ -114,20 +146,33 @@ target_include_directories(supladevicelib PUBLIC
 )
 
 add_executable(supladevicetests ${TEST_SRC} ${DOUBLE_SRC})
+target_sources(supladevicetests PRIVATE
+  ../porting/linux/linux_serial_port.cpp
+  ${SMA_PORT_SRC}
+  ${INGECON_PORT_SRC})
 
 add_executable(sd4linuxtests
   ${SD4LINUX_TEST_SRC}
   ${DOUBLE_SRC}
   ${SD4LINUX_PORT_SRC}
+  ${SMA_PORT_SRC}
+  ${INGECON_PORT_SRC}
+  ../porting/linux/extensions/sma/sma_extension.cpp
+  ../porting/linux/extensions/ingecon/ingecon_extension.cpp
   )
 
 target_include_directories(supladevicetests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/ingecon
 )
 
 target_include_directories(sd4linuxtests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/ingecon
 )
 
 target_link_libraries(supladevicetests
@@ -143,6 +188,7 @@ target_link_libraries(sd4linuxtests
   PRIVATE
     supladevicelib
     nlohmann_json::nlohmann_json
+    yaml-cpp
     gtest
     gmock
     gtest_main

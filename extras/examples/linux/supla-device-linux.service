@@ -1,0 +1,50 @@
+# Copyright (C) 2026 Krzysztof Krzysztofik
+#
+# Debian 13 deployment example for supla-device-linux.
+# Copy to /etc/systemd/system/supla-device.service and adjust paths/users if
+# your deployment differs.
+
+[Unit]
+Description=SUPLA Device Linux
+Documentation=https://github.com/SUPLA/supla-device
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=supla-device
+Group=supla-device
+SupplementaryGroups=dialout
+WorkingDirectory=/
+ExecStart=/usr/local/bin/supla-device-linux -s -c /etc/supla-device.yaml
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+SyslogIdentifier=supla-device-linux
+UMask=0077
+
+# Keep this aligned with state_files_path in /etc/supla-device.yaml.
+StateDirectory=supla-device
+ReadWritePaths=/var/lib/supla-device
+
+# Hardening. Keep device access available for serial/RS485 adapters.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
