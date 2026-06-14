@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "linux_serial_port.h"
 #include "sma_types.h"
 
 namespace Supla {
@@ -51,12 +52,8 @@ class SmaSerialPort {
   void waitBusFree();
 
  private:
-  bool configureTermios();
-
-  std::string devicePath_;
-  int baud_;
+  Supla::Linux::LinuxSerialPort port_;
   SerialMedia media_;
-  int fd_ = -1;
 };
 
 }  // namespace Sma

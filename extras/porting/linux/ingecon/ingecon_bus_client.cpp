@@ -9,11 +9,11 @@
 
 #include "ingecon_bus_client.h"
 
-#include <algorithm>
 #include <memory>
 #include <mutex>
-#include <vector>
 #include <utility>
+
+#include "linux_shared_bus_client_helpers.h"
 
 namespace Supla {
 namespace Linux {
@@ -21,8 +21,7 @@ namespace Ingecon {
 
 namespace {
 
-std::mutex gClientsMutex;
-std::vector<BusClient*> gClients;
+Supla::Linux::SharedBusClientRegistry<BusClient> gClients;
 
 }  // namespace
 
@@ -30,33 +29,20 @@ BusClient::BusClient(void* owner, BusConfig config)
     : config_(std::move(config)),
       state_(std::make_shared<Bus::Subscriber::State>()) {
   state_->owner = owner;
-  std::lock_guard<std::mutex> lock(gClientsMutex);
-  gClients.push_back(this);
+  gClients.add(this);
 }
 
 BusClient::~BusClient() {
   detach();
-  std::lock_guard<std::mutex> lock(gClientsMutex);
-  gClients.erase(std::remove(gClients.begin(), gClients.end(), this),
-                 gClients.end());
+  gClients.remove(this);
 }
 
 void BusClient::attach() {
-  if (bus_) {
-    return;
-  }
-
-  bus_ = Bus::acquire(config_);
-  Bus::Subscriber subscriber;
-  subscriber.state = state_;
-  bus_->subscribe(subscriber);
+  Supla::Linux::attachSharedBusClient(config_, state_, &bus_);
 }
 
 void BusClient::detach() {
-  if (bus_) {
-    bus_->unsubscribe(state_->owner);
-    bus_.reset();
-  }
+  Supla::Linux::detachSharedBusClient(state_, &bus_);
 }
 
 bool BusClient::copyReadings(Readings* readings, bool* valid) const {
@@ -81,16 +67,7 @@ void BusClient::setReadingsForTest(const Readings& readings, bool valid) {
 #endif
 
 void shutdownAllClients() {
-  std::vector<BusClient*> clients;
-  {
-    std::lock_guard<std::mutex> lock(gClientsMutex);
-    clients = gClients;
-  }
-  for (auto* client : clients) {
-    if (client != nullptr) {
-      client->detach();
-    }
-  }
+  Supla::Linux::shutdownSharedBusClients(gClients);
 }
 
 }  // namespace Ingecon

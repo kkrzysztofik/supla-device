@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "linux_channel_read_helpers.h"
 #include "sma_channel_helpers.h"
 
 namespace Supla {
@@ -52,14 +53,11 @@ double SmaMeasurement::getValue() {
   std::map<std::string, double> values;
   bool valid = false;
   if (!busClient_.copyReadings(&values, &valid) || !valid) {
-    staleReadCounter_++;
-    if (staleReadCounter_ > 3) {
-      return NAN;
-    }
-    return channel.getValueDouble();
+    return Supla::Linux::staleOrUnavailableValue(
+        &staleReadCounter_, channel.getValueDouble(), NAN);
   }
 
-  staleReadCounter_ = 0;
+  Supla::Linux::markValidRead(&staleReadCounter_);
   const auto it = values.find(channelKey_);
   if (it == values.end() || !std::isfinite(it->second)) {
     return NAN;

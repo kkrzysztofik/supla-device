@@ -1,6 +1,5 @@
-# Example sd4linux config with INGECON Modbus RTU/RS485 extension enabled:
-#   cmake -B build -S . \
-#     -DSUPLA_LINUX_EXTENSION_DIRS=extras/porting/linux/extensions/ingecon
+# Example sd4linux config with SMA and Ingecon extensions enabled:
+#   ./build-sma-ingecon.sh
 #
 # Set supla.mail, supla.server, and serial.device before running.
 

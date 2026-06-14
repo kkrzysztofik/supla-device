@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <string>
 
+#include "linux_serial_port.h"
+
 namespace Supla {
 namespace Linux {
 namespace Ingecon {
@@ -38,13 +40,10 @@ class SerialPort {
   void flushRxTx();
 
  private:
-  bool configureTermios();
   bool setRts(bool enabled);
   bool setDtr(bool enabled);
 
-  std::string devicePath_;
-  int baud_ = 9600;
-  int fd_ = -1;
+  Supla::Linux::LinuxSerialPort port_;
 };
 
 }  // namespace Ingecon

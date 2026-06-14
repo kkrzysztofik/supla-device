@@ -1,7 +1,7 @@
-# SMA WR33-008 (SN 2000497368) — supla-device-linux + SMA extension
+# SMA WR33-008 (SN 2000497368) — supla-device-linux + SMA/Ingecon extensions
 #
 # Build:
-#   ./build-sma.sh
+#   ./build-sma-ingecon.sh
 #
 # Edit before first run:
 #   - supla.mail / supla.server (your SUPLA Cloud account)

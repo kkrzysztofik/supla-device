@@ -69,7 +69,7 @@ channels:
 - Docs/examples:
   - add `extras/examples/linux/supla-device-ingecon.yaml`
   - add README supported-type entry
-  - add build helper mirroring SMA style if useful: `build-ingecon.sh`
+  - use the combined Linux helper: `build-sma-ingecon.sh`
 
 ## Test Plan
 

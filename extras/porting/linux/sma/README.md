@@ -159,14 +159,15 @@ From the repository root:
 
 ```bash
 cd extras/examples/linux
-./build-sma.sh
+./build-sma-ingecon.sh
 ```
 
 Or manually:
 
 ```bash
 cd extras/examples/linux
-cmake -B build -DSUPLA_LINUX_EXTENSION_DIRS=../../../porting/linux/extensions/sma
+cmake -B build \
+  -DSUPLA_LINUX_EXTENSION_DIRS="../../../porting/linux/extensions/sma;../../../porting/linux/extensions/ingecon"
 cmake --build build -j$(nproc)
 ```
 

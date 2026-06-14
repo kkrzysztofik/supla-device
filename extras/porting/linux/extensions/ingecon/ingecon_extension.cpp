@@ -19,6 +19,7 @@
 #include "ingecon_inverter.h"
 #include "ingecon_measurement.h"
 #include "linux_channel_factory.h"
+#include "linux_extension_config_helpers.h"
 #include "linux_yaml_config.h"
 
 namespace {
@@ -40,19 +41,15 @@ bool parseBusConfig(const Supla::Linux::ChannelFactoryContext& context,
   if (out == nullptr) {
     return false;
   }
-  if (!ch["serial"] || !ch["serial"]["device"]) {
-    SUPLA_LOG_ERROR("Channel[%d] config: missing serial.device",
-                    context.channelNumber);
+
+  Supla::Linux::ExtensionSerialConfig serial;
+  if (!Supla::Linux::parseExtensionSerialConfig(context, &serial)) {
     return false;
   }
 
-  config.markChannelParameterUsed();
-  out->bus.serialDevice = ch["serial"]["device"].as<std::string>();
+  out->bus.serialDevice = std::move(serial.devicePath);
+  out->bus.baud = serial.baud;
 
-  if (ch["serial"]["baud"]) {
-    config.markChannelParameterUsed();
-    out->bus.baud = ch["serial"]["baud"].as<int>();
-  }
   if (ch["serial"]["rts_toggle"]) {
     config.markChannelParameterUsed();
     out->bus.rtsToggle = ch["serial"]["rts_toggle"].as<bool>();
@@ -78,8 +75,8 @@ bool parseBusConfig(const Supla::Linux::ChannelFactoryContext& context,
     }
   }
   if (ch["poll_interval_sec"]) {
-    config.markChannelParameterUsed();
-    out->bus.pollIntervalSec = ch["poll_interval_sec"].as<int>();
+    Supla::Linux::parseExtensionPollIntervalSec(
+        context, &out->bus.pollIntervalSec);
   }
   if (ch["timeout_ms"]) {
     config.markChannelParameterUsed();
@@ -125,12 +122,7 @@ bool AddIngeconInverter(const Supla::Linux::ChannelFactoryContext& context) {
 
   std::unique_ptr<Supla::PV::IngeconInverter> inverter(
       new Supla::PV::IngeconInverter(parsed.bus, parsed.energyMapping));
-  const bool added =
-      context.config.addCommonChannelParameters(context.channel, inverter.get());
-  if (added) {
-    inverter.release();
-  }
-  return added;
+  return Supla::Linux::addConfiguredChannel(context, std::move(inverter));
 }
 
 bool AddIngeconDcMeter(const Supla::Linux::ChannelFactoryContext& context) {
@@ -149,35 +141,7 @@ bool AddIngeconDcMeter(const Supla::Linux::ChannelFactoryContext& context) {
 
   std::unique_ptr<Supla::PV::IngeconDcMeter> meter(
       new Supla::PV::IngeconDcMeter(parsed.bus));
-  const bool added =
-      context.config.addCommonChannelParameters(context.channel, meter.get());
-  if (added) {
-    meter.release();
-  }
-  return added;
-}
-
-void applyMeasurementYamlOptions(
-    const Supla::Linux::ChannelFactoryContext& context,
-    Supla::PV::IngeconMeasurement* measurement) {
-  const auto& ch = context.channel;
-  auto& config = context.config;
-
-  if (ch["default_unit_after_value"]) {
-    config.markChannelParameterUsed();
-    const std::string unit = ch["default_unit_after_value"].as<std::string>();
-    measurement->setDefaultUnitAfterValue(unit.c_str());
-  }
-  if (ch["default_unit_before_value"]) {
-    config.markChannelParameterUsed();
-    const std::string unit = ch["default_unit_before_value"].as<std::string>();
-    measurement->setDefaultUnitBeforeValue(unit.c_str());
-  }
-  if (ch["default_value_precision"]) {
-    config.markChannelParameterUsed();
-    measurement->setDefaultValuePrecision(
-        ch["default_value_precision"].as<int>());
-  }
+  return Supla::Linux::addConfiguredChannel(context, std::move(meter));
 }
 
 bool AddIngeconMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
@@ -207,14 +171,9 @@ bool AddIngeconMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
 
   std::unique_ptr<Supla::PV::IngeconMeasurement> measurement(
       new Supla::PV::IngeconMeasurement(parsed.bus, parsed.valueKey));
-  applyMeasurementYamlOptions(context, measurement.get());
+  Supla::Linux::applyGpmYamlOptions(context, measurement.get());
 
-  const bool added = context.config.addCommonChannelParameters(
-      context.channel, measurement.get());
-  if (added) {
-    measurement.release();
-  }
-  return added;
+  return Supla::Linux::addConfiguredChannel(context, std::move(measurement));
 }
 
 }  // namespace

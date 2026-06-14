@@ -89,6 +89,7 @@ file(GLOB DOUBLE_SRC CONFIGURE_DEPENDS doubles/*.cpp)
 
 set(SD4LINUX_PORT_SRC
   ../porting/linux/linux_channel_factory.cpp
+  ../porting/linux/linux_serial_port.cpp
   ../porting/linux/supla/control/cmd_relay.cpp
   ../porting/linux/supla/control/control_payload.cpp
   ../porting/linux/supla/control/custom_relay.cpp
@@ -145,7 +146,10 @@ target_include_directories(supladevicelib PUBLIC
 )
 
 add_executable(supladevicetests ${TEST_SRC} ${DOUBLE_SRC})
-target_sources(supladevicetests PRIVATE ${SMA_PORT_SRC} ${INGECON_PORT_SRC})
+target_sources(supladevicetests PRIVATE
+  ../porting/linux/linux_serial_port.cpp
+  ${SMA_PORT_SRC}
+  ${INGECON_PORT_SRC})
 
 add_executable(sd4linuxtests
   ${SD4LINUX_TEST_SRC}
@@ -159,6 +163,7 @@ add_executable(sd4linuxtests
 
 target_include_directories(supladevicetests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/ingecon
 )

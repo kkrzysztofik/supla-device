@@ -9,17 +9,12 @@
 
 #include "ingecon_serial_port.h"
 
-#include <fcntl.h>
 #include <supla/log_wrapper.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
-#include <termios.h>
-#include <unistd.h>
 
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <string>
 #include <thread>
 #include <utility>
 
@@ -27,63 +22,8 @@ namespace Supla {
 namespace Linux {
 namespace Ingecon {
 
-namespace {
-
-speed_t baudToFlag(int baud) {
-  switch (baud) {
-    case 115200:
-      return B115200;
-    case 57600:
-      return B57600;
-    case 38400:
-      return B38400;
-    case 19200:
-      return B19200;
-    case 9600:
-      return B9600;
-    case 4800:
-      return B4800;
-    case 2400:
-      return B2400;
-    case 1200:
-      return B1200;
-    default:
-      return B9600;
-  }
-}
-
-bool waitWritable(int fd, const std::string& devicePath, size_t offset) {
-  int retries = 0;
-  constexpr int max_retries = 5;
-  while (true) {
-    fd_set writefds;
-    FD_ZERO(&writefds);
-    FD_SET(fd, &writefds);
-
-    timeval tv{};
-    tv.tv_sec = 1;
-    const int ready = select(fd + 1, nullptr, &writefds, nullptr, &tv);
-    if (ready > 0 && FD_ISSET(fd, &writefds)) {
-      return true;
-    }
-    if (ready < 0 && errno == EINTR) {
-      continue;
-    }
-    retries++;
-    if (retries >= max_retries) {
-      SUPLA_LOG_WARNING("IngeconBus: wait for write %s failed after %d retries at offset %zu",
-                        devicePath.c_str(),
-                        retries,
-                        offset);
-      return false;
-    }
-  }
-}
-
-}  // namespace
-
 SerialPort::SerialPort(std::string devicePath, int baud)
-    : devicePath_(std::move(devicePath)), baud_(baud) {
+    : port_(std::move(devicePath), baud) {
 }
 
 SerialPort::~SerialPort() {
@@ -91,123 +31,61 @@ SerialPort::~SerialPort() {
 }
 
 bool SerialPort::open() {
-  close();
-  fd_ = ::open(devicePath_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-  if (fd_ < 0) {
+  if (!port_.open()) {
     SUPLA_LOG_WARNING("IngeconBus: open %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
+                      port_.devicePath().c_str(),
                       errno,
                       std::strerror(errno));
-    return false;
-  }
-  if (!configureTermios()) {
-    SUPLA_LOG_WARNING("IngeconBus: termios config failed for %s",
-                      devicePath_.c_str());
-    close();
     return false;
   }
   setDtr(false);
   setRts(false);
   SUPLA_LOG_DEBUG("IngeconBus: opened %s @ %d baud",
-                  devicePath_.c_str(),
-                  baud_);
+                  port_.devicePath().c_str(),
+                  port_.baud());
   return true;
 }
 
 void SerialPort::close() {
-  if (fd_ >= 0) {
+  if (port_.isOpen()) {
     SUPLA_LOG_DEBUG("IngeconBus: closing %s fd=%d",
-                    devicePath_.c_str(),
-                    fd_);
-    ::close(fd_);
-    fd_ = -1;
+                    port_.devicePath().c_str(),
+                    port_.fd());
   }
+  port_.close();
 }
 
 bool SerialPort::isOpen() const {
-  return fd_ >= 0;
-}
-
-bool SerialPort::configureTermios() {
-  termios options{};
-  if (tcgetattr(fd_, &options) != 0) {
-    return false;
-  }
-
-  options.c_iflag &=
-      ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-  options.c_cflag |= (CLOCAL | CREAD);
-  options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-  options.c_oflag &= ~OPOST;
-  options.c_cc[VMIN] = 0;
-  options.c_cc[VTIME] = 5;
-
-  options.c_cflag &= ~static_cast<tcflag_t>(CBAUD);
-  options.c_cflag |= static_cast<tcflag_t>(baudToFlag(baud_));
-  options.c_cflag &= ~PARENB;
-  options.c_cflag &= ~CSTOPB;
-  options.c_cflag &= ~CSIZE;
-  options.c_cflag |= CS8;
-  options.c_cflag &= ~CRTSCTS;
-
-  return tcsetattr(fd_, TCSANOW, &options) == 0;
+  return port_.isOpen();
 }
 
 bool SerialPort::setRts(bool enabled) {
-  if (fd_ < 0) {
-    return false;
-  }
-  int status = 0;
-  if (ioctl(fd_, TIOCMGET, &status) != 0) {
-    SUPLA_LOG_VERBOSE("IngeconBus: TIOCMGET RTS %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
-                      errno,
-                      std::strerror(errno));
-    return false;
-  }
-  if (enabled) {
-    status |= TIOCM_RTS;
-  } else {
-    status &= ~TIOCM_RTS;
-  }
-  if (ioctl(fd_, TIOCMSET, &status) != 0) {
+  if (!port_.setModemFlag(TIOCM_RTS, enabled)) {
     SUPLA_LOG_VERBOSE("IngeconBus: TIOCMSET RTS=%d %s failed (errno=%d %s)",
                       enabled,
-                      devicePath_.c_str(),
+                      port_.devicePath().c_str(),
                       errno,
                       std::strerror(errno));
     return false;
   }
-  SUPLA_LOG_VERBOSE("IngeconBus: RTS=%d %s", enabled, devicePath_.c_str());
+  SUPLA_LOG_VERBOSE("IngeconBus: RTS=%d %s",
+                    enabled,
+                    port_.devicePath().c_str());
   return true;
 }
 
 bool SerialPort::setDtr(bool enabled) {
-  if (fd_ < 0) {
-    return false;
-  }
-  int status = 0;
-  if (ioctl(fd_, TIOCMGET, &status) != 0) {
-    SUPLA_LOG_VERBOSE("IngeconBus: TIOCMGET DTR %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
-                      errno,
-                      std::strerror(errno));
-    return false;
-  }
-  if (enabled) {
-    status |= TIOCM_DTR;
-  } else {
-    status &= ~TIOCM_DTR;
-  }
-  if (ioctl(fd_, TIOCMSET, &status) != 0) {
+  if (!port_.setModemFlag(TIOCM_DTR, enabled)) {
     SUPLA_LOG_VERBOSE("IngeconBus: TIOCMSET DTR=%d %s failed (errno=%d %s)",
                       enabled,
-                      devicePath_.c_str(),
+                      port_.devicePath().c_str(),
                       errno,
                       std::strerror(errno));
     return false;
   }
-  SUPLA_LOG_VERBOSE("IngeconBus: DTR=%d %s", enabled, devicePath_.c_str());
+  SUPLA_LOG_VERBOSE("IngeconBus: DTR=%d %s",
+                    enabled,
+                    port_.devicePath().c_str());
   return true;
 }
 
@@ -215,57 +93,30 @@ bool SerialPort::writeAll(const uint8_t* data,
                           size_t len,
                           bool rtsToggle,
                           int turnaroundDelayMs) {
-  if (fd_ < 0 || data == nullptr || len == 0) {
+  if (!port_.isOpen() || data == nullptr || len == 0) {
     SUPLA_LOG_WARNING("IngeconBus: invalid write request fd=%d len=%zu",
-                      fd_,
+                      port_.fd(),
                       len);
     return false;
   }
 
   SUPLA_LOG_VERBOSE("IngeconBus: serial write start %s len=%zu",
-                    devicePath_.c_str(),
+                    port_.devicePath().c_str(),
                     len);
   if (rtsToggle) {
     setRts(true);
   }
-  size_t offset = 0;
-  while (offset < len) {
-    const ssize_t written = ::write(fd_, data + offset, len - offset);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      if ((errno == EAGAIN || errno == EWOULDBLOCK) &&
-          waitWritable(fd_, devicePath_, offset)) {
-        continue;
-      }
-      SUPLA_LOG_WARNING("IngeconBus: write %s failed at offset %zu",
-                        devicePath_.c_str(),
-                        offset);
-      if (rtsToggle) {
-        setRts(false);
-      }
-      return false;
+
+  if (!port_.writeAllRaw(data, len, "IngeconBus", 5, false)) {
+    if (rtsToggle) {
+      setRts(false);
     }
-    if (written == 0) {
-      SUPLA_LOG_WARNING("IngeconBus: write %s made no progress at offset %zu",
-                        devicePath_.c_str(),
-                        offset);
-      if (rtsToggle) {
-        setRts(false);
-      }
-      return false;
-    }
-    offset += static_cast<size_t>(written);
-    SUPLA_LOG_VERBOSE("IngeconBus: serial wrote %zd bytes total=%zu/%zu",
-                      written,
-                      offset,
-                      len);
+    return false;
   }
 
-  if (tcdrain(fd_) != 0) {
-      SUPLA_LOG_WARNING("IngeconBus: tcdrain %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
+  if (!port_.drain()) {
+    SUPLA_LOG_WARNING("IngeconBus: tcdrain %s failed (errno=%d %s)",
+                      port_.devicePath().c_str(),
                       errno,
                       std::strerror(errno));
     if (rtsToggle) {
@@ -276,74 +127,39 @@ bool SerialPort::writeAll(const uint8_t* data,
   if (rtsToggle && turnaroundDelayMs > 0) {
     SUPLA_LOG_VERBOSE("IngeconBus: RS485 turn-around delay %d ms on %s",
                       turnaroundDelayMs,
-                      devicePath_.c_str());
+                      port_.devicePath().c_str());
     std::this_thread::sleep_for(std::chrono::milliseconds(turnaroundDelayMs));
   }
   if (rtsToggle) {
     setRts(false);
   }
   SUPLA_LOG_VERBOSE("IngeconBus: serial write complete %s len=%zu",
-                    devicePath_.c_str(),
+                    port_.devicePath().c_str(),
                     len);
   return true;
 }
 
 ssize_t SerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {
-  if (fd_ < 0 || buffer == nullptr || maxLen == 0) {
-    return -1;
-  }
-
-  fd_set readfds;
-  FD_ZERO(&readfds);
-  FD_SET(fd_, &readfds);
-
-  timeval tv{};
-  tv.tv_sec = timeoutMs / 1000;
-  tv.tv_usec = (timeoutMs % 1000) * 1000;
-
-  const int ready = select(fd_ + 1, &readfds, nullptr, nullptr, &tv);
-  if (ready < 0) {
-    if (errno == EINTR) {
-      return 0;
-    }
-    SUPLA_LOG_VERBOSE("IngeconBus: select on %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
-                      errno,
-                      std::strerror(errno));
-    return -1;
-  }
-  if (ready == 0) {
-    SUPLA_LOG_VERBOSE("IngeconBus: read timeout on %s after %d ms",
-                      devicePath_.c_str(),
-                      timeoutMs);
-    return 0;
-  }
-
-  const ssize_t read = ::read(fd_, buffer, maxLen);
-  if (read < 0) {
-    SUPLA_LOG_VERBOSE("IngeconBus: read %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
-                      errno,
-                      std::strerror(errno));
-  } else {
-    SUPLA_LOG_VERBOSE("IngeconBus: serial read %zd bytes from %s",
-                      read,
-                      devicePath_.c_str());
-  }
-  return read;
+  return port_.readSome(buffer,
+                        maxLen,
+                        timeoutMs,
+                        "IngeconBus",
+                        true,
+                        true,
+                        true);
 }
 
 void SerialPort::flushRx() {
-  if (fd_ >= 0) {
-    SUPLA_LOG_VERBOSE("IngeconBus: flush RX %s", devicePath_.c_str());
-    tcflush(fd_, TCIFLUSH);
+  if (port_.isOpen()) {
+    SUPLA_LOG_VERBOSE("IngeconBus: flush RX %s", port_.devicePath().c_str());
+    port_.flushRx();
   }
 }
 
 void SerialPort::flushRxTx() {
-  if (fd_ >= 0) {
-    SUPLA_LOG_VERBOSE("IngeconBus: flush RX/TX %s", devicePath_.c_str());
-    tcflush(fd_, TCIOFLUSH);
+  if (port_.isOpen()) {
+    SUPLA_LOG_VERBOSE("IngeconBus: flush RX/TX %s", port_.devicePath().c_str());
+    port_.flushRxTx();
   }
 }
 

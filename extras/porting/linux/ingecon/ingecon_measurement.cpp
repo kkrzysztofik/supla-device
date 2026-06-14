@@ -13,6 +13,8 @@
 #include <string>
 #include <utility>
 
+#include "linux_channel_read_helpers.h"
+
 namespace Supla {
 namespace PV {
 
@@ -91,14 +93,11 @@ double IngeconMeasurement::getValue() {
   Supla::Linux::Ingecon::Readings readings;
   bool valid = false;
   if (!busClient_.copyReadings(&readings, &valid) || !valid) {
-    staleReadCounter_++;
-    if (staleReadCounter_ > 3) {
-      return NAN;
-    }
-    return channel.getValueDouble();
+    return Supla::Linux::staleOrUnavailableValue(
+        &staleReadCounter_, channel.getValueDouble(), NAN);
   }
 
-  staleReadCounter_ = 0;
+  Supla::Linux::markValidRead(&staleReadCounter_);
   return readValue(readings);
 }
 

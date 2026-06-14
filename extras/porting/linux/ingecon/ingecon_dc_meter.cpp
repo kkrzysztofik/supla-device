@@ -15,6 +15,8 @@
 #include <limits>
 #include <utility>
 
+#include "linux_channel_read_helpers.h"
+
 namespace Supla {
 namespace PV {
 
@@ -93,15 +95,14 @@ void IngeconDcMeter::applyReadingsToChannel() {
   Supla::Linux::Ingecon::Readings readings;
   bool valid = false;
   if (!busClient_.copyReadings(&readings, &valid) || !valid) {
-    staleReadCounter_++;
-    if (staleReadCounter_ > 3) {
+    if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
       setZeroInstantaneousValues();
       updateChannelValues();
     }
     return;
   }
 
-  staleReadCounter_ = 0;
+  Supla::Linux::markValidRead(&staleReadCounter_);
   applyValidReadings(readings);
   updateChannelValues();
 }

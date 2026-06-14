@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "linux_channel_read_helpers.h"
 #include "sma_channel_helpers.h"
 
 namespace Supla {
@@ -142,15 +143,14 @@ void SmaInverter::applyReadingsToChannel() {
   busClient_.copyReadings(&values, &valid);
 
   if (!valid) {
-    invDisabledCounter_++;
-    if (invDisabledCounter_ > 3) {
+    if (Supla::Linux::markInvalidRead(&invDisabledCounter_)) {
       setZeroValues();
       updateChannelValues();
     }
     return;
   }
 
-  invDisabledCounter_ = 0;
+  Supla::Linux::markValidRead(&invDisabledCounter_);
   applyMappedReadings(values);
   updateChannelValues();
 }

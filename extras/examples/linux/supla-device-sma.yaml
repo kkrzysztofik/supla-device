@@ -1,5 +1,5 @@
-# Example sd4linux config with SMA RS485 extension enabled at build time:
-#   ./build-sma.sh
+# Example sd4linux config with SMA and Ingecon extensions enabled at build time:
+#   ./build-sma-ingecon.sh
 #
 # Copy to your own file or use supla-device-wr33-008.yaml as a hardware-specific
 # template. Set supla.mail, supla.server, and serial.device before running.

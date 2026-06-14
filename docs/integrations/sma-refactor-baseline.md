@@ -23,7 +23,7 @@ Out of scope:
 
 | Pass | Current behavior | Structural improvement | Validation |
 | ---- | ---------------- | ---------------------- | ---------- |
-| Protocol core | `SmaDataClient` performs frame IO, detection, handshakes, retry/backoff, CINFO, and spot reads. | Extract private helpers for timeouts and response parsing without changing command order or timeouts. | `extras/test/SmaTests/*`, `extras/examples/linux/build-sma.sh`. |
+| Protocol core | `SmaDataClient` performs frame IO, detection, handshakes, retry/backoff, CINFO, and spot reads. | Extract private helpers for timeouts and response parsing without changing command order or timeouts. | `extras/test/SmaTests/*`, `extras/examples/linux/build-sma-ingecon.sh`. |
 | Bus worker | `SmaBus` owns a shared poller and copies subscriber cache state between threads. | Keep public API stable while isolating retry delay, subscriber snapshots, cache writes, and mapped read logic. | SMA build, targeted tests, hardware poll log parity. |
 | Channel wrappers | `SmaInverter`, `SmaDcMeter`, `SmaThermometer`, and `SmaMeasurement` repeat poll interval and mapping checks. | Share small header-only helpers for poll interval normalization, bus config, and mapping comparison. | Channel construction from both SMA YAML examples. |
 | YAML extension | `sma_extension.cpp` parses config and performs ownership handoff for each channel type. | Consolidate ownership handoff and keep channel factory registration unchanged. | sd4linux build with `-DSUPLA_LINUX_EXTENSION_DIRS=../../../porting/linux/extensions/sma`. |
@@ -36,7 +36,7 @@ Out of scope:
 cmake -S extras/test -B extras/test/build
 cmake --build extras/test/build
 ctest --test-dir extras/test/build -R "Sma|sd4linux|LinuxPort" --output-on-failure
-extras/examples/linux/build-sma.sh
+extras/examples/linux/build-sma-ingecon.sh
 ```
 
 Hardware parity, when an SMA inverter is available:

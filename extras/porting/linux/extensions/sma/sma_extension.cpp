@@ -15,8 +15,8 @@
 #include <utility>
 #include <vector>
 
+#include "linux_extension_config_helpers.h"
 #include "linux_channel_factory.h"
-#include "linux_yaml_config.h"
 #include "sma_bus.h"
 #include "sma_bus_client.h"
 #include "sma_dc_meter.h"
@@ -76,8 +76,7 @@ const char* parseSuplaMapping(const std::string& mapping, SmaMappingKind kind) {
 }
 
 struct SmaSerialConfig {
-  std::string devicePath;
-  int baud = 9600;
+  Supla::Linux::ExtensionSerialConfig serial;
   std::string mediaStr = "RS485";
   uint16_t netAddress = 1;
   int pollIntervalSec = Supla::Linux::Sma::kDefaultPollIntervalSec;
@@ -89,19 +88,10 @@ bool parseSmaSerialConfig(const Supla::Linux::ChannelFactoryContext& context,
   const auto& ch = context.channel;
   auto& config = context.config;
 
-  if (!ch["serial"] || !ch["serial"]["device"]) {
-    SUPLA_LOG_ERROR("Channel[%d] config: missing serial.device",
-                    context.channelNumber);
+  if (!Supla::Linux::parseExtensionSerialConfig(context, &out->serial)) {
     return false;
   }
 
-  config.markChannelParameterUsed();
-  out->devicePath = ch["serial"]["device"].as<std::string>();
-
-  if (ch["serial"]["baud"]) {
-    config.markChannelParameterUsed();
-    out->baud = ch["serial"]["baud"].as<int>();
-  }
   if (ch["serial"]["media"]) {
     config.markChannelParameterUsed();
     out->mediaStr = ch["serial"]["media"].as<std::string>();
@@ -112,8 +102,7 @@ bool parseSmaSerialConfig(const Supla::Linux::ChannelFactoryContext& context,
         static_cast<uint16_t>(ch["device"]["net_address"].as<int>());
   }
   if (ch["poll_interval_sec"]) {
-    config.markChannelParameterUsed();
-    out->pollIntervalSec = ch["poll_interval_sec"].as<int>();
+    Supla::Linux::parseExtensionPollIntervalSec(context, &out->pollIntervalSec);
   }
   if (ch["device"] && ch["device"]["profile"]) {
     config.markChannelParameterUsed();
@@ -230,39 +219,6 @@ bool parseSingleSmaChannel(
   return true;
 }
 
-void applyGpmYamlOptions(const Supla::Linux::ChannelFactoryContext& context,
-                         Supla::PV::SmaMeasurement* measurement) {
-  const auto& ch = context.channel;
-  auto& config = context.config;
-
-  if (ch["default_unit_after_value"]) {
-    config.markChannelParameterUsed();
-    const std::string unit = ch["default_unit_after_value"].as<std::string>();
-    measurement->setDefaultUnitAfterValue(unit.c_str());
-  }
-  if (ch["default_unit_before_value"]) {
-    config.markChannelParameterUsed();
-    const std::string unit = ch["default_unit_before_value"].as<std::string>();
-    measurement->setDefaultUnitBeforeValue(unit.c_str());
-  }
-  if (ch["default_value_precision"]) {
-    config.markChannelParameterUsed();
-    measurement->setDefaultValuePrecision(
-        ch["default_value_precision"].as<int>());
-  }
-}
-
-template <typename ChannelT>
-bool addConfiguredChannel(const Supla::Linux::ChannelFactoryContext& context,
-                          std::unique_ptr<ChannelT> channel) {
-  const bool added =
-      context.config.addCommonChannelParameters(context.channel, channel.get());
-  if (added) {
-    channel.release();
-  }
-  return added;
-}
-
 bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
                  const char* typeName,
                  bool useDcMeter) {
@@ -279,21 +235,21 @@ bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
   SUPLA_LOG_INFO("Channel[%d] config: adding %s on %s, net_address=0x%04x",
                  context.channelNumber,
                  typeName,
-                 serialConfig.devicePath.c_str(),
+                 serialConfig.serial.devicePath.c_str(),
                  serialConfig.netAddress);
 
   std::unique_ptr<Supla::PV::SmaInverter> meter;
   if (useDcMeter) {
-    meter.reset(new Supla::PV::SmaDcMeter(serialConfig.devicePath,
-                                          serialConfig.baud,
+    meter.reset(new Supla::PV::SmaDcMeter(serialConfig.serial.devicePath,
+                                          serialConfig.serial.baud,
                                           parseMedia(serialConfig.mediaStr),
                                           serialConfig.netAddress,
                                           serialConfig.pollIntervalSec,
                                           std::move(mappedChannels),
                                           serialConfig.deviceProfile));
   } else {
-    meter.reset(new Supla::PV::SmaInverter(serialConfig.devicePath,
-                                           serialConfig.baud,
+    meter.reset(new Supla::PV::SmaInverter(serialConfig.serial.devicePath,
+                                           serialConfig.serial.baud,
                                            parseMedia(serialConfig.mediaStr),
                                            serialConfig.netAddress,
                                            serialConfig.pollIntervalSec,
@@ -301,7 +257,7 @@ bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
                                            serialConfig.deviceProfile));
   }
 
-  return addConfiguredChannel(context, std::move(meter));
+  return Supla::Linux::addConfiguredChannel(context, std::move(meter));
 }
 
 bool AddSmaInverter(const Supla::Linux::ChannelFactoryContext& context) {
@@ -327,18 +283,21 @@ bool AddSmaThermometer(const Supla::Linux::ChannelFactoryContext& context) {
   SUPLA_LOG_INFO(
       "Channel[%d] config: adding SmaThermometer on %s, net_address=0x%04x",
       context.channelNumber,
-      serialConfig.devicePath.c_str(),
+      serialConfig.serial.devicePath.c_str(),
       serialConfig.netAddress);
 
+  Supla::PV::SmaThermometer::Config thermometerConfig;
+  thermometerConfig.serialDevice = std::move(serialConfig.serial.devicePath);
+  thermometerConfig.baud = serialConfig.serial.baud;
+  thermometerConfig.media = parseMedia(serialConfig.mediaStr);
+  thermometerConfig.netAddress = serialConfig.netAddress;
+  thermometerConfig.pollIntervalSec = serialConfig.pollIntervalSec;
+  thermometerConfig.channels = std::move(mappedChannels);
+  thermometerConfig.deviceProfile = std::move(serialConfig.deviceProfile);
+
   std::unique_ptr<Supla::PV::SmaThermometer> thermometer(
-      new Supla::PV::SmaThermometer(serialConfig.devicePath,
-                                    serialConfig.baud,
-                                    parseMedia(serialConfig.mediaStr),
-                                    serialConfig.netAddress,
-                                    serialConfig.pollIntervalSec,
-                                    std::move(mappedChannels),
-                                    serialConfig.deviceProfile));
-  return addConfiguredChannel(context, std::move(thermometer));
+      new Supla::PV::SmaThermometer(std::move(thermometerConfig)));
+  return Supla::Linux::addConfiguredChannel(context, std::move(thermometer));
 }
 
 bool AddSmaMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
@@ -356,19 +315,19 @@ bool AddSmaMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
   SUPLA_LOG_INFO(
       "Channel[%d] config: adding SmaMeasurement on %s, net_address=0x%04x",
       context.channelNumber,
-      serialConfig.devicePath.c_str(),
+      serialConfig.serial.devicePath.c_str(),
       serialConfig.netAddress);
 
   std::unique_ptr<Supla::PV::SmaMeasurement> measurement(
-      new Supla::PV::SmaMeasurement(serialConfig.devicePath,
-                                    serialConfig.baud,
+      new Supla::PV::SmaMeasurement(serialConfig.serial.devicePath,
+                                    serialConfig.serial.baud,
                                     parseMedia(serialConfig.mediaStr),
                                     serialConfig.netAddress,
                                     serialConfig.pollIntervalSec,
                                     std::move(mappedChannels),
                                     serialConfig.deviceProfile));
-  applyGpmYamlOptions(context, measurement.get());
-  return addConfiguredChannel(context, std::move(measurement));
+  Supla::Linux::applyGpmYamlOptions(context, measurement.get());
+  return Supla::Linux::addConfiguredChannel(context, std::move(measurement));
 }
 
 }  // namespace

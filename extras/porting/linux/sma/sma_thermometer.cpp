@@ -17,14 +17,11 @@
 #include <utility>
 #include <vector>
 
+#include "linux_channel_read_helpers.h"
 #include "sma_channel_helpers.h"
 
 namespace Supla {
 namespace PV {
-
-namespace {
-constexpr int kMaxStaleReads = 3;
-}  // namespace
 
 SmaThermometer::SmaThermometer(Config config)
     : channelKey_(config.channels.empty() ? std::string() : config.channels.front().key),
@@ -51,14 +48,13 @@ double SmaThermometer::getValue() {
   std::map<std::string, double> values;
   bool valid = false;
   if (!busClient_.copyReadings(&values, &valid) || !valid) {
-    staleReadCounter_++;
-    if (staleReadCounter_ > kMaxStaleReads) {
-      return TEMPERATURE_NOT_AVAILABLE;
-    }
-    return channel.getValueDouble();
+    return Supla::Linux::staleOrUnavailableValue(
+        &staleReadCounter_,
+        channel.getValueDouble(),
+        TEMPERATURE_NOT_AVAILABLE);
   }
 
-  staleReadCounter_ = 0;
+  Supla::Linux::markValidRead(&staleReadCounter_);
   const auto it = values.find(channelKey_);
   if (it == values.end() || !std::isfinite(it->second)) {
     return TEMPERATURE_NOT_AVAILABLE;

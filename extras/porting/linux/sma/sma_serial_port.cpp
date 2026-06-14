@@ -18,17 +18,12 @@
 
 #include "sma_serial_port.h"
 
-#include <fcntl.h>
 #include <supla/log_wrapper.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
-#include <termios.h>
-#include <unistd.h>
 
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <string>
 #include <thread>
 #include <utility>
 
@@ -37,53 +32,6 @@ namespace Linux {
 namespace Sma {
 
 namespace {
-
-speed_t baudToFlag(int baud) {
-  switch (baud) {
-    case 57600:
-      return B57600;
-    case 38400:
-      return B38400;
-    case 19200:
-      return B19200;
-    case 9600:
-      return B9600;
-    case 4800:
-      return B4800;
-    case 2400:
-      return B2400;
-    case 1200:
-      return B1200;
-    case 600:
-      return B600;
-    case 300:
-      return B300;
-    case 150:
-      return B150;
-    case 110:
-      return B110;
-    default:
-      return B9600;
-  }
-}
-
-bool modemStatusSet(int fd, int flag) {
-  int status = 0;
-  if (ioctl(fd, TIOCMGET, &status) < 0) {
-    return false;
-  }
-  status |= flag;
-  return ioctl(fd, TIOCMSET, &status) >= 0;
-}
-
-bool modemStatusClr(int fd, int flag) {
-  int status = 0;
-  if (ioctl(fd, TIOCMGET, &status) < 0) {
-    return false;
-  }
-  status &= ~flag;
-  return ioctl(fd, TIOCMSET, &status) >= 0;
-}
 
 void logDirectionControlError(int fd, const char* operation) {
   SUPLA_LOG_WARNING(
@@ -95,43 +43,12 @@ void logDirectionControlError(int fd, const char* operation) {
       std::strerror(errno));
 }
 
-bool waitWritable(int fd, const std::string& devicePath, size_t offset) {
-  while (true) {
-    fd_set writefds;
-    FD_ZERO(&writefds);
-    FD_SET(fd, &writefds);
-
-    timeval tv{};
-    tv.tv_sec = 1;
-    const int ready = select(fd + 1, nullptr, &writefds, nullptr, &tv);
-    if (ready > 0 && FD_ISSET(fd, &writefds)) {
-      return true;
-    }
-    if (ready < 0 && errno == EINTR) {
-      continue;
-    }
-    if (ready < 0) {
-      SUPLA_LOG_WARNING(
-          "SmaBus: wait for write %s failed at offset %zu (errno=%d %s)",
-          devicePath.c_str(),
-          offset,
-          errno,
-          std::strerror(errno));
-    } else {
-      SUPLA_LOG_WARNING("SmaBus: wait for write %s timed out at offset %zu",
-                        devicePath.c_str(),
-                        offset);
-    }
-    return false;
-  }
-}
-
 }  // namespace
 
 SmaSerialPort::SmaSerialPort(std::string devicePath,
                              int baud,
                              SerialMedia media)
-    : devicePath_(std::move(devicePath)), baud_(baud), media_(media) {
+    : port_(std::move(devicePath), baud), media_(media) {
 }
 
 SmaSerialPort::~SmaSerialPort() {
@@ -139,84 +56,31 @@ SmaSerialPort::~SmaSerialPort() {
 }
 
 bool SmaSerialPort::open() {
-  close();
-
-  fd_ = ::open(devicePath_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-  if (fd_ < 0) {
+  if (!port_.open()) {
     SUPLA_LOG_WARNING("SmaBus: open %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
+                      port_.devicePath().c_str(),
                       errno,
                       std::strerror(errno));
-    return false;
-  }
-
-  if (!configureTermios()) {
-    SUPLA_LOG_WARNING("SmaBus: termios config failed for %s (errno=%d %s)",
-                      devicePath_.c_str(),
-                      errno,
-                      std::strerror(errno));
-    close();
-    return false;
-  }
-
-  int bytesInBuffer = 0;
-  if (ioctl(fd_, FIONREAD, &bytesInBuffer) < 0) {
-    close();
     return false;
   }
 
   SUPLA_LOG_DEBUG("SmaBus: opened %s @ %d baud (%s)",
-                  devicePath_.c_str(),
-                  baud_,
+                  port_.devicePath().c_str(),
+                  port_.baud(),
                   media_ == SerialMedia::RS485 ? "RS485" : "RS232");
   return true;
 }
 
 void SmaSerialPort::close() {
-  if (fd_ >= 0) {
-    ::close(fd_);
-    fd_ = -1;
-  }
+  port_.close();
 }
 
 bool SmaSerialPort::isOpen() const {
-  return fd_ >= 0;
-}
-
-bool SmaSerialPort::configureTermios() {
-  termios options{};
-  if (tcgetattr(fd_, &options) != 0) {
-    return false;
-  }
-
-  options.c_iflag &=
-      ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-  options.c_cflag |= (CLOCAL | CREAD);
-  options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-  options.c_oflag &= ~OPOST;
-  options.c_cc[VMIN] = 0;
-  options.c_cc[VTIME] = 5;
-
-  const speed_t rate = baudToFlag(baud_);
-  // Set baud via c_cflag so the binary does not depend on GLIBC_2.42
-  // cfsetispeed/cfsetospeed (C23); matches common Linux termios usage.
-  options.c_cflag &= ~static_cast<tcflag_t>(CBAUD);
-  options.c_cflag |= static_cast<tcflag_t>(rate);
-
-  options.c_cflag &= ~PARENB;
-  options.c_cflag &= ~CSTOPB;
-  options.c_cflag &= ~CSIZE;
-  options.c_cflag |= CS8;
-  options.c_cflag &= ~CRTSCTS;
-
-  return tcsetattr(fd_, TCSANOW, &options) == 0;
+  return port_.isOpen();
 }
 
 void SmaSerialPort::flushRx() {
-  if (fd_ < 0) {
-    return;
-  }
-  tcflush(fd_, TCIFLUSH);
+  port_.flushRx();
 }
 
 void SmaSerialPort::waitBusFree() {
@@ -225,15 +89,15 @@ void SmaSerialPort::waitBusFree() {
 }
 
 bool SmaSerialPort::prepareSend() {
-  if (media_ != SerialMedia::RS485 || fd_ < 0) {
+  if (media_ != SerialMedia::RS485 || !port_.isOpen()) {
     return true;
   }
-  if (!modemStatusSet(fd_, TIOCM_RTS)) {
-    logDirectionControlError(fd_, "set RTS");
+  if (!port_.setModemFlag(TIOCM_RTS, true)) {
+    logDirectionControlError(port_.fd(), "set RTS");
     return false;
   }
-  if (!modemStatusClr(fd_, TIOCM_DTR)) {
-    logDirectionControlError(fd_, "clear DTR");
+  if (!port_.setModemFlag(TIOCM_DTR, false)) {
+    logDirectionControlError(port_.fd(), "clear DTR");
     return false;
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -241,27 +105,27 @@ bool SmaSerialPort::prepareSend() {
 }
 
 bool SmaSerialPort::prepareRecv(bool skipDrain) {
-  if (media_ != SerialMedia::RS485 || fd_ < 0) {
+  if (media_ != SerialMedia::RS485 || !port_.isOpen()) {
     return true;
   }
-  if (!skipDrain && tcdrain(fd_) != 0) {
-    logDirectionControlError(fd_, "tcdrain");
+  if (!skipDrain && !port_.drain()) {
+    logDirectionControlError(port_.fd(), "tcdrain");
     return false;
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  if (!modemStatusClr(fd_, TIOCM_RTS)) {
-    logDirectionControlError(fd_, "clear RTS");
+  if (!port_.setModemFlag(TIOCM_RTS, false)) {
+    logDirectionControlError(port_.fd(), "clear RTS");
     return false;
   }
-  if (!modemStatusSet(fd_, TIOCM_DTR)) {
-    logDirectionControlError(fd_, "set DTR");
+  if (!port_.setModemFlag(TIOCM_DTR, true)) {
+    logDirectionControlError(port_.fd(), "set DTR");
     return false;
   }
   return true;
 }
 
 bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
-  if (fd_ < 0 || data == nullptr || len == 0) {
+  if (!port_.isOpen() || data == nullptr || len == 0) {
     return false;
   }
 
@@ -270,68 +134,25 @@ bool SmaSerialPort::writeAll(const uint8_t* data, size_t len) {
     return false;
   }
 
-  size_t offset = 0;
-  while (offset < len) {
-    const ssize_t written = ::write(fd_, data + offset, len - offset);
-    if (written < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        if (!waitWritable(fd_, devicePath_, offset)) {
-          return false;
-        }
-        continue;
-      }
-      SUPLA_LOG_WARNING("SmaBus: write %s failed at offset %zu (errno=%d %s)",
-                        devicePath_.c_str(),
-                        offset,
-                        errno,
-                        std::strerror(errno));
-      return false;
-    }
-    if (written == 0) {
-      SUPLA_LOG_WARNING("SmaBus: write %s made no progress at offset %zu",
-                        devicePath_.c_str(),
-                        offset);
-      return false;
-    }
-    offset += static_cast<size_t>(written);
+  if (!port_.writeAllRaw(data, len, "SmaBus", 1, true)) {
+    return false;
   }
 
-  if (tcdrain(fd_) != 0) {
-    logDirectionControlError(fd_, "tcdrain after write");
+  if (!port_.drain()) {
+    logDirectionControlError(port_.fd(), "tcdrain after write");
     return false;
   }
   return prepareRecv(true);
 }
 
 ssize_t SmaSerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {
-  if (fd_ < 0 || buffer == nullptr || maxLen == 0) {
-    return -1;
-  }
-
-  fd_set readfds;
-  FD_ZERO(&readfds);
-  FD_SET(fd_, &readfds);
-
-  timeval tv{};
-  tv.tv_sec = timeoutMs / 1000;
-  tv.tv_usec = (timeoutMs % 1000) * 1000;
-
-  const int ready = select(fd_ + 1, &readfds, nullptr, nullptr, &tv);
-  if (ready < 0) {
-    SUPLA_LOG_VERBOSE("SmaBus: select on %s failed (errno=%d %s)",
-                      devicePath_.c_str(),
-                      errno,
-                      std::strerror(errno));
-    return -1;
-  }
-  if (ready == 0) {
-    return 0;
-  }
-
-  return ::read(fd_, buffer, maxLen);
+  return port_.readSome(buffer,
+                        maxLen,
+                        timeoutMs,
+                        "SmaBus",
+                        false,
+                        false,
+                        false);
 }
 
 }  // namespace Sma

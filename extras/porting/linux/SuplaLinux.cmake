@@ -52,6 +52,7 @@ set(SUPLA_DEVICE_LINUX_SRCS
   ${SUPLA_LINUX_PORT_DIR}/linux_mqtt_client.cpp
   ${SUPLA_LINUX_PORT_DIR}/mqtt_client.cpp
   ${SUPLA_LINUX_PORT_DIR}/linux_channel_factory.cpp
+  ${SUPLA_LINUX_PORT_DIR}/linux_serial_port.cpp
 
   ${SUPLA_LINUX_PORT_DIR}/linux_timers.cpp
   ${SUPLA_LINUX_PORT_DIR}/linux_clock.cpp

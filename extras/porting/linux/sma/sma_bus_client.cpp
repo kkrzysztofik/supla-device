@@ -9,17 +9,18 @@
 
 #include "sma_bus_client.h"
 
-#include <algorithm>
 #include <map>
 #include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "linux_shared_bus_client_helpers.h"
+
 namespace {
 
-std::mutex gClientsMutex;
-std::vector<Supla::Linux::Sma::SmaBusClient*> gClients;
+Supla::Linux::SharedBusClientRegistry<Supla::Linux::Sma::SmaBusClient>
+    gClients;
 
 }  // namespace
 
@@ -34,33 +35,20 @@ SmaBusClient::SmaBusClient(void* owner,
       state_(std::make_shared<SmaBus::Subscriber::State>()) {
   state_->owner = owner;
   state_->channels = std::move(channels);
-  std::lock_guard<std::mutex> lock(gClientsMutex);
-  gClients.push_back(this);
+  gClients.add(this);
 }
 
 SmaBusClient::~SmaBusClient() {
   detach();
-  std::lock_guard<std::mutex> lock(gClientsMutex);
-  gClients.erase(std::remove(gClients.begin(), gClients.end(), this),
-                 gClients.end());
+  gClients.remove(this);
 }
 
 void SmaBusClient::attach() {
-  if (bus_) {
-    return;
-  }
-
-  bus_ = SmaBus::acquire(config_);
-  SmaBus::Subscriber subscriber;
-  subscriber.state = state_;
-  bus_->subscribe(subscriber);
+  Supla::Linux::attachSharedBusClient(config_, state_, &bus_);
 }
 
 void SmaBusClient::detach() {
-  if (bus_) {
-    bus_->unsubscribe(state_->owner);
-    bus_.reset();
-  }
+  Supla::Linux::detachSharedBusClient(state_, &bus_);
 }
 
 bool SmaBusClient::copyChannels(
@@ -87,17 +75,7 @@ bool SmaBusClient::copyReadings(std::map<std::string, double>* values,
 }
 
 void shutdownAllClients() {
-  std::vector<SmaBusClient*> clients;
-  {
-    std::lock_guard<std::mutex> lock(gClientsMutex);
-    clients = gClients;
-  }
-
-  for (auto* client : clients) {
-    if (client) {
-      client->detach();
-    }
-  }
+  Supla::Linux::shutdownSharedBusClients(gClients);
 }
 
 }  // namespace Sma

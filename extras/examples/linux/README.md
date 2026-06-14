@@ -85,7 +85,7 @@ binary:
 ```bash
 sudo apt install build-essential cmake git libssl-dev libyaml-cpp-dev
 cd /home/kmk/supla-device/extras/examples/linux
-./build-sma.sh
+./build-sma-ingecon.sh
 ./build/supla-device-linux --version
 ```
 
@@ -167,14 +167,21 @@ code. Timings are configured in YAML with:
         long_ms: 600
         pause_ms: 200
 
-### SMA RS485 inverter extension (`SmaInverter`)
+### SMA and Ingecon RS485 inverter extensions
 
-Build with the native SMA extension (read-only RS485/SMANet, no `libyasdi`):
+Build with the native SMA extension (read-only RS485/SMANet, no `libyasdi`)
+and the native Ingecon Modbus RTU/RS485 extension:
 
     cd extras/examples/linux
-    cmake -B build -DSUPLA_LINUX_EXTENSION_DIRS=../../../porting/linux/extensions/sma
-    cmake --build build -j$(nproc)
+    ./build-sma-ingecon.sh
     ./build/supla-device-linux -c supla-device-sma.yaml --verbose
+    ./build/supla-device-linux -c supla-device-ingecon.yaml --verbose
+
+Manual equivalent:
+
+    cmake -B build \
+      -DSUPLA_LINUX_EXTENSION_DIRS="../../../porting/linux/extensions/sma;../../../porting/linux/extensions/ingecon"
+    cmake --build build -j$(nproc)
 
 Copy `supla-device-sma.yaml`, set SUPLA credentials, serial port (`/dev/ttyUSB0`),
 and channel metadata from `yasdishell` profiling. Full instructions:
