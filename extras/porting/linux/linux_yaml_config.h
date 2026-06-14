@@ -141,6 +141,7 @@ class LinuxYamlConfig : public KeyValue {
   bool getMqttClientFileCA(char* result) const;
 
   void markChannelParameterUsed();
+  const YAML::Node& yamlRoot() const { return config; }
   bool addCommonChannelParameters(const YAML::Node& ch,
                                   Supla::Element* element);
 

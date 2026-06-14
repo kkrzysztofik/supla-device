@@ -1,0 +1,74 @@
+name: supla-device-byd-example
+log_level: info
+state_files_path: "./var/supla-device"
+
+supla:
+  server: svr1.supla.org
+  mail: user@example.com
+
+byd:
+  email: user@example.com
+  password: "${BYD_PASSWORD}"
+  region: eu
+  poll_interval_sec: 60
+  bangcle_tables_path: extras/porting/linux/byd/data/bangcle_tables.bin
+
+channels:
+  - type: BydMeasurement
+    byd_field: soc
+    vin: YOURVIN00000000001
+    default_unit_after_value: "%"
+
+  - type: BydMeasurement
+    byd_field: range_km
+    vin: YOURVIN00000000001
+    default_unit_after_value: " km"
+
+  - type: BydMeasurement
+    byd_field: battery_power_w
+    vin: YOURVIN00000000001
+    default_unit_after_value: " W"
+
+  - type: BydBinary
+    byd_field: is_charging
+    vin: YOURVIN00000000001
+
+  - type: BydBinary
+    byd_field: is_plugged
+    vin: YOURVIN00000000001
+
+  - type: BydBinary
+    byd_field: is_online
+    vin: YOURVIN00000000001
+
+  - type: BydMeasurement
+    byd_field: time_to_full_min
+    vin: YOURVIN00000000001
+    default_unit_after_value: " min"
+
+  - type: BydMeasurement
+    byd_field: odometer_km
+    vin: YOURVIN00000000001
+    default_unit_after_value: " km"
+
+  - type: BydThermometer
+    byd_field: cabin_temp_c
+    vin: YOURVIN00000000001
+
+  - type: BydMeasurement
+    byd_field: consumption_ev_kwh_per_100km
+    vin: YOURVIN00000000001
+    default_unit_after_value: " kWh/100km"
+
+  - type: BydMeasurement
+    byd_field: latitude
+    vin: YOURVIN00000000001
+
+  - type: BydMeasurement
+    byd_field: longitude
+    vin: YOURVIN00000000001
+
+  - type: BydMeasurement
+    byd_field: avg_consumption_ev
+    vin: YOURVIN00000000001
+    default_unit_after_value: " kWh/100km"

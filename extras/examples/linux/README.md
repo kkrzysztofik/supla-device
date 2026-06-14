@@ -193,6 +193,30 @@ example maps it to `rvr_act_energy`. Existing deployments that copied an older
 active energy, or keep the old local mapping only if they intentionally stored
 production in the forward/consumption field.
 
+### BYD cloud telemetry extension
+
+Build with the native BYD extension (read-only DiLink cloud telemetry via
+[`pyBYD`](../../../pyBYD/) wire-format port, no Python runtime):
+
+    cd extras/examples/linux
+    ./build-byd.sh
+    export BYD_PASSWORD='your-password'
+    ./build-linux-byd/supla-device-linux -c supla-device-byd.yaml --verbose
+
+Manual equivalent:
+
+    cmake -B build-linux-byd \
+      -DSUPLA_LINUX_EXTENSION_DIRS="../../../porting/linux/extensions/byd"
+    cmake --build build-linux-byd -j$(nproc)
+
+Copy `supla-device-byd.yaml`, set SUPLA credentials, BYD account (`byd.email` /
+`byd.password` or `BYD_USERNAME` / `BYD_PASSWORD` env vars), vehicle VIN per
+channel, and `byd.bangcle_tables_path` (defaults to
+`extras/porting/linux/byd/data/bangcle_tables.bin`). Channel types:
+`BydMeasurement`, `BydMeter`, `BydThermometer`, `BydBinary` — each channel
+declares `byd_field` (e.g. `soc`, `is_charging`, `cabin_temp_c`). Multiple
+channels on one VIN share a single poll loop.
+
 # Usage
 
 Currently, there is no automated installation available. So please follow below
@@ -472,6 +496,10 @@ Supported channel types:
 * `SmaMeasurement` - related class `Supla::PV::SmaMeasurement` (extension, GPM e.g. `Zac`)
 * `IngeconInverter` - related class `Supla::PV::IngeconInverter` (extension, Modbus RTU/RS485 AC meter; see `supla-device-ingecon.yaml`)
 * `IngeconMeasurement` - related class `Supla::PV::IngeconMeasurement` (extension, GPM for INGECON status/alarm/DC registers)
+* `BydMeasurement` - related class `Supla::PV::BydMeasurement` (extension, BYD cloud GPM; see `supla-device-byd.yaml`)
+* `BydMeter` - related class `Supla::PV::BydMeter` (extension, BYD cloud energy counters)
+* `BydThermometer` - related class `Supla::PV::BydThermometer` (extension, BYD cabin/outside temperature)
+* `BydBinary` - related class `Supla::PV::BydBinary` (extension, BYD charging/online/door flags)
 * `SolarEdge` - related class `Supla::PV::SolarEdge`
 * `Afore` - related class `Supla::PV::Afore`
 * `ThermometerParsed` - related class `Supla::Sensor::ThermometerParsed`

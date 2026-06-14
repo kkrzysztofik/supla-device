@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <linux_channel_factory.h>
 #include <linux_yaml_config.h>
+#include <yaml-cpp/yaml.h>
 
 namespace Supla {
 
@@ -27,6 +28,7 @@ namespace Supla {
 namespace Linux {
 void initIngeconExtension();
 void initSmaExtension();
+void initBydExtension();
 }  // namespace Linux
 }  // namespace Supla
 
@@ -86,4 +88,46 @@ TEST_F(Sd4linuxSmaExtensionTests, RegistersAllIngeconChannelFactories) {
   EXPECT_EQ(Supla::Linux::ChannelFactoryRegistry::instance().findByType(
                 "MissingIngeconType"),
             nullptr);
+}
+
+void expectBydFactoryRegistered(const char* typeName) {
+  const auto* factory =
+      Supla::Linux::ChannelFactoryRegistry::instance().findByType(typeName);
+  ASSERT_NE(factory, nullptr);
+  EXPECT_EQ(factory->pluginName, "byd");
+  EXPECT_EQ(factory->typeName, typeName);
+}
+
+TEST_F(Sd4linuxSmaExtensionTests, RegistersAllBydChannelFactories) {
+  Supla::Linux::initBydExtension();
+
+  EXPECT_TRUE(
+      Supla::Linux::ChannelFactoryRegistry::instance().hasPlugin("byd"));
+  expectBydFactoryRegistered("BydMeasurement");
+  expectBydFactoryRegistered("BydMeter");
+  expectBydFactoryRegistered("BydThermometer");
+  expectBydFactoryRegistered("BydBinary");
+  EXPECT_EQ(Supla::Linux::ChannelFactoryRegistry::instance().findByType(
+                "MissingBydType"),
+            nullptr);
+}
+
+TEST_F(Sd4linuxSmaExtensionTests, ExampleBydYamlUsesRegisteredChannelTypes) {
+  Supla::Linux::initBydExtension();
+
+  const YAML::Node root = YAML::LoadFile(
+      "../../examples/linux/supla-device-byd.yaml");
+  ASSERT_TRUE(root["channels"].IsSequence());
+
+  for (const auto& channel : root["channels"]) {
+    ASSERT_TRUE(channel["type"].IsScalar());
+    const std::string type = channel["type"].as<std::string>();
+    EXPECT_NE(Supla::Linux::ChannelFactoryRegistry::instance().findByType(type),
+              nullptr)
+        << "Channel type " << type << " from supla-device-byd.yaml";
+  }
+
+  EXPECT_TRUE(root["byd"].IsMap());
+  EXPECT_TRUE(root["byd"]["email"].IsScalar());
+  EXPECT_TRUE(root["byd"]["region"].IsScalar());
 }
