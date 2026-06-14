@@ -22,6 +22,7 @@ using Supla::Linux::Ingecon::inputRegisterCountForProfile;
 using Supla::Linux::Ingecon::modbusCrc16;
 using Supla::Linux::Ingecon::parseInputRegistersForProfile;
 using Supla::Linux::Ingecon::parseMainInputRegisters;
+using Supla::Linux::Ingecon::parseProfileName;
 using Supla::Linux::Ingecon::parseReadInputRegistersResponse;
 using Supla::Linux::Ingecon::parseReadSerialNumberResponse;
 using Supla::Linux::Ingecon::resolveProfileFromFirmware;
@@ -139,8 +140,15 @@ TEST(IngeconModbusRtuTest, SelectsProfileFromFirmware) {
   EXPECT_EQ(resolveProfileFromFirmware("AAY1000_A"), Profile::MonofAayV1);
   EXPECT_EQ(resolveProfileFromFirmware("AAP1060_H"), Profile::MonofAapV1);
   EXPECT_EQ(resolveProfileFromFirmware("AAS1060_H"), Profile::TrifAasV1);
+  EXPECT_EQ(resolveProfileFromFirmware("AAS1340_U"), Profile::TrifAasV1);
   EXPECT_EQ(resolveProfileFromFirmware("UNKNOWN"), Profile::Lite27);
   EXPECT_EQ(inputRegisterCountForProfile(Profile::MonofAapV1), 47);
+}
+
+TEST(IngeconModbusRtuTest, ParsesAas1340ProfileAlias) {
+  Profile profile = Profile::Auto;
+  ASSERT_TRUE(parseProfileName("aas1340_u", &profile));
+  EXPECT_EQ(profile, Profile::TrifAasV1);
 }
 
 TEST(IngeconModbusRtuTest, ParsesMonofAapV1OnlineRegisters) {
@@ -209,7 +217,7 @@ TEST(IngeconModbusRtuTest, ParsesTrifAasV1OnlineRegisters) {
   registers[15] = 5;
   registers[16] = 997;
   registers[17] = 1;
-  registers[18] = 3456;
+  registers[18] = 465;
   registers[19] = 4999;
   registers[20] = 2026;
   registers[21] = 6;
@@ -231,6 +239,17 @@ TEST(IngeconModbusRtuTest, ParsesTrifAasV1OnlineRegisters) {
   EXPECT_EQ(readings.iac, 5u);
   EXPECT_EQ(readings.iac2, 6u);
   EXPECT_EQ(readings.iac3, 5u);
-  EXPECT_EQ(readings.pac, 3456);
+  EXPECT_EQ(readings.pac, 4650);
   EXPECT_EQ(readings.fac, 4999u);
+}
+
+TEST(IngeconModbusRtuTest, ParsesTrifAasSignedDecaWattPower) {
+  std::vector<uint16_t> registers(47);
+  registers[18] = static_cast<uint16_t>(-123);
+
+  Readings readings;
+  ASSERT_TRUE(parseInputRegistersForProfile(
+      Profile::TrifAasV1, registers, &readings));
+
+  EXPECT_EQ(readings.pac, -1230);
 }

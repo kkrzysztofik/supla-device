@@ -34,6 +34,10 @@ uint16_t roundedCentiToUnit(uint16_t value) {
   return static_cast<uint16_t>((static_cast<uint32_t>(value) + 50U) / 100U);
 }
 
+int32_t signedDecaToUnit(uint16_t value) {
+  return static_cast<int32_t>(static_cast<int16_t>(value)) * 10;
+}
+
 void parseLite27Registers(const std::vector<uint16_t>& registers,
                           Readings* readings) {
   readings->totalEnergyKwh = joinU32(registers[0], registers[1]);
@@ -108,7 +112,7 @@ void parseTrifAasV1Registers(const std::vector<uint16_t>& registers,
   readings->vbus = 0;
   readings->cosPhi = registers[16];
   readings->sinSign = registers[17];
-  readings->pac = static_cast<int16_t>(registers[18]);
+  readings->pac = signedDecaToUnit(registers[18]);
   readings->fac = registers[19];
   readings->year = registers[20];
   readings->month = registers[21];

@@ -73,7 +73,7 @@ bool parseProfileName(const std::string& value, Profile* profile) {
     *profile = Profile::MonofAapV1;
     return true;
   }
-  if (value == "trif_aas_v1") {
+  if (value == "trif_aas_v1" || value == "aas1340_u") {
     *profile = Profile::TrifAasV1;
     return true;
   }

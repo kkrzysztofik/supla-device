@@ -62,7 +62,7 @@ struct Readings {
   uint16_t iac = 0;
   uint16_t iac2 = 0;
   uint16_t iac3 = 0;
-  int16_t pac = 0;
+  int32_t pac = 0;
   uint16_t cosPhi = 0;
   uint16_t sinSign = 0;
   uint16_t vac = 0;

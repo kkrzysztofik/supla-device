@@ -16,19 +16,19 @@ supla:
 
 channels:
   - type: IngeconInverter
-    caption: INGECON AC
+    caption: INGECON AAS1340_U AC
     serial: &ingecon_serial
       device: /dev/ttyUSB0
       baud: 9600
       rts_toggle: true
     device: &ingecon_device
-      modbus_address: 1
-      profile: auto
+      modbus_address: 240
+      profile: aas1340_u
     poll_interval_sec: 15
     energy_mapping: reverse
 
   - type: IngeconDcMeter
-    caption: INGECON DC
+    caption: INGECON AAS1340_U DC
     serial: *ingecon_serial
     device: *ingecon_device
     poll_interval_sec: 15
@@ -39,5 +39,41 @@ channels:
     device: *ingecon_device
     poll_interval_sec: 15
     ingecon_value: alarms
+    default_unit_after_value: ""
+    default_value_precision: 0
+
+  - type: IngeconMeasurement
+    caption: INGECON operation hours
+    serial: *ingecon_serial
+    device: *ingecon_device
+    poll_interval_sec: 15
+    ingecon_value: hours_running
+    default_unit_after_value: "h"
+    default_value_precision: 0
+
+  - type: IngeconMeasurement
+    caption: INGECON grid connections
+    serial: *ingecon_serial
+    device: *ingecon_device
+    poll_interval_sec: 15
+    ingecon_value: grid_connections
+    default_unit_after_value: ""
+    default_value_precision: 0
+
+  - type: IngeconMeasurement
+    caption: INGECON alarm inverter
+    serial: *ingecon_serial
+    device: *ingecon_device
+    poll_interval_sec: 15
+    ingecon_value: alarm_inverter
+    default_unit_after_value: ""
+    default_value_precision: 0
+
+  - type: IngeconMeasurement
+    caption: INGECON alarm safety
+    serial: *ingecon_serial
+    device: *ingecon_device
+    poll_interval_sec: 15
+    ingecon_value: alarm_safety
     default_unit_after_value: ""
     default_value_precision: 0
