@@ -31,7 +31,6 @@ namespace {
 
 constexpr uint16_t kMainRegisterAddress = 0;
 constexpr uint16_t kDisplayFwRegisterAddress = 200;
-constexpr int kSunManagerPostTxDelayMs = 1000;
 constexpr int kRs485TurnaroundDelayMs = 25;
 
 struct BusKey {
@@ -247,7 +246,8 @@ bool Bus::poll(Readings* readings) {
     if (profile == Profile::Lite27) {
       if (readInputBlock(kDisplayFwRegisterAddress,
                          kDisplayFwRegisterCount,
-                         &displayRegisters)) {
+                         &displayRegisters,
+                         kLiteFwPostTxDelayMs)) {
         parseDisplayFwRegisters(displayRegisters, &parsed);
       } else {
         SUPLA_LOG_DEBUG("IngeconBus: optional display FW block unavailable");
@@ -267,7 +267,8 @@ bool Bus::poll(Readings* readings) {
 
 bool Bus::readInputBlock(uint16_t address,
                           uint16_t count,
-                          std::vector<uint16_t>* registers) {
+                          std::vector<uint16_t>* registers,
+                          int postTxDelayMs) {
   if (registers == nullptr) {
     return false;
   }
@@ -299,10 +300,11 @@ bool Bus::readInputBlock(uint16_t address,
                       count);
     return false;
   }
-  SUPLA_LOG_VERBOSE("IngeconBus: post-TX delay %d ms for FC04",
-                    kSunManagerPostTxDelayMs);
-  std::this_thread::sleep_for(
-      std::chrono::milliseconds(kSunManagerPostTxDelayMs));
+  if (postTxDelayMs > 0) {
+    SUPLA_LOG_VERBOSE("IngeconBus: post-TX delay %d ms for FC04",
+                      postTxDelayMs);
+    std::this_thread::sleep_for(std::chrono::milliseconds(postTxDelayMs));
+  }
 
   const size_t expectedFrameLen = static_cast<size_t>(count) * 2 + 5;
   std::vector<uint8_t> response;

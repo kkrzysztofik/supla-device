@@ -48,10 +48,10 @@ double SmaThermometer::getValue() {
   std::map<std::string, double> values;
   bool valid = false;
   if (!busClient_.copyReadings(&values, &valid) || !valid) {
-    return Supla::Linux::staleOrUnavailableValue(
-        &staleReadCounter_,
-        channel.getValueDouble(),
-        TEMPERATURE_NOT_AVAILABLE);
+    if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
+      return TEMPERATURE_NOT_AVAILABLE;
+    }
+    return channel.getValueDouble();
   }
 
   Supla::Linux::markValidRead(&staleReadCounter_);

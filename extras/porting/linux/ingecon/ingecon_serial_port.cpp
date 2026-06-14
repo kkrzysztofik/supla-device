@@ -140,13 +140,16 @@ bool SerialPort::writeAll(const uint8_t* data,
 }
 
 ssize_t SerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {
+  constexpr bool kLogTimeout = true;
+  constexpr bool kEintrReturnsTimeout = true;
+  constexpr bool kLogReadResult = true;
   return port_.readSome(buffer,
                         maxLen,
                         timeoutMs,
                         "IngeconBus",
-                        true,
-                        true,
-                        true);
+                        kLogTimeout,
+                        kEintrReturnsTimeout,
+                        kLogReadResult);
 }
 
 void SerialPort::flushRx() {

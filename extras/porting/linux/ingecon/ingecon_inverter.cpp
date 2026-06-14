@@ -16,6 +16,7 @@
 #include <limits>
 #include <utility>
 
+#include <supla/log_wrapper.h>
 #include "linux_channel_read_helpers.h"
 
 namespace Supla {
@@ -105,6 +106,12 @@ void IngeconInverter::applyValidReadings(
   if (isThreePhaseConfigured() &&
       readings.profile == Supla::Linux::Ingecon::Profile::TrifAasV1) {
     applyThreePhaseReadings(readings);
+  } else if (isThreePhaseConfigured()) {
+    SUPLA_LOG_WARNING(
+        "IngeconInverter: configured as three-phase but device reports "
+        "profile=%s (not TrifAasV1); falling back to single-phase readings",
+        Supla::Linux::Ingecon::profileToString(readings.profile));
+    applyOnePhaseReadings(readings);
   } else {
     applyOnePhaseReadings(readings);
   }
@@ -128,6 +135,9 @@ void IngeconInverter::applyOnePhaseReadings(
 
 void IngeconInverter::applyThreePhaseReadings(
     const Supla::Linux::Ingecon::Readings& readings) {
+  // Integer division may lose up to 2 units of energy (0.02 Wh) and
+  // power (0.2 mW) across the three phases. This is acceptable for
+  // practical electrical monitoring purposes.
   const uint64_t energy = kwhToSuplaEnergy(readings.totalEnergyKwh) / 3ULL;
   const int64_t powerPerPhase = inverterPowerToSuplaExport(readings.pac) / 3;
   const uint16_t voltages[3] = {readings.vac, readings.vac2, readings.vac3};
@@ -171,8 +181,8 @@ void IngeconInverter::applyReadingsToChannel() {
 
 void IngeconInverter::iterateAlways() {
   const uint32_t pollMs = static_cast<uint32_t>(pollIntervalSec_ * 1000);
-  if (lastReadTime == 0 || millis() - lastReadTime > pollMs) {
-    lastReadTime = millis();
+  if (lastReadTime_ == 0 || millis() - lastReadTime_ > pollMs) {
+    lastReadTime_ = millis();
     applyReadingsToChannel();
   }
   Supla::Sensor::ElectricityMeter::iterateAlways();

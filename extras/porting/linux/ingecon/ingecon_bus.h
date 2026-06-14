@@ -24,6 +24,9 @@ namespace Supla {
 namespace Linux {
 namespace Ingecon {
 
+constexpr int kSunManagerPostTxDelayMs = 1000;
+constexpr int kLiteFwPostTxDelayMs = 200;
+
 class Bus : public std::enable_shared_from_this<Bus> {
  public:
   struct Subscriber {
@@ -55,7 +58,8 @@ class Bus : public std::enable_shared_from_this<Bus> {
   bool poll(Readings* readings);
   bool readInputBlock(uint16_t address,
                       uint16_t count,
-                      std::vector<uint16_t>* registers);
+                      std::vector<uint16_t>* registers,
+                      int postTxDelayMs = kSunManagerPostTxDelayMs);
   bool readSerialNumber(Readings* readings);
   bool readFrame(std::vector<uint8_t>* response,
                  size_t expectedFrameLen,

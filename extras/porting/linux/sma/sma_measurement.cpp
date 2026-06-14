@@ -53,8 +53,10 @@ double SmaMeasurement::getValue() {
   std::map<std::string, double> values;
   bool valid = false;
   if (!busClient_.copyReadings(&values, &valid) || !valid) {
-    return Supla::Linux::staleOrUnavailableValue(
-        &staleReadCounter_, channel.getValueDouble(), NAN);
+    if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
+      return NAN;
+    }
+    return channel.getValueDouble();
   }
 
   Supla::Linux::markValidRead(&staleReadCounter_);

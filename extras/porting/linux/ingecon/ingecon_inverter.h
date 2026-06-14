@@ -49,7 +49,7 @@ class IngeconInverter : public Supla::Sensor::ElectricityMeter {
       Supla::Linux::Ingecon::Profile::Auto;
   int pollIntervalSec_ = Supla::Linux::Ingecon::kDefaultPollIntervalSec;
   int staleReadCounter_ = 0;
-  uint64_t lastReadTime = 0;
+  uint64_t lastReadTime_ = 0;
 };
 
 }  // namespace PV

@@ -30,8 +30,9 @@ class BusClient {
 
   void attach();
   void detach();
-  // Returns false if readings or valid is null, or if the underlying bus has
-  // no valid cached readings. Callers must pass non-null pointers.
+  // Returns false if readings or valid is null. Callers must pass non-null
+  // pointers. When returning true, *valid reflects whether the underlying bus
+  // has valid cached readings (true = valid, false = stale/unavailable).
   bool copyReadings(Readings* readings, bool* valid) const;
 
 #ifdef SUPLA_TEST

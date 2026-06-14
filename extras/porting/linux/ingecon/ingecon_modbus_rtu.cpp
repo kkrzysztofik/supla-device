@@ -40,6 +40,12 @@ int32_t signedDecaToUnit(uint16_t value) {
 
 void parseLite27Registers(const std::vector<uint16_t>& registers,
                           Readings* readings) {
+  if (registers.size() < 27) {
+    SUPLA_LOG_WARNING(
+        "parseLite27Registers: expected 27 registers, got %zu",
+        registers.size());
+    return;
+  }
   readings->totalEnergyKwh = joinU32(registers[0], registers[1]);
   readings->hoursRunning = joinU32(registers[2], registers[3]);
   readings->gridConnections = joinU32(registers[4], registers[5]);

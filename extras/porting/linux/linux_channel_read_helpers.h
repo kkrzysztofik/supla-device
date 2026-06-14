@@ -32,17 +32,6 @@ inline void markValidRead(int* staleReadCounter) {
   }
 }
 
-inline double staleOrUnavailableValue(int* staleReadCounter,
-                                      double currentValue,
-                                      double unavailableValue,
-                                      int maxStaleReads =
-                                          kMaxStaleReadCount) {
-  if (markInvalidRead(staleReadCounter, maxStaleReads)) {
-    return unavailableValue;
-  }
-  return currentValue;
-}
-
 }  // namespace Linux
 }  // namespace Supla
 
