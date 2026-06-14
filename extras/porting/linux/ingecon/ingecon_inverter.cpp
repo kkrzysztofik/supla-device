@@ -25,17 +25,47 @@ uint64_t kwhToSuplaEnergy(uint32_t kwh) {
   return static_cast<uint64_t>(kwh) * 100000ULL;
 }
 
+unsigned _supla_int16_t voltageToSupla(uint16_t voltage) {
+  const uint32_t scaled = static_cast<uint32_t>(voltage) * 100U;
+  return scaled >
+                 static_cast<uint32_t>(
+                     std::numeric_limits<unsigned _supla_int16_t>::max())
+             ? std::numeric_limits<unsigned _supla_int16_t>::max()
+             : static_cast<unsigned _supla_int16_t>(scaled);
+}
+
+unsigned _supla_int_t currentToSupla(uint16_t current) {
+  const uint64_t scaled = static_cast<uint64_t>(current) * 1000U;
+  return scaled >
+                 static_cast<uint64_t>(
+                     std::numeric_limits<unsigned _supla_int_t>::max())
+             ? std::numeric_limits<unsigned _supla_int_t>::max()
+             : static_cast<unsigned _supla_int_t>(scaled);
+}
+
+int64_t powerToSupla(int32_t power) {
+  return static_cast<int64_t>(power) * 100000LL;
+}
+
+int64_t inverterPowerToSuplaExport(int32_t power) {
+  return -powerToSupla(power);
+}
+
 }  // namespace
 
 IngeconInverter::IngeconInverter(
     Supla::Linux::Ingecon::BusConfig config,
     IngeconEnergyMapping energyMapping)
-    : busClient_(this, config), energyMapping_(energyMapping) {
+    : busClient_(this, config),
+      energyMapping_(energyMapping),
+      configuredProfile_(config.profile) {
   pollIntervalSec_ =
       Supla::Linux::Ingecon::normalizePollIntervalSec(config.pollIntervalSec);
   refreshRateSec = pollIntervalSec_;
-  extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
-  extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
+  if (!isThreePhaseConfigured()) {
+    extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
+    extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
+  }
 }
 
 IngeconInverter::~IngeconInverter() = default;
@@ -58,14 +88,27 @@ void IngeconInverter::applyReadingsForTest() {
 #endif
 
 void IngeconInverter::setZeroInstantaneousValues() {
-  setPowerActive(0, 0);
-  setCurrent(0, 0);
-  setVoltage(0, 0);
+  const int phaseCount = isThreePhaseConfigured() ? 3 : 1;
+  for (int phase = 0; phase < phaseCount; ++phase) {
+    setPowerActive(phase, 0);
+    setCurrent(phase, 0);
+    setVoltage(phase, 0);
+    setPowerFactor(phase, 0);
+  }
   setFreq(0);
-  setPowerFactor(0, 0);
 }
 
 void IngeconInverter::applyValidReadings(
+    const Supla::Linux::Ingecon::Readings& readings) {
+  if (isThreePhaseConfigured() &&
+      readings.profile == Supla::Linux::Ingecon::Profile::TrifAasV1) {
+    applyThreePhaseReadings(readings);
+  } else {
+    applyOnePhaseReadings(readings);
+  }
+}
+
+void IngeconInverter::applyOnePhaseReadings(
     const Supla::Linux::Ingecon::Readings& readings) {
   const uint64_t energy = kwhToSuplaEnergy(readings.totalEnergyKwh);
   if (energyMapping_ == IngeconEnergyMapping::Forward) {
@@ -74,29 +117,38 @@ void IngeconInverter::applyValidReadings(
     setRvrActEnergy(0, energy);
   }
 
-  int64_t pac = static_cast<int64_t>(readings.pac);
-  int64_t scaledPower = pac * 100000LL;
-  if (scaledPower > std::numeric_limits<int64_t>::max() ||
-      scaledPower < std::numeric_limits<int64_t>::min()) {
-    scaledPower = 0;
-  }
-  setPowerActive(0, -scaledPower);
-
-  uint32_t vacScaled = static_cast<uint32_t>(readings.vac) * 100U;
-  unsigned _supla_int16_t vacVal =
-      vacScaled > static_cast<uint32_t>(std::numeric_limits<unsigned _supla_int16_t>::max())
-          ? std::numeric_limits<unsigned _supla_int16_t>::max()
-          : static_cast<unsigned _supla_int16_t>(vacScaled);
-  setVoltage(0, vacVal);
-
-  uint64_t iacScaled = static_cast<uint64_t>(readings.iac) * 1000U;
-  unsigned _supla_int_t iacVal =
-      iacScaled > static_cast<uint64_t>(std::numeric_limits<unsigned _supla_int_t>::max())
-          ? std::numeric_limits<unsigned _supla_int_t>::max()
-          : static_cast<unsigned _supla_int_t>(iacScaled);
-  setCurrent(0, iacVal);
+  setPowerActive(0, inverterPowerToSuplaExport(readings.pac));
+  setVoltage(0, voltageToSupla(readings.vac));
+  setCurrent(0, currentToSupla(readings.iac));
   setFreq(readings.fac);
   setPowerFactor(0, readings.cosPhi);
+}
+
+void IngeconInverter::applyThreePhaseReadings(
+    const Supla::Linux::Ingecon::Readings& readings) {
+  const uint64_t energy = kwhToSuplaEnergy(readings.totalEnergyKwh) / 3ULL;
+  const int64_t powerPerPhase = inverterPowerToSuplaExport(readings.pac) / 3;
+  const uint16_t voltages[3] = {readings.vac, readings.vac2, readings.vac3};
+  const uint16_t currents[3] = {readings.iac, readings.iac2, readings.iac3};
+
+  for (int phase = 0; phase < 3; ++phase) {
+    if (energyMapping_ == IngeconEnergyMapping::Forward) {
+      setFwdActEnergy(phase, energy);
+      setRvrActEnergy(phase, 0);
+    } else {
+      setRvrActEnergy(phase, energy);
+      setFwdActEnergy(phase, 0);
+    }
+    setVoltage(phase, voltageToSupla(voltages[phase]));
+    setCurrent(phase, currentToSupla(currents[phase]));
+    setPowerActive(phase, powerPerPhase);
+    setPowerFactor(phase, readings.cosPhi);
+  }
+  setFreq(readings.fac);
+}
+
+bool IngeconInverter::isThreePhaseConfigured() const {
+  return configuredProfile_ == Supla::Linux::Ingecon::Profile::TrifAasV1;
 }
 
 void IngeconInverter::applyReadingsToChannel() {

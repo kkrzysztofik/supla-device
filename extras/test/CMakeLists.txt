@@ -128,6 +128,7 @@ set(INGECON_PORT_SRC
   ../porting/linux/ingecon/ingecon_bus.cpp
   ../porting/linux/ingecon/ingecon_bus_client.cpp
   ../porting/linux/ingecon/ingecon_inverter.cpp
+  ../porting/linux/ingecon/ingecon_dc_meter.cpp
   ../porting/linux/ingecon/ingecon_measurement.cpp
   )
 

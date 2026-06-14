@@ -29,12 +29,18 @@ class SerialPort {
   bool open();
   void close();
   bool isOpen() const;
-  bool writeAll(const uint8_t* data, size_t len);
+  bool writeAll(const uint8_t* data,
+                size_t len,
+                bool rtsToggle = false,
+                int turnaroundDelayMs = 25);
   ssize_t readSome(uint8_t* buffer, size_t maxLen, int timeoutMs);
   void flushRx();
+  void flushRxTx();
 
  private:
   bool configureTermios();
+  bool setRts(bool enabled);
+  bool setDtr(bool enabled);
 
   std::string devicePath_;
   int baud_ = 9600;

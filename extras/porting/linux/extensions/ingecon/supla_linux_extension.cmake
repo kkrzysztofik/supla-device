@@ -11,6 +11,7 @@ supla_linux_register_extension(
     ${_INGECON_DIR}/ingecon_bus.cpp
     ${_INGECON_DIR}/ingecon_bus_client.cpp
     ${_INGECON_DIR}/ingecon_inverter.cpp
+    ${_INGECON_DIR}/ingecon_dc_meter.cpp
     ${_INGECON_DIR}/ingecon_measurement.cpp
   INCLUDE_DIRS
     ${SUPLA_LINUX_PORT_DIR}

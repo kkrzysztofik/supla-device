@@ -56,14 +56,23 @@ class Bus : public std::enable_shared_from_this<Bus> {
   bool readInputBlock(uint16_t address,
                       uint16_t count,
                       std::vector<uint16_t>* registers);
+  bool readSerialNumber(Readings* readings);
+  bool readFrame(std::vector<uint8_t>* response,
+                 size_t expectedFrameLen,
+                 int timeoutMs,
+                 const char* context);
+  Profile resolveProfile(Readings* readings);
 
   BusConfig config_;
-   std::mutex subscribersMutex_;
-   std::vector<Subscriber> subscribers_;
-   std::thread worker_;
-   std::atomic<bool> stopWorker_{false};
-   std::atomic<bool> workerRunning_{false};
-   SerialPort serialPort_;
+  std::mutex subscribersMutex_;
+  std::vector<Subscriber> subscribers_;
+  std::thread worker_;
+  std::atomic<bool> stopWorker_{false};
+  std::atomic<bool> workerRunning_{false};
+  SerialPort serialPort_;
+  bool discoveryAttempted_ = false;
+  Profile resolvedProfile_ = Profile::Lite27;
+  Readings discoveryReadings_;
 };
 
 }  // namespace Ingecon

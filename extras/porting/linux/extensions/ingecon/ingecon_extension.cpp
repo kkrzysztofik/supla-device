@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "ingecon_bus_client.h"
+#include "ingecon_dc_meter.h"
 #include "ingecon_inverter.h"
 #include "ingecon_measurement.h"
 #include "linux_channel_factory.h"
@@ -52,6 +53,10 @@ bool parseBusConfig(const Supla::Linux::ChannelFactoryContext& context,
     config.markChannelParameterUsed();
     out->bus.baud = ch["serial"]["baud"].as<int>();
   }
+  if (ch["serial"]["rts_toggle"]) {
+    config.markChannelParameterUsed();
+    out->bus.rtsToggle = ch["serial"]["rts_toggle"].as<bool>();
+  }
   if (ch["device"] && ch["device"]["modbus_address"]) {
     config.markChannelParameterUsed();
     const int address = ch["device"]["modbus_address"].as<int>();
@@ -61,6 +66,16 @@ bool parseBusConfig(const Supla::Linux::ChannelFactoryContext& context,
       return false;
     }
     out->bus.modbusAddress = static_cast<uint8_t>(address);
+  }
+  if (ch["device"] && ch["device"]["profile"]) {
+    config.markChannelParameterUsed();
+    const auto profile = ch["device"]["profile"].as<std::string>();
+    if (!Supla::Linux::Ingecon::parseProfileName(profile, &out->bus.profile)) {
+      SUPLA_LOG_ERROR("Channel[%d] config: invalid Ingecon profile \"%s\"",
+                      context.channelNumber,
+                      profile.c_str());
+      return false;
+    }
   }
   if (ch["poll_interval_sec"]) {
     config.markChannelParameterUsed();
@@ -100,10 +115,13 @@ bool AddIngeconInverter(const Supla::Linux::ChannelFactoryContext& context) {
     }
   }
 
-  SUPLA_LOG_INFO("Channel[%d] config: adding IngeconInverter on %s, address=%u",
+  SUPLA_LOG_INFO(
+      "Channel[%d] config: adding IngeconInverter on %s, address=%u, "
+      "profile=%s",
                  context.channelNumber,
                  parsed.bus.serialDevice.c_str(),
-                 parsed.bus.modbusAddress);
+                 parsed.bus.modbusAddress,
+                 Supla::Linux::Ingecon::profileToString(parsed.bus.profile));
 
   std::unique_ptr<Supla::PV::IngeconInverter> inverter(
       new Supla::PV::IngeconInverter(parsed.bus, parsed.energyMapping));
@@ -111,6 +129,30 @@ bool AddIngeconInverter(const Supla::Linux::ChannelFactoryContext& context) {
       context.config.addCommonChannelParameters(context.channel, inverter.get());
   if (added) {
     inverter.release();
+  }
+  return added;
+}
+
+bool AddIngeconDcMeter(const Supla::Linux::ChannelFactoryContext& context) {
+  IngeconYamlConfig parsed;
+  if (!parseBusConfig(context, &parsed)) {
+    return false;
+  }
+
+  SUPLA_LOG_INFO(
+      "Channel[%d] config: adding IngeconDcMeter on %s, address=%u, "
+      "profile=%s",
+      context.channelNumber,
+      parsed.bus.serialDevice.c_str(),
+      parsed.bus.modbusAddress,
+      Supla::Linux::Ingecon::profileToString(parsed.bus.profile));
+
+  std::unique_ptr<Supla::PV::IngeconDcMeter> meter(
+      new Supla::PV::IngeconDcMeter(parsed.bus));
+  const bool added =
+      context.config.addCommonChannelParameters(context.channel, meter.get());
+  if (added) {
+    meter.release();
   }
   return added;
 }
@@ -156,10 +198,11 @@ bool AddIngeconMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
 
   SUPLA_LOG_INFO(
       "Channel[%d] config: adding IngeconMeasurement on %s, address=%u, "
-      "value=%s",
+      "profile=%s, value=%s",
       context.channelNumber,
       parsed.bus.serialDevice.c_str(),
       parsed.bus.modbusAddress,
+      Supla::Linux::Ingecon::profileToString(parsed.bus.profile),
       parsed.valueKey.c_str());
 
   std::unique_ptr<Supla::PV::IngeconMeasurement> measurement(
@@ -187,6 +230,8 @@ void initIngeconExtension() {
 
   ChannelFactoryRegistry::instance().registerFactory(
       "ingecon", "IngeconInverter", AddIngeconInverter);
+  ChannelFactoryRegistry::instance().registerFactory(
+      "ingecon", "IngeconDcMeter", AddIngeconDcMeter);
   ChannelFactoryRegistry::instance().registerFactory(
       "ingecon", "IngeconMeasurement", AddIngeconMeasurement);
 }

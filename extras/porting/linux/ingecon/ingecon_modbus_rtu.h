@@ -29,14 +29,28 @@ std::vector<uint8_t> buildReadInputRegistersRequest(uint8_t slave,
                                                     uint16_t address,
                                                     uint16_t count);
 
+std::vector<uint8_t> buildReadSerialNumberRequest(uint8_t slave);
+
 bool parseReadInputRegistersResponse(const uint8_t* frame,
                                      size_t frameLen,
                                      uint8_t slave,
                                      uint16_t expectedCount,
                                      std::vector<uint16_t>* registers);
 
+bool parseReadSerialNumberResponse(const uint8_t* frame,
+                                   size_t frameLen,
+                                   uint8_t slave,
+                                   Readings* readings);
+
 bool parseMainInputRegisters(const std::vector<uint16_t>& registers,
                              Readings* readings);
+
+bool parseInputRegistersForProfile(Profile profile,
+                                   const std::vector<uint16_t>& registers,
+                                   Readings* readings);
+
+Profile resolveProfileFromFirmware(const std::string& firmwareCode);
+uint16_t inputRegisterCountForProfile(Profile profile);
 
 bool parseDisplayFwRegisters(const std::vector<uint16_t>& registers,
                              Readings* readings);

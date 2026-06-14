@@ -31,11 +31,15 @@ namespace {
 
 constexpr uint16_t kMainRegisterAddress = 0;
 constexpr uint16_t kDisplayFwRegisterAddress = 200;
+constexpr int kSunManagerPostTxDelayMs = 1000;
+constexpr int kRs485TurnaroundDelayMs = 25;
 
 struct BusKey {
   std::string serialDevice;
   int baud = 0;
   uint8_t modbusAddress = 0;
+  bool rtsToggle = true;
+  Profile profile = Profile::Auto;
 
   bool operator<(const BusKey& other) const {
     if (serialDevice != other.serialDevice) {
@@ -44,7 +48,13 @@ struct BusKey {
     if (baud != other.baud) {
       return baud < other.baud;
     }
-    return modbusAddress < other.modbusAddress;
+    if (modbusAddress != other.modbusAddress) {
+      return modbusAddress < other.modbusAddress;
+    }
+    if (rtsToggle != other.rtsToggle) {
+      return rtsToggle < other.rtsToggle;
+    }
+    return static_cast<int>(profile) < static_cast<int>(other.profile);
   }
 };
 
@@ -78,7 +88,11 @@ void invalidateSubscriberReadings(const std::vector<Bus::Subscriber>& subs) {
 }  // namespace
 
 std::shared_ptr<Bus> Bus::acquire(const BusConfig& config) {
-  const BusKey key{config.serialDevice, config.baud, config.modbusAddress};
+  const BusKey key{config.serialDevice,
+                   config.baud,
+                   config.modbusAddress,
+                   config.rtsToggle,
+                   config.profile};
 
   std::lock_guard<std::mutex> lock(gRegistryMutex);
   auto it = gBuses.find(key);
@@ -202,32 +216,42 @@ bool Bus::poll(Readings* readings) {
   }
 
   for (int attempt = 0; attempt <= config_.retries; ++attempt) {
+    Readings parsed;
+    const Profile profile = resolveProfile(&parsed);
+    const uint16_t registerCount = inputRegisterCountForProfile(profile);
     std::vector<uint16_t> mainRegisters;
-    SUPLA_LOG_DEBUG("IngeconBus: poll attempt %d/%d for %s address=%u",
+    SUPLA_LOG_DEBUG("IngeconBus: poll attempt %d/%d for %s address=%u profile=%s",
                     attempt + 1,
                     config_.retries + 1,
                     config_.serialDevice.c_str(),
-                    config_.modbusAddress);
+                    config_.modbusAddress,
+                    profileToString(profile));
     if (!readInputBlock(
-            kMainRegisterAddress, kMainInputRegisterCount, &mainRegisters)) {
+            kMainRegisterAddress, registerCount, &mainRegisters)) {
       SUPLA_LOG_DEBUG("IngeconBus: main block read failed on attempt %d",
                       attempt + 1);
       continue;
     }
 
-    Readings parsed;
-    if (!parseMainInputRegisters(mainRegisters, &parsed)) {
+    if (!parseInputRegistersForProfile(profile, mainRegisters, &parsed)) {
       SUPLA_LOG_WARNING("IngeconBus: main block parse failed");
       continue;
     }
+    if (discoveryReadings_.discoveryValid) {
+      parsed.discoveryValid = true;
+      parsed.serialNumber = discoveryReadings_.serialNumber;
+      parsed.firmwareCode = discoveryReadings_.firmwareCode;
+    }
 
     std::vector<uint16_t> displayRegisters;
-    if (readInputBlock(kDisplayFwRegisterAddress,
-                       kDisplayFwRegisterCount,
-                       &displayRegisters)) {
-      parseDisplayFwRegisters(displayRegisters, &parsed);
-    } else {
-      SUPLA_LOG_DEBUG("IngeconBus: optional display FW block unavailable");
+    if (profile == Profile::Lite27) {
+      if (readInputBlock(kDisplayFwRegisterAddress,
+                         kDisplayFwRegisterCount,
+                         &displayRegisters)) {
+        parseDisplayFwRegisters(displayRegisters, &parsed);
+      } else {
+        SUPLA_LOG_DEBUG("IngeconBus: optional display FW block unavailable");
+      }
     }
 
     *readings = parsed;
@@ -265,50 +289,30 @@ bool Bus::readInputBlock(uint16_t address,
       address,
       count,
       bytesToHex(request.data(), request.size()).c_str());
-  serialPort_.flushRx();
-  if (!serialPort_.writeAll(request.data(), request.size())) {
+  serialPort_.flushRxTx();
+  if (!serialPort_.writeAll(request.data(),
+                            request.size(),
+                            config_.rtsToggle,
+                            kRs485TurnaroundDelayMs)) {
     SUPLA_LOG_WARNING("IngeconBus: write failed for register=%u count=%u",
                       static_cast<unsigned>(30001 + address),
                       count);
     return false;
   }
+  SUPLA_LOG_VERBOSE("IngeconBus: post-TX delay %d ms for FC04",
+                    kSunManagerPostTxDelayMs);
+  std::this_thread::sleep_for(
+      std::chrono::milliseconds(kSunManagerPostTxDelayMs));
 
   const size_t expectedFrameLen = static_cast<size_t>(count) * 2 + 5;
-  std::vector<uint8_t> response(expectedFrameLen);
-  size_t received = 0;
-  while (received < expectedFrameLen) {
-    const ssize_t read =
-        serialPort_.readSome(response.data() + received,
-                      expectedFrameLen - received,
-                      config_.timeoutMs);
-    if (read < 0) {
-      SUPLA_LOG_WARNING(
-          "IngeconBus: serial read error register=%u received=%zu expected=%zu",
-          static_cast<unsigned>(30001 + address),
-          received,
-          expectedFrameLen);
-      return false;
-    }
-    if (read == 0) {
-      SUPLA_LOG_DEBUG(
-          "IngeconBus: serial read timeout register=%u received=%zu expected=%zu",
-          static_cast<unsigned>(30001 + address),
-          received,
-          expectedFrameLen);
-      break;
-    }
-    received += static_cast<size_t>(read);
-    SUPLA_LOG_VERBOSE(
-        "IngeconBus: RX chunk register=%u bytes=%zd total=%zu/%zu data=[%s]",
-        static_cast<unsigned>(30001 + address),
-        read,
-        received,
-        expectedFrameLen,
-        bytesToHex(response.data(), received).c_str());
+  std::vector<uint8_t> response;
+  if (!readFrame(&response, expectedFrameLen, config_.timeoutMs, "FC04")) {
+    serialPort_.close();
+    return false;
   }
 
   const bool parsed = parseReadInputRegistersResponse(response.data(),
-                                                      received,
+                                                      response.size(),
                                                       config_.modbusAddress,
                                                       count,
                                                       registers);
@@ -317,18 +321,142 @@ bool Bus::readInputBlock(uint16_t address,
         "IngeconBus: RX parsed register=%u count=%u frame=[%s]",
         static_cast<unsigned>(30001 + address),
         count,
-        bytesToHex(response.data(), received).c_str());
+        bytesToHex(response.data(), response.size()).c_str());
   } else {
     SUPLA_LOG_WARNING(
-        "IngeconBus: RX parse failed register=%u count=%u received=%zu "
+      "IngeconBus: RX parse failed register=%u count=%u received=%zu "
         "frame=[%s]",
         static_cast<unsigned>(30001 + address),
         count,
-        received,
-        bytesToHex(response.data(), received).c_str());
+        response.size(),
+        bytesToHex(response.data(), response.size()).c_str());
   }
   serialPort_.close();
   return parsed;
+}
+
+bool Bus::readSerialNumber(Readings* readings) {
+  if (readings == nullptr) {
+    return false;
+  }
+  if (!serialPort_.isOpen()) {
+    if (!serialPort_.open()) {
+      return false;
+    }
+  }
+
+  const auto request = buildReadSerialNumberRequest(config_.modbusAddress);
+  SUPLA_LOG_VERBOSE(
+      "IngeconBus: TX serial number device=%s slave=%u frame=[%s]",
+      config_.serialDevice.c_str(),
+      config_.modbusAddress,
+      bytesToHex(request.data(), request.size()).c_str());
+  serialPort_.flushRxTx();
+  if (!serialPort_.writeAll(request.data(),
+                            request.size(),
+                            config_.rtsToggle,
+                            kRs485TurnaroundDelayMs)) {
+    SUPLA_LOG_WARNING("IngeconBus: serial number write failed");
+    return false;
+  }
+  SUPLA_LOG_VERBOSE("IngeconBus: post-TX delay %d ms for FC11",
+                    kSunManagerPostTxDelayMs);
+  std::this_thread::sleep_for(
+      std::chrono::milliseconds(kSunManagerPostTxDelayMs));
+
+  std::vector<uint8_t> response;
+  const bool received = readFrame(&response, 29, config_.timeoutMs, "FC11");
+  serialPort_.close();
+  if (!received) {
+    return false;
+  }
+  return parseReadSerialNumberResponse(response.data(),
+                                       response.size(),
+                                       config_.modbusAddress,
+                                       readings);
+}
+
+bool Bus::readFrame(std::vector<uint8_t>* response,
+                    size_t expectedFrameLen,
+                    int timeoutMs,
+                    const char* context) {
+  if (response == nullptr || expectedFrameLen == 0) {
+    return false;
+  }
+  response->assign(expectedFrameLen, 0);
+  size_t received = 0;
+  while (received < expectedFrameLen) {
+    const ssize_t read =
+        serialPort_.readSome(response->data() + received,
+                             expectedFrameLen - received,
+                             timeoutMs);
+    if (read < 0) {
+      SUPLA_LOG_WARNING(
+          "IngeconBus: serial read error context=%s received=%zu expected=%zu",
+          context,
+          received,
+          expectedFrameLen);
+      response->resize(received);
+      return false;
+    }
+    if (read == 0) {
+      SUPLA_LOG_DEBUG(
+          "IngeconBus: serial read timeout context=%s received=%zu expected=%zu",
+          context,
+          received,
+          expectedFrameLen);
+      break;
+    }
+    received += static_cast<size_t>(read);
+    SUPLA_LOG_VERBOSE(
+        "IngeconBus: RX chunk context=%s bytes=%zd total=%zu/%zu data=[%s]",
+        context,
+        read,
+        received,
+        expectedFrameLen,
+        bytesToHex(response->data(), received).c_str());
+  }
+  response->resize(received);
+  return received == expectedFrameLen;
+}
+
+Profile Bus::resolveProfile(Readings* readings) {
+  if (config_.profile != Profile::Auto) {
+    resolvedProfile_ = config_.profile;
+  }
+  if (!discoveryAttempted_) {
+    discoveryAttempted_ = true;
+    Readings discovered;
+    if (readSerialNumber(&discovered)) {
+      discoveryReadings_ = discovered;
+      if (config_.profile == Profile::Auto) {
+        resolvedProfile_ = resolveProfileFromFirmware(discovered.firmwareCode);
+      }
+      SUPLA_LOG_INFO(
+          "IngeconBus: profile resolved device=%s address=%u requested=%s "
+          "resolved=%s serial=%s firmware=%s",
+          config_.serialDevice.c_str(),
+          config_.modbusAddress,
+          profileToString(config_.profile),
+          profileToString(resolvedProfile_),
+          discovered.serialNumber.c_str(),
+          discovered.firmwareCode.c_str());
+    } else if (config_.profile == Profile::Auto) {
+      resolvedProfile_ = Profile::Lite27;
+      SUPLA_LOG_WARNING(
+          "IngeconBus: FC11 discovery failed for %s address=%u; "
+          "falling back to %s",
+          config_.serialDevice.c_str(),
+          config_.modbusAddress,
+          profileToString(resolvedProfile_));
+    }
+  }
+  if (readings != nullptr && discoveryReadings_.discoveryValid) {
+    readings->discoveryValid = true;
+    readings->serialNumber = discoveryReadings_.serialNumber;
+    readings->firmwareCode = discoveryReadings_.firmwareCode;
+  }
+  return resolvedProfile_;
 }
 
 }  // namespace Ingecon

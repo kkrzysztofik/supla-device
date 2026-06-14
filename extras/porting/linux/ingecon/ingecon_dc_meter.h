@@ -7,8 +7,8 @@
  of the License, or (at your option) any later version.
 */
 
-#ifndef EXTRAS_PORTING_LINUX_INGECON_INGECON_INVERTER_H_
-#define EXTRAS_PORTING_LINUX_INGECON_INGECON_INVERTER_H_
+#ifndef EXTRAS_PORTING_LINUX_INGECON_INGECON_DC_METER_H_
+#define EXTRAS_PORTING_LINUX_INGECON_INGECON_DC_METER_H_
 
 #include <supla/sensor/electricity_meter.h>
 
@@ -18,13 +18,10 @@
 namespace Supla {
 namespace PV {
 
-enum class IngeconEnergyMapping { Reverse, Forward };
-
-class IngeconInverter : public Supla::Sensor::ElectricityMeter {
+class IngeconDcMeter : public Supla::Sensor::ElectricityMeter {
  public:
-  IngeconInverter(Supla::Linux::Ingecon::BusConfig config,
-                  IngeconEnergyMapping energyMapping);
-  ~IngeconInverter() override;
+  explicit IngeconDcMeter(Supla::Linux::Ingecon::BusConfig config);
+  ~IngeconDcMeter() override;
 
   void onInit() override;
   void iterateAlways() override;
@@ -38,21 +35,15 @@ class IngeconInverter : public Supla::Sensor::ElectricityMeter {
  private:
   void applyReadingsToChannel();
   void applyValidReadings(const Supla::Linux::Ingecon::Readings& readings);
-  void applyOnePhaseReadings(const Supla::Linux::Ingecon::Readings& readings);
-  void applyThreePhaseReadings(const Supla::Linux::Ingecon::Readings& readings);
   void setZeroInstantaneousValues();
-  bool isThreePhaseConfigured() const;
 
   Supla::Linux::Ingecon::BusClient busClient_;
-  IngeconEnergyMapping energyMapping_ = IngeconEnergyMapping::Reverse;
-  Supla::Linux::Ingecon::Profile configuredProfile_ =
-      Supla::Linux::Ingecon::Profile::Auto;
   int pollIntervalSec_ = Supla::Linux::Ingecon::kDefaultPollIntervalSec;
   int staleReadCounter_ = 0;
-  uint64_t lastReadTime = 0;
+  uint64_t lastReadTime_ = 0;
 };
 
 }  // namespace PV
 }  // namespace Supla
 
-#endif  // EXTRAS_PORTING_LINUX_INGECON_INGECON_INVERTER_H_
+#endif  // EXTRAS_PORTING_LINUX_INGECON_INGECON_DC_METER_H_

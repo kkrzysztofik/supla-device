@@ -21,10 +21,18 @@ channels:
     serial: &ingecon_serial
       device: /dev/ttyUSB0
       baud: 9600
+      rts_toggle: true
     device: &ingecon_device
       modbus_address: 1
+      profile: auto
     poll_interval_sec: 15
     energy_mapping: reverse
+
+  - type: IngeconDcMeter
+    caption: INGECON DC
+    serial: *ingecon_serial
+    device: *ingecon_device
+    poll_interval_sec: 15
 
   - type: IngeconMeasurement
     caption: INGECON alarms
