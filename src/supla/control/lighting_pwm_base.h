@@ -1,25 +1,12 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef SRC_SUPLA_CONTROL_LIGHTING_PWM_BASE_H_
 #define SRC_SUPLA_CONTROL_LIGHTING_PWM_BASE_H_
 
 #include <stdint.h>
+
+#include <supla/io/io_pin.h>
 
 #include "../action_handler.h"
 #include "../actions.h"
@@ -167,6 +154,16 @@ class LightingPwmBase : public ChannelElement, public ActionHandler {
   int getCurrentRGBBrightness() const;
 
   /**
+   * Suspends or resumes channel control of the physical outputs.
+   *
+   * A suspended channel is marked as temporarily unavailable and its outputs
+   * are switched off. The suspension persists regardless of the configured
+   * channel function until this method is called with false.
+   */
+  void setChannelSuspended(bool suspended);
+  bool isChannelSuspended() const;
+
+  /**
    * Sets minimum PWM frequency.
    * This will only set class member. Actual usage of PWM frequency settings
    * depends on RGBCCT object implementation.
@@ -287,6 +284,9 @@ class LightingPwmBase : public ChannelElement, public ActionHandler {
 
   void setMaxHwValue(int newMaxHwValue);
 
+  uint32_t scalePwmValueForOutput(const Supla::Io::IoPin &pin,
+                                  uint32_t value) const;
+
   void enableChannel();
   void disableChannel();
   void updateEnabledState();
@@ -357,6 +357,7 @@ class LightingPwmBase : public ChannelElement, public ActionHandler {
   bool resetDisance = false;
   bool instant = false;
   bool enabled = true;
+  bool manuallySuspended = false;
   bool initDone = false;
   bool skipLegacyMigration = false;
   int8_t stateOnInit = RGBW_STATE_ON_INIT_RESTORE;

@@ -1,20 +1,5 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <stddef.h>
 #include <stdint.h>
@@ -26,6 +11,8 @@
 #include <supla/protocol/supla_srpc.h>
 #include <string>
 #include <vector>
+
+#if SUPLA_SRPC_PACKET_LOG_ENABLED && !defined(SUPLA_DISABLE_LOGS)
 
 extern "C" const char *supla_test_get_last_log();
 extern "C" void supla_test_clear_last_log();
@@ -100,3 +87,52 @@ TEST_F(SrpcPacketLogTests, CalcfgRejectsOversizedDataBeforeRawDump) {
   EXPECT_NE(log.find("DataSize=129"), std::string::npos);
   EXPECT_EQ(log.find("raw=["), std::string::npos);
 }
+
+TEST_F(SrpcPacketLogTests, LongRawDumpUsesContinuationLog) {
+  constexpr size_t packetSize = 2100;
+  std::vector<uint8_t> packet(packetSize);
+  for (size_t i = 0; i < packet.size(); i++) {
+    packet[i] = static_cast<uint8_t>(i % 251);
+  }
+
+  srpc->logSrpcPacket(false, 0x7FFF, packet.data(), packet.size());
+  std::string log = supla_test_get_last_log();
+
+  EXPECT_NE(log.find("SRPC raw-cont=["), std::string::npos);
+  EXPECT_EQ(log.find("..."), std::string::npos);
+}
+
+TEST_F(SrpcPacketLogTests, RegisterDeviceHeaderUsesContinuationLog) {
+  std::vector<uint8_t> storage(sizeof(TSuplaDataPacket));
+  auto *packet = reinterpret_cast<TSuplaDataPacket *>(storage.data());
+  auto *header = reinterpret_cast<TDS_SuplaRegisterDeviceHeader *>(
+      packet->data);
+  packet->version = 28;
+  packet->call_id = SUPLA_DS_CALL_REGISTER_DEVICE_G;
+  packet->data_size = sizeof(TDS_SuplaRegisterDeviceHeader) + 1;
+  header->Flags = 0x1CCD0;
+  header->ManufacturerID = 21;
+  header->ProductID = 10;
+  header->channel_count = 10;
+  memcpy(header->Name, "Test Device", sizeof("Test Device") - 1);
+  memcpy(header->SoftVer,
+         "1.2.3-test",
+         sizeof("1.2.3-test") - 1);
+  memcpy(header->ServerName,
+         "server.example",
+         sizeof("server.example") - 1);
+
+  const size_t packetSize = sizeof(TSuplaDataPacket) - SUPLA_MAX_DATA_SIZE +
+                            sizeof(TDS_SuplaRegisterDeviceHeader);
+  srpc->logSrpcPacket(true,
+                      SUPLA_DS_CALL_REGISTER_DEVICE_G,
+                      storage.data(),
+                      packetSize);
+  std::string log = supla_test_get_last_log();
+
+  EXPECT_NE(log.find("SRPC cont=[ServerName=\"server.example\""),
+            std::string::npos);
+  EXPECT_NE(log.find("channel_count=10]"), std::string::npos);
+}
+
+#endif  // SUPLA_SRPC_PACKET_LOG_ENABLED && !SUPLA_DISABLE_LOGS

@@ -1,20 +1,5 @@
-/*
-   Copyright (C) AC SOFTWARE SP. Z O.O.
-
-   This program is free software; you can redistribute it and/or
-   modify it under the terms of the GNU General Public License
-   as published by the Free Software Foundation; either version 2
-   of the License, or (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-   */
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "esp_idf_wifi.h"
 
@@ -27,12 +12,12 @@
 #include <esp_tls.h>
 #include <esp_wifi.h>
 
-#ifdef SUPLA_DEVICE_ESP32
 #include <esp_mac.h>
-#endif
 
 #include <SuplaDevice.h>
 #include <fcntl.h>
+#include <supla/input_noise_guard.h>
+#include <supla/network/wifi_scan_result.h>
 #include <supla/storage/config.h>
 #include <supla/storage/storage.h>
 #include <supla/supla_lib_config.h>
@@ -111,10 +96,13 @@ static void eventHandler(void *arg,
         break;
       }
       case WIFI_EVENT_STA_START: {
-        SUPLA_LOG_DEBUG("[%s] Starting connection to AP",
-                        thisNetIntfPtr->getIntfName());
         firstWiFiScanDone = false;
-        esp_wifi_connect();
+        if (!thisNetIntfPtr->isInConfigMode()) {
+          SUPLA_LOG_DEBUG("[%s] Starting connection to AP",
+                          thisNetIntfPtr->getIntfName());
+          Supla::InputNoiseGuard::NotifyWifiTransition();
+          esp_wifi_connect();
+        }
         break;
       }
       case WIFI_EVENT_STA_CONNECTED: {
@@ -143,12 +131,14 @@ static void eventHandler(void *arg,
         if (thisNetIntfPtr) {
           thisNetIntfPtr->setIpReady(false);
           thisNetIntfPtr->setWifiConnected(false);
+          thisNetIntfPtr->setLastDisconnectReason(data->reason);
           if (firstWiFiScanDone) {
             // we ignore connection error if it happens first time
             thisNetIntfPtr->logWifiReason(data->reason);
           }
         }
         if (!thisNetIntfPtr->isInConfigMode()) {
+          Supla::InputNoiseGuard::NotifyWifiStaDisconnected();
           esp_wifi_connect();
           SUPLA_LOG_DEBUG(
                     "[%s] Connect to the AP fail (reason %d). Trying again",
@@ -158,10 +148,17 @@ static void eventHandler(void *arg,
         firstWiFiScanDone = true;
         break;
       }
+      case WIFI_EVENT_SCAN_DONE: {
+        if (thisNetIntfPtr) {
+          thisNetIntfPtr->finishConfigModeScan();
+        }
+        break;
+      }
     }
   } else if (eventBase == IP_EVENT) {
     switch (eventId) {
       case IP_EVENT_STA_GOT_IP: {
+        Supla::InputNoiseGuard::NotifyWifiStaConnected();
         ip_event_got_ip_t *event = static_cast<ip_event_got_ip_t *>(eventData);
         if (thisNetIntfPtr) {
           thisNetIntfPtr->setIpReady(true);
@@ -224,15 +221,13 @@ void Supla::EspIdfWifi::setup() {
   if (!initDone) {
     Supla::initEspNetif();
 
-
-#ifdef SUPLA_DEVICE_ESP32
     apNetIf = esp_netif_create_default_wifi_ap();
     esp_netif_set_hostname(apNetIf, hostname);
     staNetIf = esp_netif_create_default_wifi_sta();
     esp_netif_set_hostname(staNetIf, hostname);
-#endif /*SUPLA_DEVICE_ESP32*/
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    Supla::InputNoiseGuard::NotifyWifiTransition();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_event_handler_register(
@@ -271,7 +266,8 @@ void Supla::EspIdfWifi::setup() {
     wifi_config.ap.channel = 6;
     wifi_config.ap.beacon_interval = 200;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    Supla::InputNoiseGuard::NotifyWifiTransition();
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     uint8_t proto = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G;
     esp_wifi_set_protocol(WIFI_IF_AP, proto);
@@ -294,17 +290,15 @@ void Supla::EspIdfWifi::setup() {
     }
 
     wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-#ifdef SUPLA_DEVICE_ESP32
     wifi_config.sta.failure_retry_cnt = 2;
-#endif
 
     if (strlen(reinterpret_cast<char *>(wifi_config.sta.password))) {
       wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     }
 
+    Supla::InputNoiseGuard::NotifyWifiTransition();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-#ifdef SUPLA_DEVICE_ESP32
     if (hasStaticIpConfig() && staNetIf != nullptr) {
       esp_err_t dhcpStopResult = esp_netif_dhcpc_stop(staNetIf);
       if (dhcpStopResult != ESP_OK) {
@@ -332,24 +326,22 @@ void Supla::EspIdfWifi::setup() {
         SUPLA_LOG_INFO("[%s] static IP configured", getIntfName());
       }
     }
-#endif
   }
   delay(50);
 
+  Supla::InputNoiseGuard::NotifyWifiTransition();
   ESP_ERROR_CHECK(esp_wifi_start());
   if (txPower >= 0) {
     SUPLA_LOG_INFO("[%s] setting TX power to %d", getIntfName(), txPower);
     ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(txPower));
   }
 
+  if (mode == Supla::DEVICE_MODE_CONFIG) {
+    startConfigModeScan();
+  }
 
   allowDisable = true;
   initDone = true;
-#ifndef SUPLA_DEVICE_ESP32
-  // ESP8266 hostname settings have to be done after esp_wifi_start
-  tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, hostname);
-  tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_AP, hostname);
-#endif
 }
 
 void Supla::EspIdfWifi::disable() {
@@ -358,7 +350,11 @@ void Supla::EspIdfWifi::disable() {
   }
 
   allowDisable = false;
+  configModeScanInProgress = false;
   staticIpConfigured = false;
+  setWifiConnected(false);
+  setIpReady(false);
+  setIpv4Addr(0);
   SUPLA_LOG_DEBUG("[%s] disabling WiFi connection", getIntfName());
   DisconnectProtocols();
   uint8_t channel = 0;
@@ -370,22 +366,58 @@ void Supla::EspIdfWifi::disable() {
                     secondChannel);
     lastChannel = channel;
   }
-  esp_wifi_disconnect();
-  ESP_ERROR_CHECK(esp_wifi_stop());
+  Supla::InputNoiseGuard::NotifyWifiTransition();
+  esp_err_t result = esp_wifi_disconnect();
+  if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_INIT &&
+      result != ESP_ERR_WIFI_NOT_STARTED &&
+      result != ESP_ERR_WIFI_NOT_CONNECT) {
+    SUPLA_LOG_WARNING("[%s] WiFi disconnect failed (%d)",
+                      getIntfName(),
+                      result);
+  }
+  Supla::InputNoiseGuard::NotifyWifiTransition();
+  result = esp_wifi_stop();
+  if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_INIT &&
+      result != ESP_ERR_WIFI_NOT_STARTED) {
+    SUPLA_LOG_WARNING("[%s] WiFi stop failed (%d)", getIntfName(), result);
+  }
 }
 
 void Supla::EspIdfWifi::uninit() {
   setWifiConnected(false);
   setIpReady(false);
+  configModeScanInProgress = false;
   staticIpConfigured = false;
   DisconnectProtocols();
   if (initDone) {
     SUPLA_LOG_DEBUG("[%s] stopping WiFi connection", getIntfName());
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, eventHandler);
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_LOST_IP, eventHandler);
+    esp_event_handler_unregister(IP_EVENT,
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+                                 IP_EVENT_ASSIGNED_IP_TO_CLIENT,
+#else
+                                 IP_EVENT_AP_STAIPASSIGNED,
+#endif
+                                 eventHandler);
     esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, eventHandler);
-    esp_wifi_stop();
-#ifdef SUPLA_DEVICE_ESP32
+    Supla::InputNoiseGuard::NotifyWifiTransition();
+    esp_err_t result = esp_wifi_disconnect();
+    if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_INIT &&
+        result != ESP_ERR_WIFI_NOT_STARTED &&
+        result != ESP_ERR_WIFI_NOT_CONNECT) {
+      SUPLA_LOG_WARNING("[%s] WiFi disconnect failed during uninit (%d)",
+                        getIntfName(),
+                        result);
+    }
+    Supla::InputNoiseGuard::NotifyWifiTransition();
+    result = esp_wifi_stop();
+    if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_INIT &&
+        result != ESP_ERR_WIFI_NOT_STARTED) {
+      SUPLA_LOG_WARNING("[%s] WiFi stop failed during uninit (%d)",
+                        getIntfName(),
+                        result);
+    }
     if (apNetIf) {
       esp_netif_destroy_default_wifi(apNetIf);
       apNetIf = nullptr;
@@ -394,17 +426,17 @@ void Supla::EspIdfWifi::uninit() {
       esp_netif_destroy_default_wifi(staNetIf);
       staNetIf = nullptr;
     }
-#endif
 
-    esp_netif_deinit();
-
-    esp_wifi_deauth_sta(0);
-    esp_wifi_disconnect();
-
-    esp_wifi_deinit();
-
-    esp_event_loop_delete_default();
+    result = esp_wifi_deinit();
+    if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_INIT) {
+      SUPLA_LOG_WARNING("[%s] WiFi deinit failed (%d)",
+                        getIntfName(),
+                        result);
+    }
   }
+  allowDisable = false;
+  initDone = false;
+  setIpv4Addr(0);
 }
 
 void Supla::EspIdfWifi::fillStateData(TDSC_ChannelState *channelState) {
@@ -431,6 +463,21 @@ void Supla::EspIdfWifi::setIpReady(bool ready) {
 void Supla::EspIdfWifi::setWifiConnected(bool state) {
   connectedToWifiTimestamp = millis();
   isWifiConnected = state;
+  if (state) {
+    lastDisconnectReason = 0;
+  }
+}
+
+void Supla::EspIdfWifi::setLastDisconnectReason(int reason) {
+  lastDisconnectReason = reason;
+}
+
+bool Supla::EspIdfWifi::isAccessPointConnected() const {
+  return isWifiConnected;
+}
+
+int Supla::EspIdfWifi::getLastDisconnectReason() const {
+  return lastDisconnectReason;
 }
 
 void Supla::EspIdfWifi::setIpv4Addr(uint32_t ip) {
@@ -439,6 +486,64 @@ void Supla::EspIdfWifi::setIpv4Addr(uint32_t ip) {
 
 bool Supla::EspIdfWifi::isInConfigMode() {
   return mode == Supla::DEVICE_MODE_CONFIG;
+}
+
+void Supla::EspIdfWifi::startConfigModeScan() {
+  if (mode != Supla::DEVICE_MODE_CONFIG || configModeScanInProgress) {
+    return;
+  }
+
+  wifi_scan_config_t scanConfig = {};
+  scanConfig.show_hidden = true;
+
+  esp_err_t result = esp_wifi_scan_start(&scanConfig, false);
+  if (result == ESP_OK) {
+    configModeScanInProgress = true;
+    SUPLA_LOG_INFO("[%s] config mode scan started", getIntfName());
+  } else {
+    configModeScanInProgress = false;
+    SUPLA_LOG_WARNING("[%s] config mode scan start failed (%d)",
+                      getIntfName(),
+                      result);
+  }
+}
+
+void Supla::EspIdfWifi::finishConfigModeScan() {
+  if (!configModeScanInProgress) {
+    return;
+  }
+
+  configModeScanInProgress = false;
+  auto cache = Supla::WifiScanResultCache::Instance();
+  cache->beginUpdate();
+
+  uint16_t apCount = 0;
+  if (esp_wifi_scan_get_ap_num(&apCount) != ESP_OK) {
+    cache->clear();
+    SUPLA_LOG_WARNING("[%s] config mode scan failed", getIntfName());
+    esp_wifi_clear_ap_list();
+    return;
+  }
+
+  for (uint16_t i = 0; i < apCount; i++) {
+    wifi_ap_record_t ap = {};
+    if (esp_wifi_scan_get_ap_record(&ap) != ESP_OK) {
+      break;
+    }
+    cache->addOrUpdate(reinterpret_cast<const char *>(ap.ssid),
+                       ap.rssi,
+                       ap.primary);
+  }
+
+  esp_wifi_clear_ap_list();
+  cache->finishUpdate(millis());
+  SUPLA_LOG_INFO("[%s] config mode scan completed (%u networks)",
+                 getIntfName(),
+                 static_cast<unsigned int>(apCount));
+}
+
+bool Supla::EspIdfWifi::isConfigModeScanInProgress() const {
+  return configModeScanInProgress;
 }
 
 bool Supla::EspIdfWifi::getMacAddr(uint8_t *out) {
@@ -560,11 +665,9 @@ uint32_t Supla::EspIdfWifi::getConfiguredStaticIp() const {
   return getNetifConfig().ip;
 }
 
-#ifdef SUPLA_DEVICE_ESP32
 esp_netif_t *Supla::EspIdfWifi::getStaNetIf() const {
   return staNetIf;
 }
-#endif
 
 void Supla::EspIdfWifi::addSecurityLog(uint32_t ip, const char *log) const {
   if (sdc) {

@@ -1,20 +1,7 @@
-/*
-   Copyright (C) AC SOFTWARE SP. Z O.O
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
-   This program is free software; you can redistribute it and/or
-   modify it under the terms of the GNU General Public License
-   as published by the Free Software Foundation; either version 2
-   of the License, or (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-   */
+#include <stddef.h>
 
 #include "proto.h"
 
@@ -109,9 +96,11 @@ static_assert((unsigned int)62 == sizeof(TElectricityMeter_Measurement));
 // static_assert((unsigned int)429 == sizeof(TElectricityMeter_ExtendedValue));
 
 // deprecated
-//static_assert((139 +
-//              sizeof(TElectricityMeter_Measurement) * EM_MEASUREMENT_COUNT) ==
-//              sizeof(TElectricityMeter_ExtendedValue_V2));
+#ifdef USE_DEPRECATED_EMEV_V2
+static_assert((139 +
+               sizeof(TElectricityMeter_Measurement) * EM_MEASUREMENT_COUNT) ==
+              sizeof(TElectricityMeter_ExtendedValue_V2));
+#endif
 
 static_assert((144 +
                sizeof(TElectricityMeter_Measurement) * EM_MEASUREMENT_COUNT) ==
@@ -138,8 +127,10 @@ static_assert(sizeof(TElectricityMeter_Value) <=
 //               (unsigned int)SUPLA_CHANNELEXTENDEDVALUE_SIZE);
 
 // deprecated
-//static_assert(sizeof(TElectricityMeter_ExtendedValue_V2) <=
-//              (unsigned int)SUPLA_CHANNELEXTENDEDVALUE_SIZE);
+#ifdef USE_DEPRECATED_EMEV_V2
+static_assert(sizeof(TElectricityMeter_ExtendedValue_V2) <=
+              (unsigned int)SUPLA_CHANNELEXTENDEDVALUE_SIZE);
+#endif
 static_assert(sizeof(TElectricityMeter_ExtendedValue_V3) <=
               (unsigned int)SUPLA_CHANNELEXTENDEDVALUE_SIZE);
 static_assert((unsigned int)4 == sizeof(TThermostat_Time));
@@ -236,6 +227,12 @@ static_assert(sizeof(TDeviceConfig_HomeScreenOffDelay) <=
               (unsigned int)SUPLA_DEVICE_CONFIG_MAXSIZE);
 static_assert(sizeof(TDeviceConfig_HomeScreenContent) <=
               (unsigned int)SUPLA_DEVICE_CONFIG_MAXSIZE);
+static_assert((unsigned int)16 == sizeof(TDeviceConfig_ThermalProtection));
+static_assert(sizeof(TDeviceConfig_ThermalProtection) <=
+              (unsigned int)SUPLA_DEVICE_CONFIG_MAXSIZE);
+static_assert(sizeof(TDeviceConfig_InputActivation) == 8);
+static_assert(sizeof(TDeviceConfig_InputActivation) <=
+              (unsigned int)SUPLA_DEVICE_CONFIG_MAXSIZE);
 static_assert((unsigned int)8 == sizeof(TCalCfg_RollerShutterSettings));
 static_assert(sizeof(TCalCfg_RollerShutterSettings) <=
               (unsigned int)SUPLA_CHANNEL_CONFIG_MAXSIZE);
@@ -274,6 +271,11 @@ static_assert(sizeof(TChannelConfig_HVAC) <= SUPLA_CHANNEL_CONFIG_MAXSIZE);
 static_assert(sizeof(TChannelConfig_WeeklySchedule) == 356);
 static_assert(sizeof(TChannelConfig_WeeklySchedule) <=
               SUPLA_CHANNEL_CONFIG_MAXSIZE);
+static_assert(sizeof(TChannelConfig_ExtendedWeeklySchedule) ==
+              SUPLA_CHANNEL_CONFIG_MAXSIZE);
+static_assert(offsetof(TChannelConfig_ExtendedWeeklySchedule, Payload) ==
+              SUPLA_EXTENDED_WEEKLY_SCHEDULE_HEADER_SIZE);
+static_assert(SUPLA_EXTENDED_WEEKLY_SCHEDULE_PAYLOAD_MAXSIZE == 496);
 static_assert((unsigned int)544 == sizeof(TSC_DeviceConfigUpdateOrResult));
 static_assert((unsigned int)20 == sizeof(TCS_GetDeviceConfigRequest));
 static_assert((unsigned int)9 == sizeof(TCS_GetChannelConfigRequest));

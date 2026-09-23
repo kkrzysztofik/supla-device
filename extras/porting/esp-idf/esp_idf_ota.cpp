@@ -1,20 +1,5 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cJSON.h>
 #include <ctype.h>
@@ -33,7 +18,7 @@
 #include <supla/time.h>
 #include <supla/tools.h>
 
-#include <cerrno>
+#include <cstring>
 
 #include "supla/device/sw_update.h"
 
@@ -69,12 +54,12 @@ const char *rewriteUpdateHost(const char *url,
 
 }  // namespace
 
-static void formatHttpClientError(const char *prefix,
+static bool formatHttpClientError(const char *prefix,
                                   esp_http_client_handle_t client,
                                   char *buf,
                                   size_t bufLen) {
   if (buf == nullptr || bufLen == 0 || client == nullptr || prefix == nullptr) {
-    return;
+    return false;
   }
 
   int errnoCode = esp_http_client_get_errno(client);
@@ -91,7 +76,7 @@ static void formatHttpClientError(const char *prefix,
              "%s: certificate verification failed, flags=0x%x",
              prefix,
              tlsFlags);
-    return;
+    return true;
   }
   int errorCode = errnoCode != 0 ? errnoCode : tlsCode;
   if (errorCode < 0) {
@@ -102,18 +87,15 @@ static void formatHttpClientError(const char *prefix,
   }
 
   snprintf(buf, bufLen, "%s: Error %d", prefix, errorCode);
+  return false;
 }
 
-#ifndef SUPLA_DEVICE_ESP32
-// ESP8266 RTOS doesn't have OTA_WITH_SEQUENTIAL_WRITES, so we replace it with
-// default OTA_SIZE_UNKNOWN for ESP8266 target.
-#define OTA_WITH_SEQUENTIAL_WRITES OTA_SIZE_UNKNOWN
-#endif
-
+#ifndef SUPLA_TEST
 Supla::Device::SwUpdate *Supla::Device::SwUpdate::Create(
     SuplaDeviceClass *sdc, const char *newUrl, Supla::SwUpdateMode mode) {
   return new Supla::EspIdfOta(sdc, newUrl, mode);
 }
+#endif  // SUPLA_TEST
 
 Supla::EspIdfOta::EspIdfOta(SuplaDeviceClass *sdc,
                             const char *newUrl,
@@ -131,7 +113,7 @@ Supla::EspIdfOta::~EspIdfOta() {
     otaBuffer = nullptr;
   }
   if (httpAgent) {
-    free(httpAgent);
+    delete[] httpAgent;
     httpAgent = nullptr;
   }
 }
@@ -272,10 +254,10 @@ void Supla::EspIdfOta::iterate() {
     return;
   }
 
-//  SUPLA_LOG_INFO(
-//      "SW update: checking updates from url: \"%s\", with query: \"%s\"",
-//      url,
-//      queryParams);
+  //  SUPLA_LOG_INFO(
+  //      "SW update: checking updates from url: \"%s\", with query: \"%s\"",
+  //      url,
+  //      queryParams);
 
   int querySize = strlen(queryParams);
 
@@ -305,12 +287,48 @@ void Supla::EspIdfOta::iterate() {
   esp_err_t err;
   err = esp_http_client_open(client, querySize);
   if (err != ESP_OK) {
-    fail("SW update: failed to open connection with update server");
+    char failReason[256] = {};
+    bool certificateFailure = formatHttpClientError(
+        "SW update: failed to open connection with update server",
+        client,
+        failReason,
+        sizeof(failReason));
+    retryAllowed = mode != Supla::SwUpdateMode::OnlyCheck &&
+                   !certificateFailure;
+    fail(failReason);
     return;
   }
 
-  esp_http_client_write(client, queryParams, querySize);
-  esp_http_client_fetch_headers(client);
+  if (esp_http_client_write(client, queryParams, querySize) != querySize) {
+    retryAllowed = mode != Supla::SwUpdateMode::OnlyCheck;
+    fail("SW update: failed to send request to update server");
+    return;
+  }
+  int64_t headerResult = esp_http_client_fetch_headers(client);
+  if (headerResult < 0) {
+    char failReason[256] = {};
+    bool certificateFailure = formatHttpClientError(
+        "SW update: failed to read response headers",
+        client,
+        failReason,
+        sizeof(failReason));
+    retryAllowed = mode != Supla::SwUpdateMode::OnlyCheck &&
+                   !certificateFailure;
+    fail(failReason);
+    return;
+  }
+  int checkStatusCode = esp_http_client_get_status_code(client);
+  if (checkStatusCode != 200) {
+    snprintf(buf,
+             BUF_SIZE,
+             "SW update: update check failed with status code %d",
+             checkStatusCode);
+    retryAllowed = mode != Supla::SwUpdateMode::OnlyCheck &&
+                   (checkStatusCode == 408 || checkStatusCode == 429 ||
+                    (checkStatusCode >= 500 && checkStatusCode <= 599));
+    fail(buf);
+    return;
+  }
 
   SUPLA_LOG_DEBUG("Starting OTA");
 
@@ -323,24 +341,36 @@ void Supla::EspIdfOta::iterate() {
     fail("SW udpate: failed to allocate memory");
     return;
   }
+  otaBuffer[0] = '\0';
 
+  size_t responseSize = 0;
   while (true) {
-    int dataRead = esp_http_client_read(
-        client, reinterpret_cast<char *>(otaBuffer), BUFFER_SIZE);
+    int dataRead =
+        esp_http_client_read(client,
+                             reinterpret_cast<char *>(otaBuffer + responseSize),
+                             BUFFER_SIZE - responseSize);
     if (dataRead < 0) {
+      retryAllowed = mode != Supla::SwUpdateMode::OnlyCheck;
       fail("SW update: data read error");
       return;
     } else if (dataRead > 0) {
-      otaBuffer[dataRead] = '\0';
+      responseSize += dataRead;
+      otaBuffer[responseSize] = '\0';
       SUPLA_LOG_DEBUG("Read: %s", otaBuffer);
-    } else if (dataRead == 0) {
-      if (errno == ECONNRESET || errno == ENOTCONN) {
-        SUPLA_LOG_DEBUG("Connection closed, errno = %d", errno);
-        break;
-      }
       if (esp_http_client_is_complete_data_received(client) == true) {
         break;
       }
+      if (responseSize == BUFFER_SIZE) {
+        fail("SW update: check update response too large");
+        return;
+      }
+    } else if (dataRead == 0) {
+      if (esp_http_client_is_complete_data_received(client) == true) {
+        break;
+      }
+      retryAllowed = mode != Supla::SwUpdateMode::OnlyCheck;
+      fail("SW update: data read error");
+      return;
     }
   }
 
@@ -439,8 +469,9 @@ void Supla::EspIdfOta::iterate() {
       return;
     }
   } else {
-    fail("SW update: no new update available");
+    abort = true;
     retryAllowed = false;
+    notifyFinished(Supla::Device::SwUpdateResult::UP_TO_DATE);
     cJSON_Delete(json);
     return;
   }
@@ -450,6 +481,7 @@ void Supla::EspIdfOta::iterate() {
   if (mode == Supla::SwUpdateMode::OnlyCheck) {
     abort = true;
     retryAllowed = false;
+    notifyFinished(true);
     return;
   }
   mode = Supla::SwUpdateMode::CheckAndUpdate;
@@ -476,22 +508,24 @@ void Supla::EspIdfOta::iterate() {
   err = esp_http_client_open(client, 0);
   if (err != ESP_OK) {
     char failReason[256] = {};
-    formatHttpClientError("SW update: failed to open HTTPS connection",
-                          client,
-                          failReason,
-                          sizeof(failReason));
-    retryAllowed = true;
+    bool certificateFailure = formatHttpClientError(
+        "SW update: failed to open HTTPS connection",
+        client,
+        failReason,
+        sizeof(failReason));
+    retryAllowed = !certificateFailure;
     fail(failReason);
     return;
   }
   err = esp_http_client_fetch_headers(client);
   if (err < 0) {
     char failReason[256] = {};
-    formatHttpClientError("SW update: failed to read file from url",
-                          client,
-                          failReason,
-                          sizeof(failReason));
-    retryAllowed = true;
+    bool certificateFailure = formatHttpClientError(
+        "SW update: failed to read file from url",
+        client,
+        failReason,
+        sizeof(failReason));
+    retryAllowed = !certificateFailure;
     fail(failReason);
     SUPLA_LOG_DEBUG("SW update: result %d", err);
     return;
@@ -504,10 +538,17 @@ void Supla::EspIdfOta::iterate() {
              BUF_SIZE,
              "SW update: HTTPS GET failed with status code %d",
              returnCode);
-    retryAllowed = true;
+    retryAllowed = returnCode == 408 || returnCode == 429 ||
+                   (returnCode >= 500 && returnCode <= 599);
     fail(buf);
     return;
   }
+
+  int64_t contentLength = esp_http_client_get_content_length(client);
+  uint32_t totalBytes = contentLength > 0 && contentLength <= UINT32_MAX
+                            ? static_cast<uint32_t>(contentLength)
+                            : 0;
+  notifyProgress(0, totalBytes);
 
   // Start fetching bin file and perform update
   const esp_partition_t *updatePartition = NULL;
@@ -535,6 +576,7 @@ void Supla::EspIdfOta::iterate() {
   SUPLA_LOG_DEBUG("Getting file from server...");
   int bytesRead = 0;
   int bytesReadPrinted = 0;
+  int bytesReadNotified = 0;
   while (true) {
     int dataRead = esp_http_client_read(
         client, reinterpret_cast<char *>(otaBuffer), BUFFER_SIZE);
@@ -544,13 +586,16 @@ void Supla::EspIdfOta::iterate() {
       return;
     } else if (dataRead > 0) {
       bytesRead += dataRead;
+      if (bytesRead - bytesReadNotified > 64 * 1024) {
+        notifyProgress(bytesRead, totalBytes);
+        bytesReadNotified = bytesRead;
+      }
       if (bytesRead - bytesReadPrinted > 1024 * 100) {
         bytesReadPrinted = bytesRead;
         SUPLA_LOG_DEBUG("SW update: downloaded %d bytes...", bytesRead);
       }
       err = esp_ota_write(updateHandle, (const void *)otaBuffer, dataRead);
       if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
-        retryAllowed = true;
         fail("SW update: image corrupted - invalid magic byte");
         return;
       }
@@ -561,13 +606,12 @@ void Supla::EspIdfOta::iterate() {
       }
       binSize += dataRead;
     } else if (dataRead == 0) {
-      if (errno == ECONNRESET || errno == ENOTCONN) {
-        SUPLA_LOG_DEBUG("Connection closed, errno = %d", errno);
-        break;
-      }
       if (esp_http_client_is_complete_data_received(client) == true) {
         break;
       }
+      retryAllowed = true;
+      fail("SW update: data read error");
+      return;
     }
   }
   SUPLA_LOG_INFO("Download complete. Wrote %d bytes", binSize);
@@ -584,10 +628,10 @@ void Supla::EspIdfOta::iterate() {
   updateHandle = 0;
 
   if (err != ESP_OK) {
-    retryAllowed = true;
     if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
       fail("SW update: image validation failed - image is corrupted");
     } else {
+      retryAllowed = true;
       fail("SW update: OTA end failed");
     }
     return;
@@ -597,7 +641,6 @@ void Supla::EspIdfOta::iterate() {
   // We apply here additional RSA signature check added to Supla firmware
 
   if (!verifyRsaSignature(updatePartition, binSize)) {
-    retryAllowed = true;
     fail("SW update: RSA signature verification failed");
     return;
   }
@@ -611,6 +654,8 @@ void Supla::EspIdfOta::iterate() {
   }
   delete[] otaBuffer;
   otaBuffer = nullptr;
+  notifyProgress(binSize, totalBytes);
+  notifyFinished(true);
   return;
 }
 
@@ -713,11 +758,12 @@ void Supla::EspIdfOta::fail(const char *reason) {
     client = 0;
   }
   if (updateHandle) {
-    esp_ota_end(updateHandle);
+    esp_ota_abort(updateHandle);
     updateHandle = 0;
   }
 
   log(reason);
+  notifyFinished(false, reason);
   abort = true;
 }
 

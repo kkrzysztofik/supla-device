@@ -1,11 +1,5 @@
-/*
- * Copyright (C) AC SOFTWARE SP. Z O.O
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- */
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "hvac_mqtt.h"
 
@@ -16,7 +10,7 @@
 #include <supla/element.h>
 #include <supla/log_wrapper.h>
 #include <supla/protocol/mqtt.h>
-#include <supla/protocol/protocol_layer.h>
+#include <supla/protocol/mqtt_handler_registry.h>
 #include <supla/sensor/therm_hygro_meter.h>
 #include <supla/sensor/thermometer.h>
 #include <supla/tools.h>
@@ -135,6 +129,17 @@ class HvacMqttHandler : public MqttChannelHandler {
     mqtt->subscribe((topic / "set" / "temperature_setpoint_cool").c_str());
   }
 
+  void mqttUnsubscribeChannel(Mqtt *mqtt, Supla::Element *element) override {
+    if (mqtt == nullptr || element == nullptr) {
+      return;
+    }
+    auto topic = MqttTopic("channels") / element->getChannelNumber();
+    mqtt->unsubscribe((topic / "execute_action").c_str());
+    mqtt->unsubscribe((topic / "set" / "temperature_setpoint").c_str());
+    mqtt->unsubscribe((topic / "set" / "temperature_setpoint_heat").c_str());
+    mqtt->unsubscribe((topic / "set" / "temperature_setpoint_cool").c_str());
+  }
+
   bool mqttProcessData(Mqtt *mqtt,
                        const char *topic_part,
                        const char *payload,
@@ -196,7 +201,7 @@ class HvacMqttHandler : public MqttChannelHandler {
         hvacValue->Mode = SUPLA_HVAC_MODE_OFF;
       } else if (strncmpInsensitive(payload, "toggle", 7) == 0) {
         if (element->getChannel() &&
-            element->getChannel()->getHvacIsOnRaw() != 0) {
+            element->getChannel()->getHvacIsOnBool()) {
           hvacValue->Mode = SUPLA_HVAC_MODE_OFF;
         } else {
           hvacValue->Mode = SUPLA_HVAC_MODE_CMD_TURN_ON;
@@ -263,9 +268,7 @@ class HvacMqttHandler : public MqttChannelHandler {
 
     const char cfg[] =
         "{"
-        "\"avty_t\":\"%s/state/connected\","
-        "\"pl_avail\":\"true\","
-        "\"pl_not_avail\":\"false\","
+        "%s"
         "\"~\":\"%s/channels/%i\","
         "\"dev\":{"
         "\"ids\":\"%s\","
@@ -307,7 +310,7 @@ class HvacMqttHandler : public MqttChannelHandler {
               i ? payload : &c,
               i ? bufferSize : 1,
               cfg,
-              mqtt->getPrefix(),
+              mqtt->getHAAvailability(ch),
               mqtt->getPrefix(),
               ch->getChannelNumber(),
               mqtt->getHostname(),
@@ -354,13 +357,7 @@ class HvacMqttHandler : public MqttChannelHandler {
 
 void RegisterHvacMqttHandler() {
   static HvacMqttHandler handler;
-  for (auto *proto = ProtocolLayer::first(); proto != nullptr;
-       proto = proto->next()) {
-    if (!proto->isMqtt()) {
-      continue;
-    }
-    static_cast<Mqtt *>(proto)->registerChannelHandler(&handler);
-  }
+  MqttHandlerRegistry::instance().registerHandler(&handler);
 }
 
 }  // namespace Protocol

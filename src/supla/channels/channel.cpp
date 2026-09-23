@@ -1,18 +1,5 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "channel.h"
 
@@ -128,7 +115,8 @@ Channel *Channel::next() {
 bool Channel::setChannelNumber(int newChannelNumber) {
   int oldChannelNumber = channelNumber;
 
-  if (newChannelNumber < 0 || oldChannelNumber < 0) {
+  if (newChannelNumber < 0 || newChannelNumber >= SUPLA_CHANNELMAXCOUNT ||
+      oldChannelNumber < 0) {
     return false;
   }
   if (newChannelNumber == oldChannelNumber) {
@@ -174,8 +162,13 @@ void Channel::setNewValue(double dbl) {
     if (isnan(dbl)) {
       SUPLA_LOG_DEBUG("Channel(%d) value changed to NaN", channelNumber);
     } else {
-      SUPLA_LOG_DEBUG("Channel(%d) value changed to %d.%02d", channelNumber,
-          static_cast<int>(dbl), abs(static_cast<int>(dbl*100)%100));
+      int integerPart = static_cast<int>(dbl);
+      int fractionalPart = abs(static_cast<int>(dbl * 100) % 100);
+      const char *sign = dbl < 0 && integerPart == 0 ? "-" : "";
+      (void)(fractionalPart);
+      (void)(sign);
+      SUPLA_LOG_DEBUG("Channel(%d) value changed to %s%d.%02d", channelNumber,
+          sign, integerPart, fractionalPart);
     }
   }
 }
@@ -753,8 +746,24 @@ void Channel::setValidityTimeSec(uint32_t timeSec) {
   validityTimeSec = timeSec;
 }
 
-bool Channel::isSleepingEnabled() {
+void Channel::clearValue() {
+  const int8_t emptyValue[SUPLA_CHANNELVALUE_SIZE] = {};
+  const bool valueChanged =
+      memcmp(value, emptyValue, SUPLA_CHANNELVALUE_SIZE) != 0;
+  const bool validityChanged = validityTimeSec != 0;
+  memcpy(value, emptyValue, SUPLA_CHANNELVALUE_SIZE);
+  validityTimeSec = 0;
+  if (valueChanged || validityChanged) {
+    setSendValue();
+  }
+}
+
+bool Channel::isSleepingEnabled() const {
   return validityTimeSec > 0;
+}
+
+uint32_t Channel::getValidityTimeSec() const {
+  return validityTimeSec;
 }
 
 bool Channel::isWeeklyScheduleAvailable() {
@@ -799,6 +808,29 @@ void Channel::setBatteryLevel(int level) {
       setSendStateInfo();
     }
   }
+}
+
+Supla::BatteryState Channel::getBatteryState() const {
+  return batteryState;
+}
+
+void Channel::setBatteryState(BatteryState state, bool applyToWholeDevice) {
+  if (state == BatteryState::NotSet) {
+    applyToWholeDevice = false;
+  }
+
+  if (state != batteryState ||
+      applyToWholeDevice != batteryStateAppliedToWholeDevice) {
+    SUPLA_LOG_DEBUG("Channel[%d] battery state changed to %u", channelNumber,
+                    static_cast<unsigned>(state));
+    batteryState = state;
+    batteryStateAppliedToWholeDevice = applyToWholeDevice;
+    setSendStateInfo();
+  }
+}
+
+bool Channel::isBatteryStateAppliedToWholeDevice() const {
+  return batteryStateAppliedToWholeDevice;
 }
 
 uint8_t Channel::getBridgeSignalStrength() const {
@@ -1626,55 +1658,55 @@ bool Channel::isFunctionValid(uint32_t function) const {
     case ChannelType::RELAY: {
       switch (function) {
         case SUPLA_CHANNELFNC_CONTROLLINGTHEGATEWAYLOCK: {
-          return getFuncList() & SUPLA_CHANNELFNC_CONTROLLINGTHEGATEWAYLOCK;
+          return getFuncList() & SUPLA_BIT_FUNC_CONTROLLINGTHEGATEWAYLOCK;
         }
         case SUPLA_CHANNELFNC_CONTROLLINGTHEGATE: {
-          return getFuncList() & SUPLA_CHANNELFNC_CONTROLLINGTHEGATE;
+          return getFuncList() & SUPLA_BIT_FUNC_CONTROLLINGTHEGATE;
         }
         case SUPLA_CHANNELFNC_CONTROLLINGTHEGARAGEDOOR: {
-          return getFuncList() & SUPLA_CHANNELFNC_CONTROLLINGTHEGARAGEDOOR;
+          return getFuncList() & SUPLA_BIT_FUNC_CONTROLLINGTHEGARAGEDOOR;
         }
         case SUPLA_CHANNELFNC_CONTROLLINGTHEDOORLOCK: {
-          return getFuncList() & SUPLA_CHANNELFNC_CONTROLLINGTHEDOORLOCK;
+          return getFuncList() & SUPLA_BIT_FUNC_CONTROLLINGTHEDOORLOCK;
         }
         case SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER: {
-          return getFuncList() & SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER;
+          return getFuncList() & SUPLA_BIT_FUNC_CONTROLLINGTHEROLLERSHUTTER;
         }
         case SUPLA_CHANNELFNC_CONTROLLINGTHEROOFWINDOW: {
-          return getFuncList() & SUPLA_CHANNELFNC_CONTROLLINGTHEROOFWINDOW;
+          return getFuncList() & SUPLA_BIT_FUNC_CONTROLLINGTHEROOFWINDOW;
         }
         case SUPLA_CHANNELFNC_POWERSWITCH: {
-          return getFuncList() & SUPLA_CHANNELFNC_POWERSWITCH;
+          return getFuncList() & SUPLA_BIT_FUNC_POWERSWITCH;
         }
         case SUPLA_CHANNELFNC_LIGHTSWITCH: {
-          return getFuncList() & SUPLA_CHANNELFNC_LIGHTSWITCH;
+          return getFuncList() & SUPLA_BIT_FUNC_LIGHTSWITCH;
         }
         case SUPLA_CHANNELFNC_STAIRCASETIMER: {
-          return getFuncList() & SUPLA_CHANNELFNC_STAIRCASETIMER;
+          return getFuncList() & SUPLA_BIT_FUNC_STAIRCASETIMER;
         }
         case SUPLA_CHANNELFNC_CONTROLLINGTHEFACADEBLIND: {
-          return getFuncList() & SUPLA_CHANNELFNC_CONTROLLINGTHEFACADEBLIND;
+          return getFuncList() & SUPLA_BIT_FUNC_CONTROLLINGTHEFACADEBLIND;
         }
         case SUPLA_CHANNELFNC_TERRACE_AWNING: {
-          return getFuncList() & SUPLA_CHANNELFNC_TERRACE_AWNING;
+          return getFuncList() & SUPLA_BIT_FUNC_TERRACE_AWNING;
         }
         case SUPLA_CHANNELFNC_PROJECTOR_SCREEN: {
-          return getFuncList() & SUPLA_CHANNELFNC_PROJECTOR_SCREEN;
+          return getFuncList() & SUPLA_BIT_FUNC_PROJECTOR_SCREEN;
         }
         case SUPLA_CHANNELFNC_CURTAIN: {
-          return getFuncList() & SUPLA_CHANNELFNC_CURTAIN;
+          return getFuncList() & SUPLA_BIT_FUNC_CURTAIN;
         }
         case SUPLA_CHANNELFNC_VERTICAL_BLIND: {
-          return getFuncList() & SUPLA_CHANNELFNC_VERTICAL_BLIND;
+          return getFuncList() & SUPLA_BIT_FUNC_VERTICAL_BLIND;
         }
         case SUPLA_CHANNELFNC_ROLLER_GARAGE_DOOR: {
-          return getFuncList() & SUPLA_CHANNELFNC_ROLLER_GARAGE_DOOR;
+          return getFuncList() & SUPLA_BIT_FUNC_ROLLER_GARAGE_DOOR;
         }
         case SUPLA_CHANNELFNC_PUMPSWITCH: {
-          return getFuncList() & SUPLA_CHANNELFNC_PUMPSWITCH;
+          return getFuncList() & SUPLA_BIT_FUNC_PUMPSWITCH;
         }
         case SUPLA_CHANNELFNC_HEATORCOLDSOURCESWITCH: {
-          return getFuncList() & SUPLA_CHANNELFNC_HEATORCOLDSOURCESWITCH;
+          return getFuncList() & SUPLA_BIT_FUNC_HEATORCOLDSOURCESWITCH;
         }
         default: {
           return false;

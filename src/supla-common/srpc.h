@@ -1,27 +1,15 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
- */
 #ifndef supladex_H_
 #define supladex_H_
 
 #include <stddef.h>
 #include <stdio.h>
 
+#if !defined(SUPLA_DEVICE) && !defined(ARDUINO)
 #include "eh.h"
+#endif
 #include "proto.h"
 #if defined(ESP32)
 #include <esp8266-compat.h>
@@ -61,9 +49,10 @@
 extern "C" {
 #endif
 
-#if defined(SUPLA_DEVICE) || defined(ESP8266) || defined(ESP32) || \
-    defined(__AVR__) || defined(ARDUINO_ARCH_ESP8266) || \
-    defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_AVR)
+#if SUPLA_SRPC_PACKET_LOG_ENABLED && !defined(SUPLA_DISABLE_LOGS) && \
+    (defined(SUPLA_DEVICE) || defined(ESP8266) || defined(ESP32) || \
+     defined(__AVR__) || defined(ARDUINO_ARCH_ESP8266) || \
+     defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_AVR))
 #define SRPC_WITH_PACKET_LOG_HOOKS
 #endif
 
@@ -96,6 +85,17 @@ typedef void (*_func_srpc_event_OnMinVersionRequired)(
     void *_srpc, unsigned _supla_int_t call_id, unsigned char min_version,
     void *user_params);
 
+typedef enum {
+  SRPC_ITERATE_REASON_NONE = 0,
+  SRPC_ITERATE_REASON_SOCKET_CLOSED,
+  SRPC_ITERATE_REASON_INPUT_BUFFER_ERROR,
+  SRPC_ITERATE_REASON_INPUT_BUFFER_OVERFLOW,
+  SRPC_ITERATE_REASON_PROTOCOL_ERROR,
+  SRPC_ITERATE_REASON_VERSION_ERROR,
+  SRPC_ITERATE_REASON_INPUT_QUEUE_ERROR,
+  SRPC_ITERATE_REASON_OUTPUT_BUFFER_ERROR
+} TsrpcIterateReason;
+
 typedef struct {
   _func_srpc_DataRW data_read;
   _func_srpc_DataRW data_write;
@@ -108,7 +108,9 @@ typedef struct {
 #endif
   _func_srpc_event_OnMinVersionRequired on_min_version_required;
 
+#if !defined(SUPLA_DEVICE) && !defined(ARDUINO)
   TEventHandler *eh;
+#endif
 
   void *user_params;
 } TsrpcParams;
@@ -240,6 +242,8 @@ unsigned char SRPC_ICACHE_FLASH srpc_out_queue_item_count(void *srpc);
 
 char SRPC_ICACHE_FLASH srpc_iterate(void *_srpc);
 char SRPC_ICACHE_FLASH srpc_iterate_device(void *_srpc);
+TsrpcIterateReason SRPC_ICACHE_FLASH
+srpc_get_last_iterate_reason(void *_srpc);
 
 char SRPC_ICACHE_FLASH srpc_getdata(void *_srpc, TsrpcReceivedData *rd,
                                     unsigned _supla_int_t rr_id);
@@ -335,6 +339,7 @@ _supla_int_t SRPC_ICACHE_FLASH srpc_sd_async_get_firmware_update_url(
     void *_srpc, TDS_FirmwareUpdateParams *params);
 _supla_int_t SRPC_ICACHE_FLASH srpc_sd_async_get_firmware_update_url_result(
     void *_srpc, TSD_FirmwareUpdate_UrlResult *result);
+_supla_int_t SRPC_ICACHE_FLASH srpc_sd_async_device_sync_done(void *_srpc);
 _supla_int_t SRPC_ICACHE_FLASH srpc_sd_async_device_calcfg_request(
     void *_srpc, TSD_DeviceCalCfgRequest *request);
 _supla_int_t SRPC_ICACHE_FLASH

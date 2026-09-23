@@ -1,20 +1,5 @@
-/*
- * Copyright (C) AC SOFTWARE SP. Z O.O
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
- */
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef SRC_SUPLA_PROTOCOL_SUPLA_SRPC_H_
 #define SRC_SUPLA_PROTOCOL_SUPLA_SRPC_H_
@@ -50,6 +35,7 @@ class CalCfgResultPending {
   void clear(int16_t channelNo, int32_t command = -1);
   void clearTimeout(int16_t channelNo, int32_t command = -1);
   void clearAll();
+  bool empty() const;
   CalCfgResultPendingItem *get(int16_t channelNo, int32_t command = -1);
 
  protected:
@@ -75,6 +61,7 @@ class SuplaSrpc : public ProtocolLayer {
   bool iterate(uint32_t _millis) override;
   bool isNetworkRestartRequested() override;
   uint32_t getConnectionFailTime() override;
+  ConnectionError getConnectionError() const override;
   bool isRegisteredAndReady() override;
   void initClient();
 
@@ -117,6 +104,7 @@ class SuplaSrpc : public ProtocolLayer {
   void onRegisterResult(TSD_SuplaRegisterDeviceResult *register_device_result);
   void onRegisterResultB(
       TSD_SuplaRegisterDeviceResult_B *registerDeviceResultB);
+  void onDeviceSyncDone();
   void onSetActivityTimeoutResult(TSDC_SuplaSetActivityTimeoutResult *result);
   void setActivityTimeout(uint32_t activityTimeoutSec);
   uint32_t getActivityTimeout();
@@ -127,6 +115,8 @@ class SuplaSrpc : public ProtocolLayer {
 
   void setServerPort(int value);
   void setVersion(int value);
+  bool hasWriteFailure() const;
+  void markWriteFailure();
   void setSuplaCACert(const char *);
   void setSupla3rdPartyCACert(const char *);
   const char *getSuplaCACert() const;
@@ -164,25 +154,31 @@ class SuplaSrpc : public ProtocolLayer {
   void setChannelConflictResolver(
       Supla::Device::ChannelConflictResolver *resolver);
 
-  static void onPacketSent(void *userParam,
+#if SUPLA_SRPC_PACKET_LOG_ENABLED && !defined(SUPLA_DISABLE_LOGS)
+  static void onPacketSent(void *srpcHandle,
                            unsigned _supla_int_t callId,
                            void *data,
                            unsigned _supla_int_t dataSize,
-                           void *reserved);
-  static void onPacketReceived(void *userParam,
+                           void *userParam);
+  static void onPacketReceived(void *srpcHandle,
                                unsigned _supla_int_t callId,
                                void *data,
                                unsigned _supla_int_t dataSize,
-                               void *reserved);
+                               void *userParam);
   void logSrpcPacket(bool send, int callId, const uint8_t *buf, size_t size);
   static const char *callIdToName(int callId);
   static bool isSensitiveCallId(int callId);
+#endif
 
  protected:
   bool ping();
+  void scheduleReconnect(uint32_t now);
   void initializeSrpc();
   void deinitializeSrpc();
   void addLastStateAdError(char *buf);
+#ifndef ARDUINO_ARCH_AVR
+  bool autodiscover(uint32_t now);
+#endif
 
   uint8_t version = 0;
   uint8_t activityTimeoutS = 30;
@@ -191,10 +187,13 @@ class SuplaSrpc : public ProtocolLayer {
   bool requestNetworkRestart = false;
   bool enabled = true;
   bool setDeviceConfigReceivedAfterRegistration = false;
+  bool deviceSyncDoneReceived = false;
   bool firstConnectionAttempt = true;
   bool adErrorLogged = false;
+  bool writeFailure = false;
   uint8_t autodiscoverRetryCounter = 0;
   uint16_t connectionFailCounter = 0;
+  uint8_t reconnectAttemptCounter = 0;
 
   uint32_t lastPingTimeMs = 0;
   uint32_t waitForIterate = 0;
@@ -213,6 +212,7 @@ class SuplaSrpc : public ProtocolLayer {
  private:
   void handlePendingCalCfgTimeouts(uint32_t _millis);
   Supla::Device::RemoteDeviceConfig *remoteDeviceConfig = nullptr;
+  bool versionErrorDisconnectPending = false;
 };
 }  // namespace Protocol
 

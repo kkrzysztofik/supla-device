@@ -1,20 +1,5 @@
-/*
-   Copyright (C) AC SOFTWARE SP. Z O.O
-
-   This program is free software; you can redistribute it and/or
-   modify it under the terms of the GNU General Public License
-   as published by the Free Software Foundation; either version 2
-   of the License, or (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #ifndef ARDUINO_ARCH_AVR
 #include "binary_sensor_parameters.h"
@@ -39,7 +24,7 @@ namespace {
 constexpr char BinaryTimeoutKey[] = "bs_timeout";
 constexpr char BinarySensitivityKey[] = "bs_sens";
 constexpr char BinaryFilterKey[] = "bs_filter";
-constexpr char BinaryAlarmMutedKey[] = "bs_alarm";
+constexpr char BinaryLocalAlarmIndicationKey[] = "bs_local_alarm";
 }  // namespace
 
 BinarySensorParameters::BinarySensorParameters(
@@ -147,20 +132,20 @@ void BinarySensorParameters::send(Supla::WebSender* sender) {
           });
     }
 
-    if (binary->getAlarmMuted() > 0) {
+    if (binary->getLocalAlarmIndication() > 0) {
       Supla::Config::generateKey(key,
                                  binary->getChannelNumber(),
-                                 BinaryAlarmMutedKey);
+                                 BinaryLocalAlarmIndicationKey);
 
       sender->labeledField(
           key,
-          "Alarm muted",
+          "Local alarm indication",
           [&]() {
             sender->selectInput(key, key, [&]() {
-              sender->selectOption(1, "Muted", binary->getAlarmMuted() == 1);
-              sender->selectOption(2,
-                                   "Not muted",
-                                   binary->getAlarmMuted() == 2);
+              sender->selectOption(
+                  1, "Disabled", binary->getLocalAlarmIndication() == 1);
+              sender->selectOption(
+                  2, "Enabled", binary->getLocalAlarmIndication() == 2);
             });
           });
     }
@@ -220,7 +205,7 @@ bool BinarySensorParameters::handleResponse(const char* key,
       BinaryFilterKey);
   if (strcmp(key, expectedKey) == 0) {
     uint32_t param = floatStringToInt(value, 3);
-    if (binary->getFilteringTimeMs() > 0 && param < 10000) {
+    if (binary->getFilteringTimeMs() > 0 && param >= 30 && param <= 3000) {
       if (binary->setFilteringTimeMs(param)) {
         configChanged = true;
       }
@@ -231,11 +216,11 @@ bool BinarySensorParameters::handleResponse(const char* key,
   Supla::Config::generateKey(
       expectedKey,
       binary->getChannelNumber(),
-      BinaryAlarmMutedKey);
+      BinaryLocalAlarmIndicationKey);
   if (strcmp(key, expectedKey) == 0) {
     uint32_t param = stringToInt(value);
-    if (binary->getAlarmMuted() > 0 && param >= 1 && param <= 2) {
-      if (binary->setAlarmMuted(static_cast<uint8_t>(param))) {
+    if (binary->getLocalAlarmIndication() > 0 && param >= 1 && param <= 2) {
+      if (binary->setLocalAlarmIndication(static_cast<uint8_t>(param))) {
         configChanged = true;
       }
     }

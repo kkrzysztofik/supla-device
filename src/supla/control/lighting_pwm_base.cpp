@@ -1,26 +1,12 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "lighting_pwm_base.h"
 
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <supla/io.h>
 #include <supla/auto_lock.h>
 #include <supla/control/button.h>
 #include <supla/log_wrapper.h>
@@ -233,7 +219,8 @@ void LightingPwmBase::iterateAlways() {
 }
 
 void LightingPwmBase::updateEnabledState() {
-  if ((hasParent() && parent->getMissingGpioCount() > 0) ||
+  if (manuallySuspended ||
+      (hasParent() && parent->getMissingGpioCount() > 0) ||
       getChannel()->getDefaultFunction() == SUPLA_CHANNELFNC_NONE) {
     disableChannel();
   } else {
@@ -241,8 +228,21 @@ void LightingPwmBase::updateEnabledState() {
   }
 }
 
+void LightingPwmBase::setChannelSuspended(bool suspended) {
+  manuallySuspended = suspended;
+  updateEnabledState();
+}
+
+bool LightingPwmBase::isChannelSuspended() const {
+  return manuallySuspended;
+}
+
 int32_t LightingPwmBase::handleNewValueFromServer(
     TSD_SuplaChannelNewValue *newValue) {
+  if (manuallySuspended) {
+    return 0;
+  }
+
   uint8_t whiteTemperature = static_cast<uint8_t>(newValue->value[7]);
   uint8_t command = static_cast<uint8_t>(newValue->value[6]);
   uint8_t toggleOnOff = static_cast<uint8_t>(newValue->value[5]);
@@ -452,6 +452,10 @@ uint8_t LightingPwmBase::addWithLimit(int value, int addition, int limit) {
 
 void LightingPwmBase::handleAction(int event, int action) {
   (void)(event);
+  if (manuallySuspended) {
+    return;
+  }
+
   switch (action) {
     case TURN_ON: {
       turnOn();
@@ -1013,8 +1017,8 @@ void LightingPwmBase::onFastTimer() {
     const uint32_t minBrightness =
         ratioToHwValue(minBrightnessRatio, maxHwValue);
     float white2Fraction = 1.0 * hardware.whiteTemperature / maxHwValue;
-    white2Brightness = adjBrightness * white2Fraction * warmWhiteGain;
-    white1Brightness = adjBrightness * (1.0 - white2Fraction) * coldWhiteGain;
+    white2Brightness = adjBrightness * white2Fraction * coldWhiteGain;
+    white1Brightness = adjBrightness * (1.0 - white2Fraction) * warmWhiteGain;
     if (white1Brightness > 0 && white1Brightness < minBrightness) {
       white1Brightness = minBrightness;
     }
@@ -1668,6 +1672,47 @@ void LightingPwmBase::setPwmResolutionBits(uint8_t resolutionBits) {
   }
 
   setMaxHwValue(static_cast<int>(hwMax));
+}
+
+uint32_t LightingPwmBase::scalePwmValueForOutput(
+    const Supla::Io::IoPin &pin, uint32_t value) const {
+  if (!pin.isSet()) {
+    return 0;
+  }
+
+  const uint32_t sourceMax = maxHwValue > 0
+                                 ? static_cast<uint32_t>(maxHwValue)
+                                 : 0;
+  if (sourceMax == 0) {
+    return 0;
+  }
+
+  if (value > sourceMax) {
+    value = sourceMax;
+  }
+
+  uint32_t outputMax = sourceMax;
+  const uint8_t pinNumber = static_cast<uint8_t>(pin.getPin());
+  if (!Supla::Io::canSetPwmResolutionBits(pinNumber, pin.io)) {
+    const uint8_t outputBits =
+        Supla::Io::defaultPwmResolutionBits(pinNumber, pin.io);
+    if (outputBits > 0 && outputBits < 32) {
+      outputMax = (1UL << outputBits) - 1;
+    } else {
+      outputMax = 0;
+    }
+  }
+
+  if (outputMax == 0) {
+    return 0;
+  }
+  if (outputMax == sourceMax) {
+    return value;
+  }
+
+  const uint64_t scaled =
+      (static_cast<uint64_t>(value) * outputMax + sourceMax / 2) / sourceMax;
+  return scaled > outputMax ? outputMax : static_cast<uint32_t>(scaled);
 }
 
 void LightingPwmBase::setPwmFrequency(uint16_t frequency) {

@@ -1,18 +1,5 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "netif_wifi.h"
 
@@ -20,6 +7,8 @@
 #include <supla/storage/config_tags.h>
 #include <supla/storage/config.h>
 #include <supla/storage/storage.h>
+#include <supla/network/wifi_scan_result.h>
+#include <supla/time.h>
 
 using Supla::Wifi;
 
@@ -48,6 +37,43 @@ bool Wifi::isWifiConfigRequired() {
   return true;
 }
 
+void Wifi::startConfigModeScan() {
+}
+
+bool Wifi::isConfigModeScanInProgress() const {
+  return false;
+}
+
+void Wifi::requestConfigModeScanIfDue() {
+  if (mode != Supla::DEVICE_MODE_CONFIG || isConfigModeScanInProgress()) {
+    return;
+  }
+
+  uint32_t now = millis();
+  auto cache = Supla::WifiScanResultCache::Instance();
+  bool scanDue = true;
+  if (cache != nullptr && cache->hasScan()) {
+    scanDue = now - cache->getTimestampMs() >= WifiScanRefreshIntervalMs;
+  }
+
+  if (!scanDue) {
+    return;
+  }
+
+  if (configModeScanStartRecorded &&
+      now - lastConfigModeScanStartMs < WifiScanRefreshIntervalMs) {
+    return;
+  }
+
+  configModeScanStartRecorded = true;
+  lastConfigModeScanStartMs = now;
+  startConfigModeScan();
+}
+
+bool Wifi::iterate() {
+  requestConfigModeScanIfDue();
+  return Supla::Network::iterate();
+}
 
 void Wifi::onLoadConfig() {
   Network::onLoadConfig();

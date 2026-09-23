@@ -1,20 +1,5 @@
-/*
-   Copyright (C) AC SOFTWARE SP. Z O.O
-
-   This program is free software; you can redistribute it and/or
-   modify it under the terms of the GNU General Public License
-   as published by the Free Software Foundation; either version 2
-   of the License, or (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-   */
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <element_with_storage.h>
 #include <gmock/gmock.h>
@@ -492,6 +477,116 @@ TEST(StorageStateWlSectorTests, preambleReadFromBackupInvalidSize) {
 
   EXPECT_EQ(el1.stateValue, 10);
   EXPECT_EQ(el2.stateValue, 20);
+}
+
+TEST(StorageStateWlSectorTests, deleteAllInvalidatesBothPreambles) {
+  EXPECT_FALSE(Supla::Storage::Init());
+
+  ElementWithStorage el;
+  el.stateValue = 123456;
+
+  StorageMockFlashSimulator storage(
+      0, SMALL_FLASH_SIZE, Supla::Storage::WearLevelingMode::SECTOR_WRITE_MODE);
+
+  EXPECT_CALL(storage, commit()).Times(1);
+
+  EXPECT_TRUE(storage.isEmpty());
+  EXPECT_TRUE(Supla::Storage::Init());
+  EXPECT_FALSE(Supla::Storage::IsStateStorageValid());
+  Supla::Storage::WriteStateStorage();
+  EXPECT_TRUE(Supla::Storage::IsStateStorageValid());
+
+  memcpy(storage.storageSimulatorData + 4096,
+         storage.storageSimulatorData,
+         sizeof(Supla::Preamble));
+  EXPECT_TRUE(storage.isPreampleInitialized());
+  EXPECT_TRUE(storage.isBackupPreampleInitialized());
+
+  storage.deleteAll();
+
+  EXPECT_FALSE(storage.isPreampleInitialized());
+  EXPECT_FALSE(storage.isBackupPreampleInitialized());
+}
+
+TEST(StorageStateWlSectorTests,
+     deleteAllReinitializesWithoutRestoringOldLayout) {
+  EXPECT_FALSE(Supla::Storage::Init());
+
+  ElementWithStorage el;
+  el.stateValue = 123456;
+
+  StorageMockFlashSimulator storage(
+      0, SMALL_FLASH_SIZE, Supla::Storage::WearLevelingMode::SECTOR_WRITE_MODE);
+
+  EXPECT_CALL(storage, commit()).Times(1);
+
+  EXPECT_TRUE(storage.isEmpty());
+  EXPECT_TRUE(Supla::Storage::Init());
+  EXPECT_FALSE(Supla::Storage::IsStateStorageValid());
+  Supla::Storage::WriteStateStorage();
+  EXPECT_TRUE(Supla::Storage::IsStateStorageValid());
+
+  memcpy(storage.storageSimulatorData + 4096,
+         storage.storageSimulatorData,
+         sizeof(Supla::Preamble));
+  auto oldSectorConfig = storage.getStateWlSectorConfig();
+  ASSERT_NE(oldSectorConfig, nullptr);
+  EXPECT_EQ(oldSectorConfig->stateSlotSize,
+            sizeof(el.stateValue) + sizeof(Supla::StateWlSectorHeader));
+
+  storage.deleteAll();
+  EXPECT_TRUE(Supla::Storage::Init());
+
+  auto freshSectorConfig = storage.getStateWlSectorConfig();
+  ASSERT_NE(freshSectorConfig, nullptr);
+  EXPECT_EQ(freshSectorConfig->stateSlotSize, 0xFFFF);
+
+  auto backupSectorConfig = reinterpret_cast<Supla::StateWlSectorConfig *>(
+      storage.storageSimulatorData + 4096 + sizeof(Supla::Preamble) +
+      sizeof(Supla::SectionPreamble));
+  EXPECT_EQ(backupSectorConfig->stateSlotSize, 0xFFFF);
+}
+
+TEST(StorageStateWlSectorTests, deleteAllAllowsMigrationToDifferentStateSize) {
+  EXPECT_FALSE(Supla::Storage::Init());
+
+  ElementWithStorage firstElement;
+  firstElement.stateValue = 123456;
+
+  StorageMockFlashSimulator storage(
+      0, SMALL_FLASH_SIZE, Supla::Storage::WearLevelingMode::SECTOR_WRITE_MODE);
+
+  EXPECT_CALL(storage, commit()).Times(1);
+
+  EXPECT_TRUE(storage.isEmpty());
+  EXPECT_TRUE(Supla::Storage::Init());
+  EXPECT_FALSE(Supla::Storage::IsStateStorageValid());
+  Supla::Storage::WriteStateStorage();
+  EXPECT_TRUE(Supla::Storage::IsStateStorageValid());
+
+  memcpy(storage.storageSimulatorData + 4096,
+         storage.storageSimulatorData,
+         sizeof(Supla::Preamble));
+  auto oldSectorConfig = storage.getStateWlSectorConfig();
+  ASSERT_NE(oldSectorConfig, nullptr);
+  const uint16_t oldStateSlotSize = oldSectorConfig->stateSlotSize;
+
+  storage.deleteAll();
+  EXPECT_TRUE(Supla::Storage::Init());
+  EXPECT_EQ(storage.getStateWlSectorConfig()->stateSlotSize, 0xFFFF);
+
+  ElementWithStorage secondElement;
+  secondElement.stateValue = 654321;
+
+  EXPECT_FALSE(Supla::Storage::IsStateStorageValid());
+  Supla::Storage::WriteStateStorage();
+  EXPECT_TRUE(Supla::Storage::IsStateStorageValid());
+
+  auto migratedSectorConfig = storage.getStateWlSectorConfig();
+  ASSERT_NE(migratedSectorConfig, nullptr);
+  EXPECT_NE(migratedSectorConfig->stateSlotSize, oldStateSlotSize);
+  EXPECT_EQ(migratedSectorConfig->stateSlotSize,
+            2 + 2 * sizeof(firstElement.stateValue));
 }
 
 TEST(StorageStateWlSectorTests,

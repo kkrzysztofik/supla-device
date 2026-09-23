@@ -12,18 +12,6 @@
 #include <linux_yaml_config.h>
 
 namespace Supla {
-
-void LinuxYamlConfig::markChannelParameterUsed() {
-}
-
-bool LinuxYamlConfig::addCommonChannelParameters(const YAML::Node&,
-                                                 Supla::Element*) {
-  return false;
-}
-
-}  // namespace Supla
-
-namespace Supla {
 namespace Linux {
 void initIngeconExtension();
 void initSmaExtension();

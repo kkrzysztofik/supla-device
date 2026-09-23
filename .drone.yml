@@ -18,6 +18,28 @@ kind: pipeline
 name: default
 
 steps:
+- name: html_generator_assets
+  image: devel/freertos
+  pull: never
+  commands:
+  - python3 extras/tools/generate_html_generator_styles.py --check
+
+- name: arduino_source_basename_check
+  image: devel/freertos
+  pull: never
+  commands:
+  - |
+    set -eu
+    duplicate_names="$(find src -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \) -printf '%f\n' | sort | uniq -d)"
+    if [ -n "${duplicate_names}" ]; then
+      echo "Duplicate Arduino library source basenames found under src:"
+      printf '%s\n' "${duplicate_names}" | while IFS= read -r name; do
+        [ -n "${name}" ] || continue
+        find src -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \) -name "${name}" -print
+      done
+      exit 1
+    fi
+
 - name: tests_compilation
   image: devel/freertos
   pull: never
@@ -26,14 +48,25 @@ steps:
   - cd extras/test/build
   - cmake ..
   - make -j32
+  - cd ../../..
+  - python3 extras/tools/check_class_sizes.py --platform host
+
+- name: mqtt_documentation
+  image: devel/freertos
+  pull: never
+  depends_on:
+  - tests_compilation
+  commands:
+  - extras/tools/mqtt-docgen/generate.sh
+  - git diff --exit-code -- extras/docs/mqtt/observed.json docs/mqtt/topics.md docs/mqtt/topics.pl.md docs/mqtt/home-assistant-discovery.md docs/mqtt/home-assistant-discovery.pl.md
 
 - name: tests
   image: devel/freertos
   pull: never
   commands:
   - cd extras/test/build
-  - ./supladevicetests --gtest_repeat=50 --gtest_shuffle
-  - ./sd4linuxtests --gtest_repeat=50 --gtest_shuffle
+  - ./supladevicetests --gtest_repeat=50 --gtest_shuffle --gtest_brief
+  - ./sd4linuxtests --gtest_repeat=50 --gtest_shuffle --gtest_brief
   depends_on:
   - tests_compilation
 
@@ -43,23 +76,10 @@ steps:
   commands:
   - cd extras/test/build
   - ulimit -n 8192
-  - valgrind --error-exitcode=1 --leak-check=full ./supladevicetests
-  - valgrind --error-exitcode=1 --leak-check=full ./sd4linuxtests
+  - valgrind --error-exitcode=1 --leak-check=full ./supladevicetests --gtest_brief
+  - valgrind --error-exitcode=1 --leak-check=full ./sd4linuxtests --gtest_brief
   depends_on:
   - tests_compilation
-
-    # - name: esp8266_rtos_compilation_check
-    #   image: devel/esp8266_rtos_sdk
-    #   pull: never
-    #   commands:
-    #   - pwd
-    #   - echo $SUPLA_DEVICE_PATH
-    #   - ls -al
-    #   - export SUPLA_DEVICE_PATH=/drone/src
-    #   - cd extras/examples/esp8266_rtos/
-    #   - rm -f build/supla-esp8266-mk.bin
-    #   - /bin/bash -c "source /supla/esp/ESP8266_RTOS_SDK/export.sh && make -j32"
-    #   - /bin/bash -c "[ -f build/supla-esp8266-mk.bin ] && true || false"
 
 - name: esp_idf_setup
   image: devel/esp-idf
@@ -109,7 +129,7 @@ steps:
   - cmake --build build
   - /bin/bash -c "[ -f build/supla-freertos-example ] && true || false"
 
-- name: linux_compilation_check
+- name: sd4linux_compilation_check
 # Linux compilation requires generic linux toolset for compilation and building
 # which is also part of our freertos docker, so we just reuse it here
   image: devel/freertos
@@ -162,12 +182,15 @@ steps:
   - ln -s /drone/src ~/Arduino/libraries/supla-device
   - cd examples/esp
   - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./RGBW/
+  - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./RGB_CCT/
   - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./RollerShutter/
   - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./SequenceButton/
   - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./WebInterface/
   - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./AHT/
   - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./ConfigModeInputs/
   - arduino-cli compile --fqbn esp8266:esp8266:generic --optimize-for-debug --export-binaries --warnings all ./ThermostatBasic/
+  - cd ../..
+  - python3 extras/tools/check_class_sizes.py --platform esp8266
 
 - name: arduino_esp32_compilation_check_part_1
   image: devel/arduino-cli
@@ -251,6 +274,9 @@ steps:
   - arduino-cli compile --fqbn esp32:esp32:esp32wrover --board-options PartitionScheme=huge_app --optimize-for-debug --build-path /drone/arduino_cache  --export-binaries --warnings all ./WebInterface/
   - arduino-cli compile --fqbn esp32:esp32:esp32wrover --board-options PartitionScheme=huge_app --optimize-for-debug --build-path /drone/arduino_cache  --export-binaries --warnings all ./AHT/
   - arduino-cli compile --fqbn esp32:esp32:esp32wrover --board-options PartitionScheme=huge_app --optimize-for-debug --build-path /drone/arduino_cache  --export-binaries --warnings all ./ConfigModeInputs/
+  - arduino-cli compile --fqbn esp32:esp32:esp32wrover --board-options PartitionScheme=huge_app --optimize-for-debug --build-path /drone/arduino_cache  --export-binaries --warnings all ./RGB_CCT/
+  - cd ../..
+  - python3 extras/tools/check_class_sizes.py --platform esp32
 
 
 - name: arduino_mega_compilation_check
@@ -277,6 +303,8 @@ steps:
   - arduino-cli compile --fqbn arduino:avr:mega --optimize-for-debug --export-binaries --warnings all ./AHT/
   - arduino-cli compile --fqbn arduino:avr:mega --optimize-for-debug --export-binaries --warnings all ./HX711_Weight_sensor/
   - arduino-cli compile --fqbn arduino:avr:mega --optimize-for-debug --export-binaries --warnings all ./DSwithNotification/
+  - cd ../..
+  - python3 extras/tools/check_class_sizes.py --platform avr
 
 - name: cpplint
   image: devel/supla-core
@@ -302,7 +330,7 @@ steps:
         - pull_request
   depends_on: [tests, esp_idf_compilation_check,
                freertos_linux_compilation_check,
-               linux_compilation_check,
+               sd4linux_compilation_check,
                arduino_esp32_compilation_check_part_1,
                arduino_esp32_compilation_check_part_2,
                arduino_esp32_compilation_check_part_3,
@@ -313,6 +341,7 @@ steps:
                arduino_esp8266_compilation_check_part_2,
                arduino_esp8266_compilation_check_part_3,
                arduino_mega_compilation_check,
+               arduino_source_basename_check,
                cpplint,
                esp_idf_stable_compilation_check,
                tests_with_valgrind

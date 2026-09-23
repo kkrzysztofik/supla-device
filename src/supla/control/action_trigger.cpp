@@ -1,24 +1,12 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "action_trigger.h"
 
+#include <SuplaDevice.h>
+#include <supla/auto_lock.h>
 #include <supla/log_wrapper.h>
+#include <supla/local_action.h>
 #include <supla/storage/storage.h>
 #include <supla/storage/config.h>
 #include <supla/protocol/supla_srpc.h>
@@ -200,6 +188,7 @@ void Supla::Control::ActionTrigger::onRegistered(
   while (channel.popAction()) {
   }
 
+  channel.enableValueUpdates();
   channel.setSendGetConfig();
 }
 
@@ -270,6 +259,12 @@ void Supla::Control::ActionTrigger::parseActiveActionsFromServer() {
                                               Supla::ON_CHANGE);
           attachedButton->disableOtherClients(this,
                                               Supla::CONDITIONAL_ON_CHANGE);
+          if (attachedButton->isBistable()) {
+            attachedButton->disableOtherClients(
+                this, Supla::CONDITIONAL_ON_PRESS);
+            attachedButton->disableOtherClients(
+                this, Supla::CONDITIONAL_ON_RELEASE);
+          }
         } else if (eventId == Supla::ON_HOLD) {
           attachedButton->disableOtherClients(this,
                                               Supla::ON_HOLD_RELEASE);
@@ -287,21 +282,44 @@ void Supla::Control::ActionTrigger::parseActiveActionsFromServer() {
                                              Supla::ON_CHANGE);
           attachedButton->enableOtherClients(this,
                                              Supla::CONDITIONAL_ON_CHANGE);
+          if (attachedButton->isBistable() &&
+              !(activeActionsFromServer &
+                (SUPLA_ACTION_CAP_TURN_ON | SUPLA_ACTION_CAP_TURN_OFF))) {
+            attachedButton->enableOtherClients(
+                this, Supla::CONDITIONAL_ON_PRESS);
+            attachedButton->enableOtherClients(
+                this, Supla::CONDITIONAL_ON_RELEASE);
+          }
         } else if (eventId == Supla::ON_HOLD) {
           attachedButton->enableOtherClients(this,
                                              Supla::ON_HOLD_RELEASE);
         }
         if (makeSureThatOnClick1IsDisabled && eventId == Supla::ON_CLICK_1) {
           makeSureThatOnClick1IsDisabled = false;
-          localHandlerForEnabledAt->disable();
+          if (localHandlerForEnabledAt) {
+            localHandlerForEnabledAt->disable();
+          }
         }
         if (makeSureThatOnChangePressReleaseIsDisabled &&
             eventId == Supla::ON_CLICK_1) {
           makeSureThatOnChangePressReleaseIsDisabled = false;
-          localHandlerForDisabledAt->disable();
+          if (localHandlerForDisabledAt) {
+            localHandlerForDisabledAt->disable();
+          }
         }
       }
     }
+    // Unlike ON_CHANGE, a directional pair cannot be cloned as one action on
+    // ON_CLICK_1: the resolved input state selects press or release. Keep the
+    // original handlers (and their individual AT masks), deferring only their
+    // events. CFG x10 alone must not enable this policy.
+    const bool directionalPair = attachedButton->isBistable() &&
+        attachedButton->isEventAlreadyUsed(Supla::CONDITIONAL_ON_PRESS, true) &&
+        attachedButton->isEventAlreadyUsed(Supla::CONDITIONAL_ON_RELEASE, true);
+    attachedButton->setConditionalActionsOnClick1(
+        directionalPair &&
+        (activeActionsFromServer || alwaysUseOnClick1 ||
+         actionHandlingType == ActionHandlingType_PublishAllDisableNone));
   }
 }
 
@@ -312,12 +330,22 @@ uint8_t Supla::Control::ActionTrigger::handleChannelConfig(
       result->ConfigSize == sizeof(TChannelConfig_ActionTrigger)) {
     TChannelConfig_ActionTrigger *config =
       reinterpret_cast<TChannelConfig_ActionTrigger *>(result->Config);
+    Supla::AutoLock lock(SuplaDevice.getTimerAccessMutex());
+    if (channelConfigReceived &&
+        lastReceivedActiveActions == config->ActiveActions) {
+      // Preserve an in-flight click/release when the server repeats its
+      // configuration, e.g. after reconnecting. Local callers can still force
+      // a rebuild when button bindings or the channel function change.
+      return SUPLA_RESULTCODE_TRUE;
+    }
+    lastReceivedActiveActions = config->ActiveActions;
+    channelConfigReceived = true;
     activeActionsFromServer = config->ActiveActions;
     SUPLA_LOG_DEBUG(
         "AT[%d] received config with active actions: 0x%X",
         channel.getChannelNumber(),
         activeActionsFromServer);
-    parseActiveActionsFromServer();
+    rebuildForAttachedButton();
     if (storageEnabled) {
       // Schedule save in 2 s after state change
       Supla::Storage::ScheduleSave(2000);
@@ -347,6 +375,30 @@ void Supla::Control::ActionTrigger::setRelatedChannel(Channel &relatedChannel) {
 }
 
 void Supla::Control::ActionTrigger::onInit() {
+  rebuildForAttachedButton();
+}
+
+void Supla::Control::ActionTrigger::rebuildForAttachedButton() {
+  if (!attachedButton) {
+    parseActiveActionsFromServer();
+    return;
+  }
+
+  if (attachedButton && localHandlerSwitchConfigured && localHandlerClient) {
+    Supla::LocalAction::DeleteAction(attachedButton,
+                                     localHandlerClient,
+                                     Supla::ON_CLICK_1,
+                                     localHandlerAction);
+  }
+  Supla::LocalAction::DeleteActionsHandledBy(this);
+  localHandlerForEnabledAt = nullptr;
+  localHandlerForDisabledAt = nullptr;
+  localHandlerClient = nullptr;
+  localHandlerAction = 0;
+  localHandlerSwitchConfigured = false;
+  disablesLocalOperation = 0;
+  channel.setActionTriggerCaps(0);
+
   // handle automatic switch from on_press, on_release, on_change
   // events to on_click_1 for local actions on relays, roller shutters, etc.
   if (attachedButton) {
@@ -398,12 +450,20 @@ void Supla::Control::ActionTrigger::onInit() {
     }
 
     if (localHandlerForDisabledAt) {
+      localHandlerClient = localHandlerForDisabledAt->client;
+      localHandlerAction = localHandlerForDisabledAt->action;
       attachedButton->addAction(localHandlerForDisabledAt->action,
                                 localHandlerForDisabledAt->client,
                                 Supla::ON_CLICK_1);
       localHandlerForEnabledAt = attachedButton->getHandlerForClient(
           localHandlerForDisabledAt->client, Supla::ON_CLICK_1);
-      localHandlerForEnabledAt->disable();
+      if (localHandlerForEnabledAt) {
+        localHandlerForEnabledAt->disable();
+        localHandlerSwitchConfigured = true;
+      } else {
+        localHandlerClient = nullptr;
+        localHandlerAction = 0;
+      }
     }
   }
 
@@ -419,6 +479,15 @@ void Supla::Control::ActionTrigger::onInit() {
           attachedButton->isEventAlreadyUsed(Supla::CONDITIONAL_ON_RELEASE,
                                              true)) {
         disablesLocalOperation |= SUPLA_ACTION_CAP_TURN_OFF;
+      }
+      // Bistable roller shutters use conditional press/release for one
+      // directional local action pair. Preserve the old bistable behavior:
+      // TOGGLE_x1 must disable both local edges as one local operation.
+      if (attachedButton->isEventAlreadyUsed(
+              Supla::CONDITIONAL_ON_PRESS, true) &&
+          attachedButton->isEventAlreadyUsed(
+              Supla::CONDITIONAL_ON_RELEASE, true)) {
+        disablesLocalOperation |= SUPLA_ACTION_CAP_TOGGLE_x1;
       }
       if (attachedButton->isEventAlreadyUsed(Supla::ON_CLICK_1, true) ||
           attachedButton->isEventAlreadyUsed(Supla::ON_CHANGE, true) ||
@@ -568,6 +637,7 @@ void Supla::Control::ActionTrigger::onLoadConfig(SuplaDeviceClass *sdc) {
                              Supla::ConfigTag::BtnActionTriggerCfgTagPrefix);
   cfg->getInt32(key, &value);
 
+  const auto previousHandlingType = actionHandlingType;
   switch (value) {
     case 0:
     default: {
@@ -590,10 +660,14 @@ void Supla::Control::ActionTrigger::onLoadConfig(SuplaDeviceClass *sdc) {
       break;
     }
   }
+  if (previousHandlingType != actionHandlingType) {
+    channelConfigReceived = false;
+  }
 }
 
 void Supla::Control::ActionTrigger::onLoadState() {
   if (storageEnabled) {
+    channelConfigReceived = false;
     Supla::Storage::ReadState((unsigned char *)&activeActionsFromServer,
         sizeof(activeActionsFromServer));
     if (activeActionsFromServer) {
@@ -630,4 +704,3 @@ void Supla::Control::ActionTrigger::enable() {
 void Supla::Control::ActionTrigger::disable() {
   enabled = false;
 }
-

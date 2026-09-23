@@ -1,20 +1,5 @@
-/*
-   Copyright (C) AC SOFTWARE SP. Z O.O
-
-   This program is free software; you can redistribute it and/or
-   modify it under the terms of the GNU General Public License
-   as published by the Free Software Foundation; either version 2
-   of the License, or (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-   */
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "esp_idf_lan8720.h"
 
@@ -30,9 +15,7 @@
 #include <esp_event.h>
 #include <esp_netif.h>
 
-#ifdef SUPLA_DEVICE_ESP32
 #include <esp_mac.h>
-#endif
 
 // Supla includes
 #include <SuplaDevice.h>
@@ -86,6 +69,10 @@ bool Supla::EspIdfLan8720::isStaticIpConfigured() const {
   return staticIpConfigured;
 }
 
+void Supla::EspIdfLan8720::setEthStarted(bool started) {
+  ethStarted = started;
+}
+
 static void eventHandler(void *arg,
                          esp_event_base_t eventBase,
                          int32_t eventId,
@@ -115,10 +102,12 @@ static void eventHandler(void *arg,
   if (eventBase == ETH_EVENT) {
     switch (eventId) {
       case ETHERNET_EVENT_START: {
+        thisNetIntfPtr->setEthStarted(true);
         SUPLA_LOG_INFO("[%s] Ethernet started", thisNetIntfPtr->getIntfName());
         break;
       }
       case ETHERNET_EVENT_STOP: {
+        thisNetIntfPtr->setEthStarted(false);
         SUPLA_LOG_INFO("[%s] Ethernet stopped", thisNetIntfPtr->getIntfName());
         break;
       }
@@ -155,9 +144,9 @@ static void eventHandler(void *arg,
 }
 
 void Supla::EspIdfLan8720::setup() {
-  setIpReady(false);
-  staticIpConfigured = false;
   if (!initDone) {
+    setIpReady(false);
+    staticIpConfigured = false;
     Supla::initEspNetif();
 
     esp_netif_inherent_config_t espNetifConfig =
@@ -236,10 +225,18 @@ void Supla::EspIdfLan8720::setup() {
         SUPLA_LOG_INFO("[%s] static IP configured", getIntfName());
       }
     }
-
-    esp_eth_start(ethHandle);
   }
 
+  if (!ethStarted && ethHandle != NULL) {
+    esp_err_t result = esp_eth_start(ethHandle);
+    if (result == ESP_OK || result == ESP_ERR_INVALID_STATE) {
+      ethStarted = true;
+    } else {
+      SUPLA_LOG_WARNING("[%s] Ethernet start failed (%d)",
+                        getIntfName(),
+                        result);
+    }
+  }
 
   allowDisable = true;
   initDone = true;
@@ -251,10 +248,19 @@ void Supla::EspIdfLan8720::disable() {
   }
 
   allowDisable = false;
-  staticIpConfigured = false;
   SUPLA_LOG_DEBUG("[%s] disabling ETH connection", getIntfName());
   DisconnectProtocols();
-  ESP_ERROR_CHECK(esp_eth_stop(ethHandle));
+  if (ethStarted && ethHandle != NULL) {
+    esp_err_t result = esp_eth_stop(ethHandle);
+    if (result == ESP_OK || result == ESP_ERR_INVALID_STATE) {
+      ethStarted = false;
+      setIpv4Addr(0);
+    } else {
+      SUPLA_LOG_WARNING("[%s] Ethernet stop failed (%d)",
+                        getIntfName(),
+                        result);
+    }
+  }
 }
 
 void Supla::EspIdfLan8720::uninit() {
@@ -267,15 +273,45 @@ void Supla::EspIdfLan8720::uninit() {
     esp_event_handler_unregister(IP_EVENT, IP_EVENT_ETH_LOST_IP, eventHandler);
     esp_event_handler_unregister(ETH_EVENT, ESP_EVENT_ANY_ID, eventHandler);
 
-    esp_netif_destroy(netIf);
-    esp_netif_deinit();
+    if (ethHandle != NULL) {
+      esp_err_t result = esp_eth_stop(ethHandle);
+      if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+        SUPLA_LOG_WARNING("[%s] Ethernet stop failed during uninit (%d)",
+                          getIntfName(),
+                          result);
+      }
+      ethStarted = false;
+    }
+
+    if (ethGlue != NULL) {
+      esp_err_t result = esp_eth_del_netif_glue(ethGlue);
+      if (result != ESP_OK) {
+        SUPLA_LOG_WARNING("[%s] Ethernet glue delete failed (%d)",
+                          getIntfName(),
+                          result);
+      }
+      ethGlue = NULL;
+    }
 
     if (ethHandle != NULL) {
-      esp_eth_stop(ethHandle);
-      esp_eth_del_netif_glue(ethGlue);
-      esp_eth_driver_uninstall(ethHandle);
+      esp_err_t result = esp_eth_driver_uninstall(ethHandle);
+      if (result != ESP_OK) {
+        SUPLA_LOG_WARNING("[%s] Ethernet driver uninstall failed (%d)",
+                          getIntfName(),
+                          result);
+      }
+      ethHandle = NULL;
+    }
+
+    if (netIf != nullptr) {
+      esp_netif_destroy(netIf);
+      netIf = nullptr;
     }
   }
+  ethStarted = false;
+  allowDisable = false;
+  initDone = false;
+  setIpv4Addr(0);
 }
 
 bool Supla::EspIdfLan8720::getMacAddr(uint8_t *out) {

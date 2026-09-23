@@ -1,22 +1,8 @@
-/*
-   Copyright (C) AC SOFTWARE SP. Z O.O
-
-   This program is free software; you can redistribute it and/or
-   modify it under the terms of the GNU General Public License
-   as published by the Free Software Foundation; either version 2
-   of the License, or (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <SuplaDevice.h>
+#include <arduino_mock.h>
 #include <channel_element_mock.h>
 #include <config_mock.h>
 #include <gmock/gmock.h>
@@ -26,6 +12,8 @@
 #include <simple_time.h>
 #include <supla/actions.h>
 #include <supla/control/hvac_base.h>
+#include <supla/control/relay_roller_shutter_pair.h>
+#include <supla/device/register_device.h>
 #include <supla/protocol/mqtt.h>
 #include <supla/protocol/mqtt/hvac_mqtt.h>
 #include <supla/sensor/electricity_meter.h>
@@ -34,12 +22,14 @@
 #include <supla/tools.h>
 
 #include <cstring>
-#include <nlohmann/json.hpp>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <vector>
 #include <utility>
+#include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "../doubles/mqtt_mock.h"
 
@@ -49,6 +39,7 @@ using ::testing::AtLeast;
 using ::testing::DoAll;
 using ::testing::HasSubstr;
 using ::testing::NiceMock;
+using ::testing::Not;
 using ::testing::Return;
 using ::testing::SetArrayArgument;
 using ::testing::StrEq;
@@ -77,7 +68,12 @@ class MqttTestMock : public MqttMock {
   explicit MqttTestMock(SuplaDeviceClass *sdc) : MqttMock(sdc) {
   }
 
+  using Supla::Protocol::Mqtt::processConfigChanges;
+  using Supla::Protocol::Mqtt::publishChannelAvailability;
+  using Supla::Protocol::Mqtt::publishChannelSetup;
+  using Supla::Protocol::Mqtt::publishDeviceStatus;
   using Supla::Protocol::Mqtt::publishHADiscovery;
+  using Supla::Protocol::Mqtt::resetChannelAvailabilityCache;
 
   void test_setChannelsCount(uint16_t count) {
     channelsCount = count;
@@ -115,11 +111,22 @@ std::string expectedDiscoveryTopic(const char *type,
          std::to_string(subId) + "/config";
 }
 
+void expectEmptyDiscovery(MqttTestMock &mqtt, const char *type, int channel) {
+  EXPECT_CALL(
+      mqtt,
+      publishTest(
+          StrEq(expectedDiscoveryTopic(type, channel, 0)), StrEq(""), 0, true));
+}
+
+void expectEmptyState(MqttTestMock &mqtt, int channel, const char *suffix) {
+  EXPECT_CALL(
+      mqtt,
+      publishTest(
+          StrEq(expectedChannelTopic(channel, suffix)), StrEq(""), 0, true));
+}
+
 nlohmann::json baseDiscoveryPayload(int channel) {
-  return nlohmann::json{
-      {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-      {"pl_avail", "true"},
-      {"pl_not_avail", "false"},
+  nlohmann::json payload{
       {"~",
        std::string(kExpectedPrefix) + "/channels/" + std::to_string(channel)},
       {"dev",
@@ -128,6 +135,29 @@ nlohmann::json baseDiscoveryPayload(int channel) {
         {"name", "My Device"},
         {"sw", ""}}},
   };
+  payload["avty"] = nlohmann::json::array(
+      {{{"t", std::string(kExpectedPrefix) + "/state/connected"},
+        {"pl_avail", "true"},
+        {"pl_not_avail", "false"}},
+       {{"t",
+         std::string(kExpectedPrefix) + "/channels/" + std::to_string(channel) +
+             "/state/available"},
+        {"pl_avail", "true"},
+        {"pl_not_avail", "false"}}});
+  payload["avty_mode"] = "all";
+  return payload;
+}
+
+nlohmann::json sleepingDiscoveryPayload(int channel) {
+  auto payload = baseDiscoveryPayload(channel);
+  payload["avty"] = nlohmann::json::array(
+      {{{"t",
+         std::string(kExpectedPrefix) + "/channels/" + std::to_string(channel) +
+             "/state/available"},
+        {"pl_avail", "true"},
+        {"pl_not_avail", "false"}}});
+  payload.erase("avty_mode");
+  return payload;
 }
 
 std::string jsonToString(const nlohmann::json &value);
@@ -166,9 +196,8 @@ std::optional<std::string> jsonFirstDiff(const nlohmann::json &expected,
              std::to_string(actual.size());
     }
     for (size_t i = 0; i < expected.size(); i++) {
-      auto diff = jsonFirstDiff(expected.at(i),
-                                actual.at(i),
-                                path + "[" + std::to_string(i) + "]");
+      auto diff = jsonFirstDiff(
+          expected.at(i), actual.at(i), path + "[" + std::to_string(i) + "]");
       if (diff.has_value()) {
         return diff;
       }
@@ -248,6 +277,492 @@ void configureRollerRelay(Supla::Channel *ch, uint32_t defaultFunction) {
 
 }  // namespace
 
+TEST_F(MqttChannelDispatchTests, publishDeviceStatusCoversDeviceStateTopics) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(std::string(kExpectedPrefix) + "/state/connected"),
+                  StrEq("true"),
+                  0,
+                  true));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(std::string(kExpectedPrefix) + "/state/mac"),
+                          StrEq(""),
+                          0,
+                          false));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(std::string(kExpectedPrefix) + "/state/ip"),
+                          StrEq("0.0.0.0"),
+                          0,
+                          false));
+  EXPECT_CALL(
+      mqtt,
+      publishTest(
+          StrEq(std::string(kExpectedPrefix) + "/state/uptime"), _, 0, false));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(std::string(kExpectedPrefix) +
+                                "/state/connection_uptime"),
+                          _,
+                          0,
+                          false));
+  {
+    MqttDocumentationScenario scenario(
+        mqtt.documentationRecorder(),
+        {"device.state",
+         "Device availability and connection state topics",
+         "device",
+         "",
+         "public",
+         -1,
+         kExpectedPrefix});
+    mqtt.publishDeviceStatus(true);
+  }
+}
+
+TEST_F(MqttChannelDispatchTests, publishDeviceStatusCoversWifiSignalTopics) {
+  ConfigMock config;
+  EXPECT_CALL(config, init());
+
+  NetworkMockWithMac net;
+  net.setWifiState(-67, 73);
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+
+  EXPECT_CALL(config, getMqttPrefix(_))
+      .WillOnce(DoAll(
+          SetArrayArgument<0>(kCfgPrefix, kCfgPrefix + strlen(kCfgPrefix) + 1),
+          Return(true)));
+  EXPECT_CALL(net, getMacAddr(_))
+      .WillRepeatedly(DoAll(SetArrayArgument<0>(kMac, kMac + 6), Return(true)));
+
+  sd.setName("My Device");
+  mqtt.onInit();
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(
+          StrEq(std::string(kExpectedPrefix) + "/state/uptime"), _, 0, false));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(std::string(kExpectedPrefix) +
+                                "/state/connection_uptime"),
+                          _,
+                          0,
+                          false));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(std::string(kExpectedPrefix) + "/state/rssi"),
+                          StrEq("-67"),
+                          0,
+                          false));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(std::string(kExpectedPrefix) +
+                                "/state/wifi_signal_strength"),
+                          StrEq("73"),
+                          0,
+                          false));
+
+  {
+    MqttDocumentationScenario scenario(mqtt.documentationRecorder(),
+                                       {"device.wifi_signal",
+                                        "Wi-Fi signal diagnostic topics",
+                                        "device",
+                                        "",
+                                        "public",
+                                        -1,
+                                        kExpectedPrefix});
+    mqtt.publishDeviceStatus(false);
+  }
+}
+
+TEST_F(MqttChannelDispatchTests, PublishesPerChannelAvailabilityForAllStates) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  ChannelElementMock channel;
+  channel.getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
+  mqtt.test_setChannelsCount(255);
+  const int channelNumber = channel.getChannelNumber();
+
+  MqttDocumentationScenario documentationScenario(
+      mqtt.documentationRecorder(),
+      {"channel.availability",
+       "Per-channel MQTT availability",
+       "channel",
+       "",
+       "public",
+       channelNumber,
+       kExpectedPrefix});
+
+  const auto expectAvailability = [&](const char *payload) {
+    EXPECT_CALL(mqtt,
+                publishTest(StrEq(expectedChannelTopic(channelNumber,
+                                                       "state/available")),
+                            StrEq(payload),
+                            0,
+                            true));
+    mqtt.publishChannelAvailability(channelNumber, true);
+  };
+
+  channel.getChannel()->setStateOnline();
+  expectAvailability("true");
+  channel.getChannel()->setStateOffline();
+  expectAvailability("false");
+  channel.getChannel()->setStateOfflineRemoteWakeupNotSupported();
+  expectAvailability("false");
+  channel.getChannel()->setStateFirmwareUpdateOngoing();
+  expectAvailability("true");
+  channel.getChannel()->setStateOnlineAndNotAvailable();
+  expectAvailability("false");
+}
+
+TEST_F(MqttChannelDispatchTests,
+       AvailabilityCacheSuppressesValueDuplicatesAndResetsOnReconnect) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  ChannelElementMock channel;
+  channel.getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
+  mqtt.test_setChannelsCount(255);
+  const int channelNumber = channel.getChannelNumber();
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(channelNumber, "state/available")),
+                  StrEq("true"),
+                  0,
+                  true));
+  mqtt.publishChannelAvailability(channelNumber);
+  EXPECT_CALL(mqtt, publishTest(_, _, _, _)).Times(0);
+  mqtt.publishChannelAvailability(channelNumber);
+
+  mqtt.resetChannelAvailabilityCache();
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(channelNumber, "state/available")),
+                  StrEq("true"),
+                  0,
+                  true));
+  mqtt.publishChannelAvailability(channelNumber);
+}
+
+TEST_F(MqttChannelDispatchTests,
+       OfflineChannelPublishesAvailabilityWithoutRepublishingState) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  ChannelElementMock channel;
+  channel.getChannel()->setType(SUPLA_CHANNELTYPE_THERMOMETER);
+  channel.getChannel()->setNewValue(21.0);
+  channel.getChannel()->setStateOffline();
+  mqtt.test_setChannelsCount(255);
+  mqtt.setRegisteredAndReady();
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(channel.getChannelNumber(),
+                                                     "state/available")),
+                          StrEq("false"),
+                          0,
+                          true));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(channel.getChannelNumber(),
+                                                     "state/temperature")),
+                          _,
+                          _,
+                          _))
+      .Times(0);
+
+  mqtt.sendChannelValueChanged(channel.getChannelNumber(),
+                               nullptr,
+                               SUPLA_CHANNEL_OFFLINE_FLAG_OFFLINE,
+                               0);
+}
+
+TEST_F(MqttChannelDispatchTests,
+       SleepingDiscoveryUsesChannelAvailabilityAndConfiguredValidity) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  Supla::RegisterDevice::addFlags(SUPLA_DEVICE_FLAG_SLEEP_MODE_ENABLED);
+
+  ChannelElementMock thermometer;
+  thermometer.getChannel()->setType(SUPLA_CHANNELTYPE_THERMOMETER);
+  thermometer.getChannel()->setValidityTimeSec(123);
+  mqtt.test_setChannelsCount(255);
+
+  auto payload = sleepingDiscoveryPayload(thermometer.getChannelNumber());
+  payload["name"] = std::string("#") +
+                    std::to_string(thermometer.getChannelNumber()) +
+                    " Temperature";
+  payload["uniq_id"] = std::string("supla_") + kExpectedObjectPrefix + "_" +
+                       std::to_string(thermometer.getChannelNumber()) + "_0";
+  payload["dev_cla"] = "temperature";
+  payload["unit_of_meas"] = "°C";
+  payload["stat_cla"] = "measurement";
+  payload["expire_after"] = 123;
+  payload["qos"] = 0;
+  payload["ret"] = false;
+  payload["opt"] = false;
+  payload["stat_t"] = "~/state/temperature";
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedDiscoveryTopic(
+                              "sensor", thermometer.getChannelNumber(), 0)),
+                          JsonEq(jsonToString(payload)),
+                          0,
+                          true));
+  mqtt.publishHADiscovery(thermometer.getChannelNumber());
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(thermometer.getChannelNumber(),
+                                             "state/temperature")),
+                  StrEq("21.00"),
+                  0,
+                  false));
+  thermometer.getChannel()->setNewValue(21.0);
+  mqtt.publishChannelState(thermometer.getChannelNumber());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       SleepingChannelOnAwakeDeviceUsesBothAvailabilitySources) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  Supla::RegisterDevice::removeFlags(SUPLA_DEVICE_FLAG_SLEEP_MODE_ENABLED);
+
+  ChannelElementMock thermometer;
+  thermometer.getChannel()->setType(SUPLA_CHANNELTYPE_THERMOMETER);
+  thermometer.getChannel()->setValidityTimeSec(123);
+  thermometer.getChannel()->setNewValue(21.0);
+  mqtt.test_setChannelsCount(255);
+
+  auto payload = baseDiscoveryPayload(thermometer.getChannelNumber());
+  payload["name"] = std::string("#") +
+                    std::to_string(thermometer.getChannelNumber()) +
+                    " Temperature";
+  payload["uniq_id"] = std::string("supla_") + kExpectedObjectPrefix + "_" +
+                       std::to_string(thermometer.getChannelNumber()) + "_0";
+  payload["dev_cla"] = "temperature";
+  payload["unit_of_meas"] = "°C";
+  payload["stat_cla"] = "measurement";
+  payload["expire_after"] = 123;
+  payload["qos"] = 0;
+  payload["ret"] = false;
+  payload["opt"] = false;
+  payload["stat_t"] = "~/state/temperature";
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedDiscoveryTopic(
+                              "sensor", thermometer.getChannelNumber(), 0)),
+                          JsonEq(jsonToString(payload)),
+                          0,
+                          true));
+  mqtt.publishHADiscovery(thermometer.getChannelNumber());
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(thermometer.getChannelNumber(),
+                                             "state/temperature")),
+                  StrEq("21.00"),
+                  0,
+                  false));
+  mqtt.publishChannelState(thermometer.getChannelNumber());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       SleepingSetupRepublishesIdenticalStateOnEveryConnection) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  Supla::RegisterDevice::addFlags(SUPLA_DEVICE_FLAG_SLEEP_MODE_ENABLED);
+
+  ChannelElementMock thermometer;
+  thermometer.getChannel()->setType(SUPLA_CHANNELTYPE_THERMOMETER);
+  thermometer.getChannel()->setValidityTimeSec(456);
+  thermometer.getChannel()->setNewValue(18.5);
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(thermometer.getChannelNumber(),
+                                             "state/available")),
+                  StrEq("true"),
+                  0,
+                  true))
+      .Times(2);
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedDiscoveryTopic(
+                              "sensor", thermometer.getChannelNumber(), 0)),
+                          Not(StrEq("")),
+                          0,
+                          true))
+      .Times(2);
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(thermometer.getChannelNumber(),
+                                             "state/temperature")),
+                  StrEq("18.50"),
+                  0,
+                  false))
+      .Times(2);
+
+  mqtt.publishChannelSetup(thermometer.getChannelNumber());
+  mqtt.publishChannelSetup(thermometer.getChannelNumber());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       SleepingHumidityAndBinarySensorUseValidityAndNonRetainedState) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  Supla::RegisterDevice::addFlags(SUPLA_DEVICE_FLAG_SLEEP_MODE_ENABLED);
+
+  ChannelElementMock humidity;
+  humidity.getChannel()->setType(SUPLA_CHANNELTYPE_HUMIDITYANDTEMPSENSOR);
+  humidity.getChannel()->setValidityTimeSec(789);
+
+  ChannelElementMock binary;
+  binary.getChannel()->setType(SUPLA_CHANNELTYPE_BINARYSENSOR);
+  binary.getChannel()->setDefaultFunction(SUPLA_CHANNELFNC_BINARY_SENSOR);
+  binary.getChannel()->setValidityTimeSec(14 * 60 * 60);
+  binary.getChannel()->setNewValue(true);
+  mqtt.test_setChannelsCount(255);
+
+  const auto expectExpiringDiscovery = [&](const char *type,
+                                           int channelNumber,
+                                           int subId,
+                                           uint32_t validityTimeSec) {
+    EXPECT_CALL(
+        mqtt,
+        publishTest(StrEq(expectedDiscoveryTopic(type, channelNumber, subId)),
+                    AllOf(HasSubstr("\"avty\""),
+                          HasSubstr("\"expire_after\":" +
+                                    std::to_string(validityTimeSec)),
+                          Not(HasSubstr("state/connected"))),
+                    0,
+                    true));
+  };
+  expectExpiringDiscovery("sensor", humidity.getChannelNumber(), 0, 789);
+  expectExpiringDiscovery("sensor", humidity.getChannelNumber(), 1, 789);
+  expectExpiringDiscovery(
+      "binary_sensor", binary.getChannelNumber(), 0, 14 * 60 * 60);
+  mqtt.publishHADiscovery(humidity.getChannelNumber());
+  mqtt.publishHADiscovery(binary.getChannelNumber());
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(humidity.getChannelNumber(),
+                                             "state/temperature")),
+                  _,
+                  0,
+                  false));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              humidity.getChannelNumber(), "state/humidity")),
+                          _,
+                          0,
+                          false));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(binary.getChannelNumber(),
+                                                     "state")),
+                          StrEq("ON"),
+                          0,
+                          false));
+  humidity.getChannel()->setNewValue(19.0, 44.0);
+  mqtt.publishChannelState(humidity.getChannelNumber());
+  mqtt.publishChannelState(binary.getChannelNumber());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       OnlineButUnavailableTransitionRemovesAndRestoresDiscovery) {
+  SuplaDeviceClass sd;
+  NiceMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.getSecondaryChannel()->setDefaultFunction(SUPLA_CHANNELFNC_POWERSWITCH);
+  const int channelNumber = pair.getSecondaryChannelNumber();
+  mqtt.test_setChannelsCount(channelNumber + 1);
+  mqtt.setRegisteredAndReady();
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(channelNumber, "state/available")),
+                  StrEq("true"),
+                  0,
+                  true));
+  mqtt.publishChannelAvailability(channelNumber, true);
+
+  pair.getSecondaryChannel()->setStateOnlineAndNotAvailable();
+  EXPECT_CALL(
+      mqtt,
+      publishTest(
+          Not(StrEq(expectedChannelTopic(channelNumber, "state/available"))),
+          _,
+          _,
+          _))
+      .Times(testing::AnyNumber());
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(channelNumber, "state/available")),
+                  StrEq("false"),
+                  0,
+                  true));
+  EXPECT_CALL(
+      mqtt,
+      unsubscribeTest(StrEq(expectedChannelTopic(channelNumber, "set/on"))));
+  EXPECT_CALL(mqtt,
+              unsubscribeTest(StrEq(expectedChannelTopic(
+                  channelNumber, "set/closing_percentage"))));
+  EXPECT_CALL(
+      mqtt,
+      unsubscribeTest(StrEq(expectedChannelTopic(channelNumber, "set/tilt"))));
+  EXPECT_CALL(mqtt,
+              unsubscribeTest(StrEq(
+                  expectedChannelTopic(channelNumber, "execute_action"))));
+  mqtt.sendChannelValueChanged(
+      channelNumber,
+      nullptr,
+      SUPLA_CHANNEL_OFFLINE_FLAG_ONLINE_BUT_NOT_AVAILABLE,
+      0);
+  testing::Mock::VerifyAndClearExpectations(&mqtt);
+
+  pair.getSecondaryChannel()->setStateOnline();
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(channelNumber, "state/available")),
+                  StrEq("true"),
+                  0,
+                  true));
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedDiscoveryTopic("switch", channelNumber, 0)),
+                  Not(StrEq("")),
+                  0,
+                  true));
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(channelNumber, "state/on")),
+                  StrEq("false"),
+                  0,
+                  true));
+  EXPECT_CALL(
+      mqtt,
+      subscribeTest(StrEq(expectedChannelTopic(channelNumber, "set/on")), _));
+  EXPECT_CALL(
+      mqtt,
+      subscribeTest(
+          StrEq(expectedChannelTopic(channelNumber, "execute_action")), _));
+  mqtt.sendChannelValueChanged(
+      channelNumber, nullptr, SUPLA_CHANNEL_OFFLINE_FLAG_ONLINE, 0);
+}
+
 TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
   SuplaDeviceClass sd;
   StrictMock<MqttTestMock> mqtt(&sd);
@@ -257,9 +772,14 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
   configureRelay(relay.getChannel(), SUPLA_CHANNELFNC_POWERSWITCH);
   relay.getChannel()->setNewValue(true);
 
+  ChannelElementMock lightRelay;
+  configureRelay(lightRelay.getChannel(), SUPLA_CHANNELFNC_LIGHTSWITCH);
+  lightRelay.getChannel()->setNewValue(false);
+
   ChannelElementMock roller;
   configureRollerRelay(roller.getChannel(),
                        SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER);
+
   TDSC_RollerShutterValue rollerValue = {};
   rollerValue.position = 33;
   roller.getChannel()->setNewValue(rollerValue);
@@ -293,7 +813,35 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
                           StrEq("true"),
                           0,
                           true));
-  mqtt.publishChannelState(relay.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "relay.power_switch.state",
+                      "State topics for a power switch relay",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_POWERSWITCH,
+                      relay.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(relay.getChannelNumber());
+  }
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              lightRelay.getChannelNumber(), "state/on")),
+                          StrEq("false"),
+                          0,
+                          true));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "relay.light_switch.state",
+                      "State topic for a light switch relay",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_LIGHTSWITCH,
+                      lightRelay.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(lightRelay.getChannelNumber());
+  }
 
   EXPECT_CALL(mqtt,
               publishTest(StrEq(expectedChannelTopic(roller.getChannelNumber(),
@@ -307,7 +855,18 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
                           StrEq("33"),
                           0,
                           true));
-  mqtt.publishChannelState(roller.getChannelNumber());
+  expectEmptyState(mqtt, roller.getChannelNumber(), "state/on");
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "roller_shutter.state",
+                      "Roller shutter state topics",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER,
+                      roller.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(roller.getChannelNumber());
+  }
 
   EXPECT_CALL(
       mqtt,
@@ -316,7 +875,17 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
                   _,
                   0,
                   true));
-  mqtt.publishChannelState(thermometer.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "thermometer.state",
+                      "Thermometer state topics",
+                      SUPLA_CHANNELTYPE_THERMOMETER,
+                      SUPLA_CHANNELFNC_NONE,
+                      thermometer.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(thermometer.getChannelNumber());
+  }
 
   EXPECT_CALL(
       mqtt,
@@ -332,7 +901,17 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
                   _,
                   0,
                   true));
-  mqtt.publishChannelState(humidityAndTemp.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "humidity_temperature.state",
+                      "Humidity and temperature state topics",
+                      SUPLA_CHANNELTYPE_HUMIDITYANDTEMPSENSOR,
+                      SUPLA_CHANNELFNC_NONE,
+                      humidityAndTemp.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(humidityAndTemp.getChannelNumber());
+  }
 
   EXPECT_CALL(mqtt,
               publishTest(StrEq(expectedChannelTopic(dimmer.getChannelNumber(),
@@ -346,7 +925,17 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
                           StrEq("true"),
                           0,
                           true));
-  mqtt.publishChannelState(dimmer.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "dimmer.state",
+                      "Dimmer state topics",
+                      SUPLA_CHANNELTYPE_DIMMER,
+                      SUPLA_CHANNELFNC_DIMMER,
+                      dimmer.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(dimmer.getChannelNumber());
+  }
 
   EXPECT_CALL(mqtt,
               publishTest(StrEq(expectedChannelTopic(rgb.getChannelNumber(),
@@ -366,7 +955,17 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
                           StrEq("1,2,3"),
                           0,
                           true));
-  mqtt.publishChannelState(rgb.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "rgb.state",
+                      "RGB controller state topics",
+                      SUPLA_CHANNELTYPE_RGBLEDCONTROLLER,
+                      SUPLA_CHANNELFNC_RGBLIGHTING,
+                      rgb.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(rgb.getChannelNumber());
+  }
 
   EXPECT_CALL(
       mqtt,
@@ -401,7 +1000,17 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversBasicTypes) {
                           StrEq("5,6,7"),
                           0,
                           true));
-  mqtt.publishChannelState(dimmerAndRgb.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "dimmer_rgb.state",
+                      "Dimmer and RGB controller state topics",
+                      SUPLA_CHANNELTYPE_DIMMERANDRGBLED,
+                      SUPLA_CHANNELFNC_DIMMERANDRGBLIGHTING,
+                      dimmerAndRgb.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(dimmerAndRgb.getChannelNumber());
+  }
 }
 
 TEST_F(MqttChannelDispatchTests, publishChannelStateCoversHvacAndBinarySensor) {
@@ -465,7 +1074,17 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversHvacAndBinarySensor) {
                           StrEq("23.00"),
                           0,
                           true));
-  mqtt.publishChannelState(hvac.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "hvac.thermostat_heat_cool.state",
+                      "Basic heat-cool thermostat state topics",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL,
+                      hvac.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(hvac.getChannelNumber());
+  }
 
   EXPECT_CALL(mqtt,
               publishTest(StrEq(expectedChannelTopic(
@@ -473,7 +1092,17 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversHvacAndBinarySensor) {
                           StrEq("closed"),
                           0,
                           true));
-  mqtt.publishChannelState(binarySensorClosed.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "binary_sensor.door.closed_state",
+                      "Closed door sensor state",
+                      SUPLA_CHANNELTYPE_BINARYSENSOR,
+                      SUPLA_CHANNELFNC_OPENINGSENSOR_DOOR,
+                      binarySensorClosed.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(binarySensorClosed.getChannelNumber());
+  }
 
   EXPECT_CALL(mqtt,
               publishTest(StrEq(expectedChannelTopic(
@@ -481,7 +1110,291 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateCoversHvacAndBinarySensor) {
                           StrEq("open"),
                           0,
                           true));
-  mqtt.publishChannelState(binarySensorOpen.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "binary_sensor.door.open_state",
+                      "Open door sensor state",
+                      SUPLA_CHANNELTYPE_BINARYSENSOR,
+                      SUPLA_CHANNELFNC_OPENINGSENSOR_DOOR,
+                      binarySensorOpen.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(binarySensorOpen.getChannelNumber());
+  }
+}
+
+TEST_F(MqttChannelDispatchTests, publishChannelStateCoversRelayVariants) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  ChannelElementMock impulseRelay;
+  configureRelay(impulseRelay.getChannel(),
+                 SUPLA_CHANNELFNC_CONTROLLINGTHEGATE);
+
+  ChannelElementMock facadeBlind;
+  configureRollerRelay(facadeBlind.getChannel(),
+                       SUPLA_CHANNELFNC_CONTROLLINGTHEFACADEBLIND);
+  TDSC_FacadeBlindValue facadeBlindValue = {};
+  facadeBlindValue.position = 40;
+  facadeBlindValue.tilt = 60;
+  facadeBlind.getChannel()->setNewValue(facadeBlindValue);
+
+  ChannelElementMock binarySensor;
+  binarySensor.getChannel()->setType(SUPLA_CHANNELTYPE_BINARYSENSOR);
+  binarySensor.getChannel()->setDefaultFunction(SUPLA_CHANNELFNC_FLOOD_SENSOR);
+  binarySensor.getChannel()->setNewValue(true);
+
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              impulseRelay.getChannelNumber(), "state/on")),
+                          StrEq("closed"),
+                          0,
+                          true));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "relay.impulse_gate.state",
+                      "State topic for an impulse gate relay",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_CONTROLLINGTHEGATE,
+                      impulseRelay.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(impulseRelay.getChannelNumber());
+  }
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              facadeBlind.getChannelNumber(), "state/tilt")),
+                          StrEq("60"),
+                          0,
+                          true));
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(facadeBlind.getChannelNumber(),
+                                             "state/is_calibrating")),
+                  StrEq("false"),
+                  0,
+                  true));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              facadeBlind.getChannelNumber(), "state/shut")),
+                          StrEq("40"),
+                          0,
+                          true));
+  expectEmptyState(mqtt, facadeBlind.getChannelNumber(), "state/on");
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "roller_shutter.facade_blind.state",
+                      "Facade blind state topics including tilt",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_CONTROLLINGTHEFACADEBLIND,
+                      facadeBlind.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(facadeBlind.getChannelNumber());
+  }
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              binarySensor.getChannelNumber(), "state")),
+                          StrEq("ON"),
+                          0,
+                          true));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "binary_sensor.flood.on_state",
+                      "On state for an on-off binary sensor",
+                      SUPLA_CHANNELTYPE_BINARYSENSOR,
+                      SUPLA_CHANNELFNC_FLOOD_SENSOR,
+                      binarySensor.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(binarySensor.getChannelNumber());
+  }
+}
+
+TEST_F(MqttChannelDispatchTests, publishChannelStateCoversHvacStateVariants) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  OutputSimulatorWithCheck output;
+  Supla::Control::HvacBase heat(&output);
+  heat.getChannel()->setDefaultFunction(SUPLA_CHANNELFNC_HVAC_THERMOSTAT);
+  heat.setSubfunction(SUPLA_HVAC_SUBFUNCTION_HEAT);
+  heat.getChannel()->setHvacMode(SUPLA_HVAC_MODE_HEAT);
+  heat.getChannel()->setHvacSetpointTemperatureHeat(1950);
+
+  Supla::Control::HvacBase cool(&output);
+  cool.getChannel()->setDefaultFunction(SUPLA_CHANNELFNC_HVAC_THERMOSTAT);
+  cool.getChannel()->setHvacFlagCoolSubfunction(
+      Supla::HvacCoolSubfunctionFlag::CoolSubfunction);
+  cool.getChannel()->setHvacFlagCooling(true);
+  cool.getChannel()->setHvacMode(SUPLA_HVAC_MODE_COOL);
+  cool.getChannel()->setHvacSetpointTemperatureCool(2300);
+
+  Supla::Control::HvacBase heatCool(&output);
+  heatCool.getChannel()->setDefaultFunction(
+      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL);
+  heatCool.getChannel()->setHvacFlagWeeklySchedule(true);
+  heatCool.getChannel()->setHvacMode(SUPLA_HVAC_MODE_HEAT);
+  heatCool.getChannel()->setHvacSetpointTemperatureHeat(
+      std::numeric_limits<int16_t>::min());
+  heatCool.getChannel()->setHvacSetpointTemperatureCool(
+      std::numeric_limits<int16_t>::min());
+
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(heat.getChannelNumber(),
+                                                     "state/action")),
+                          StrEq("idle"),
+                          0,
+                          true));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(heat.getChannelNumber(),
+                                                     "state/mode")),
+                          StrEq("heat"),
+                          0,
+                          true));
+  expectEmptyState(
+      mqtt, heat.getChannelNumber(), "state/temperature_setpoint_heat");
+  expectEmptyState(
+      mqtt, heat.getChannelNumber(), "state/temperature_setpoint_cool");
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(heat.getChannelNumber(),
+                                             "state/temperature_setpoint")),
+                  StrEq("19.50"),
+                  0,
+                  true));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "hvac.thermostat_heat.state",
+                      "Heat thermostat state topics",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT,
+                      heat.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(heat.getChannelNumber());
+  }
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(cool.getChannelNumber(),
+                                                     "state/action")),
+                          StrEq("cooling"),
+                          0,
+                          true));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(cool.getChannelNumber(),
+                                                     "state/mode")),
+                          StrEq("cool"),
+                          0,
+                          true));
+  expectEmptyState(
+      mqtt, cool.getChannelNumber(), "state/temperature_setpoint_heat");
+  expectEmptyState(
+      mqtt, cool.getChannelNumber(), "state/temperature_setpoint_cool");
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(cool.getChannelNumber(),
+                                             "state/temperature_setpoint")),
+                  StrEq("23.00"),
+                  0,
+                  true));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "hvac.thermostat_cool.state",
+                      "Cool thermostat state topics",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT,
+                      cool.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(cool.getChannelNumber());
+  }
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              heatCool.getChannelNumber(), "state/action")),
+                          StrEq("idle"),
+                          0,
+                          true));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(
+                              heatCool.getChannelNumber(), "state/mode")),
+                          StrEq("auto"),
+                          0,
+                          true));
+  expectEmptyState(
+      mqtt, heatCool.getChannelNumber(), "state/temperature_setpoint");
+  expectEmptyState(
+      mqtt, heatCool.getChannelNumber(), "state/temperature_setpoint_heat");
+  expectEmptyState(
+      mqtt, heatCool.getChannelNumber(), "state/temperature_setpoint_cool");
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "hvac.thermostat_heat_cool.auto_without_setpoints",
+                      "Scheduled heat-cool thermostat without setpoints",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL,
+                      heatCool.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(heatCool.getChannelNumber());
+  }
+}
+
+TEST_F(MqttChannelDispatchTests, publishChannelStateCoversHvacOffState) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  ChannelElementMock hvac;
+  hvac.getChannel()->setType(SUPLA_CHANNELTYPE_HVAC);
+  hvac.getChannel()->setDefaultFunction(
+      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL);
+  hvac.getChannel()->setHvacMode(SUPLA_HVAC_MODE_OFF);
+  hvac.getChannel()->setHvacSetpointTemperatureHeat(
+      std::numeric_limits<int16_t>::min());
+  hvac.getChannel()->setHvacSetpointTemperatureCool(
+      std::numeric_limits<int16_t>::min());
+
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
+                                                     "state/action")),
+                          StrEq("off"),
+                          0,
+                          true));
+  EXPECT_CALL(mqtt,
+              publishTest(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
+                                                     "state/mode")),
+                          StrEq("off"),
+                          0,
+                          true));
+  expectEmptyState(mqtt, hvac.getChannelNumber(), "state/temperature_setpoint");
+  expectEmptyState(
+      mqtt, hvac.getChannelNumber(), "state/temperature_setpoint_heat");
+  expectEmptyState(
+      mqtt, hvac.getChannelNumber(), "state/temperature_setpoint_cool");
+
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "hvac.off.state",
+                      "HVAC off action and mode state",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL,
+                      hvac.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(hvac.getChannelNumber());
+  }
 }
 
 TEST_F(MqttChannelDispatchTests, publishChannelStateActionTriggerIsNoop) {
@@ -499,6 +1412,60 @@ TEST_F(MqttChannelDispatchTests, publishChannelStateActionTriggerIsNoop) {
   mqtt.publishChannelState(actionTrigger.getChannelNumber());
 }
 
+TEST_F(MqttChannelDispatchTests,
+       publishChannelStateCleansRelayRollerShutterPairPrimaryUnusedState) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.setDefaultFunction(SUPLA_CHANNELFNC_LIGHTSWITCH);
+  pair.getChannel()->setNewValue(true);
+  mqtt.test_setChannelsCount(255);
+
+  const int channelNumber = pair.getChannelNumber();
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedChannelTopic(channelNumber, "state/on")),
+                  StrEq("true"),
+                  0,
+                  true));
+  expectEmptyState(mqtt, channelNumber, "state/tilt");
+  expectEmptyState(mqtt, channelNumber, "state/is_calibrating");
+  expectEmptyState(mqtt, channelNumber, "state/shut");
+
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "relay.pair.cleanup_unused_state",
+                      "Relay state with obsolete retained topic cleanup",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_LIGHTSWITCH,
+                      channelNumber,
+                      "mixed",
+                      kExpectedPrefix);
+    mqtt.publishChannelState(channelNumber);
+  }
+}
+
+TEST_F(MqttChannelDispatchTests,
+       publishChannelStateClearsRelayRollerShutterPairUnavailableSecondary) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.getSecondaryChannel()->setStateOnlineAndNotAvailable();
+  mqtt.test_setChannelsCount(255);
+
+  const int channelNumber = pair.getSecondaryChannelNumber();
+  expectEmptyState(mqtt, channelNumber, "state/on");
+  expectEmptyState(mqtt, channelNumber, "state/tilt");
+  expectEmptyState(mqtt, channelNumber, "state/is_calibrating");
+  expectEmptyState(mqtt, channelNumber, "state/shut");
+
+  mqtt.publishChannelState(channelNumber);
+}
+
 TEST_F(MqttChannelDispatchTests, subscribeChannelCoversControllableTypes) {
   SuplaDeviceClass sd;
   StrictMock<MqttTestMock> mqtt(&sd);
@@ -511,6 +1478,10 @@ TEST_F(MqttChannelDispatchTests, subscribeChannelCoversControllableTypes) {
   configureRollerRelay(roller.getChannel(),
                        SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER);
 
+  ChannelElementMock facadeBlind;
+  configureRollerRelay(facadeBlind.getChannel(),
+                       SUPLA_CHANNELFNC_CONTROLLINGTHEFACADEBLIND);
+
   ChannelElementMock dimmer;
   dimmer.getChannel()->setType(SUPLA_CHANNELTYPE_DIMMER);
 
@@ -522,104 +1493,188 @@ TEST_F(MqttChannelDispatchTests, subscribeChannelCoversControllableTypes) {
 
   ChannelElementMock hvac;
   hvac.getChannel()->setType(SUPLA_CHANNELTYPE_HVAC);
+  hvac.getChannel()->setDefaultFunction(
+      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL);
 
   mqtt.test_setChannelsCount(255);
 
   EXPECT_CALL(
       mqtt,
-      subscribeImp(
+      subscribeTest(
           StrEq(expectedChannelTopic(relay.getChannelNumber(), "set/on")), 0));
   EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(relay.getChannelNumber(),
-                                                      "execute_action")),
-                           0));
-  mqtt.subscribeChannel(relay.getChannelNumber());
+              subscribeTest(StrEq(expectedChannelTopic(relay.getChannelNumber(),
+                                                       "execute_action")),
+                            0));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "relay.power_switch.commands",
+                      "Command topics for a power switch relay",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_POWERSWITCH,
+                      relay.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.subscribeChannel(relay.getChannelNumber());
+  }
 
   EXPECT_CALL(
       mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(roller.getChannelNumber(),
-                                              "set/closing_percentage")),
-                   0));
+      subscribeTest(StrEq(expectedChannelTopic(roller.getChannelNumber(),
+                                               "set/closing_percentage")),
+                    0));
   EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(roller.getChannelNumber(),
-                                                      "set/tilt")),
-                           0));
-  EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(roller.getChannelNumber(),
-                                                      "execute_action")),
-                           0));
-  mqtt.subscribeChannel(roller.getChannelNumber());
+              subscribeTest(StrEq(expectedChannelTopic(
+                                roller.getChannelNumber(), "execute_action")),
+                            0));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "roller_shutter.commands",
+                      "Roller shutter command topics",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER,
+                      roller.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.subscribeChannel(roller.getChannelNumber());
+  }
 
-  EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(dimmer.getChannelNumber(),
-                                                      "execute_action")),
-                           0));
-  EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(dimmer.getChannelNumber(),
-                                                      "set/brightness")),
-                           0));
-  mqtt.subscribeChannel(dimmer.getChannelNumber());
-
-  EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(rgb.getChannelNumber(),
-                                                      "execute_action")),
-                           0));
-  EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(rgb.getChannelNumber(),
-                                                      "set/color_brightness")),
-                           0));
   EXPECT_CALL(
       mqtt,
-      subscribeImp(
+      subscribeTest(StrEq(expectedChannelTopic(facadeBlind.getChannelNumber(),
+                                               "set/closing_percentage")),
+                    0));
+  EXPECT_CALL(mqtt,
+              subscribeTest(StrEq(expectedChannelTopic(
+                                facadeBlind.getChannelNumber(), "set/tilt")),
+                            0));
+  EXPECT_CALL(
+      mqtt,
+      subscribeTest(StrEq(expectedChannelTopic(facadeBlind.getChannelNumber(),
+                                               "execute_action")),
+                    0));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "roller_shutter.facade_blind.commands",
+                      "Facade blind command topics",
+                      SUPLA_CHANNELTYPE_RELAY,
+                      SUPLA_CHANNELFNC_CONTROLLINGTHEFACADEBLIND,
+                      facadeBlind.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.subscribeChannel(facadeBlind.getChannelNumber());
+  }
+
+  EXPECT_CALL(mqtt,
+              subscribeTest(StrEq(expectedChannelTopic(
+                                dimmer.getChannelNumber(), "execute_action")),
+                            0));
+  EXPECT_CALL(mqtt,
+              subscribeTest(StrEq(expectedChannelTopic(
+                                dimmer.getChannelNumber(), "set/brightness")),
+                            0));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "dimmer.commands",
+                      "Dimmer command topics",
+                      SUPLA_CHANNELTYPE_DIMMER,
+                      SUPLA_CHANNELFNC_DIMMER,
+                      dimmer.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.subscribeChannel(dimmer.getChannelNumber());
+  }
+
+  EXPECT_CALL(mqtt,
+              subscribeTest(StrEq(expectedChannelTopic(rgb.getChannelNumber(),
+                                                       "execute_action")),
+                            0));
+  EXPECT_CALL(mqtt,
+              subscribeTest(StrEq(expectedChannelTopic(rgb.getChannelNumber(),
+                                                       "set/color_brightness")),
+                            0));
+  EXPECT_CALL(
+      mqtt,
+      subscribeTest(
           StrEq(expectedChannelTopic(rgb.getChannelNumber(), "set/color")), 0));
-  mqtt.subscribeChannel(rgb.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "rgb.commands",
+                      "RGB controller command topics",
+                      SUPLA_CHANNELTYPE_RGBLEDCONTROLLER,
+                      SUPLA_CHANNELFNC_RGBLIGHTING,
+                      rgb.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.subscribeChannel(rgb.getChannelNumber());
+  }
 
   EXPECT_CALL(
       mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
-                                              "execute_action/rgb")),
-                   0));
+      subscribeTest(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
+                                               "execute_action/rgb")),
+                    0));
   EXPECT_CALL(
       mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
-                                              "execute_action/dimmer")),
-                   0));
+      subscribeTest(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
+                                               "execute_action/dimmer")),
+                    0));
   EXPECT_CALL(
       mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
-                                              "set/brightness")),
-                   0));
+      subscribeTest(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
+                                               "set/brightness")),
+                    0));
   EXPECT_CALL(
       mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
-                                              "set/color_brightness")),
-                   0));
+      subscribeTest(StrEq(expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
+                                               "set/color_brightness")),
+                    0));
   EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(
-                               dimmerAndRgb.getChannelNumber(), "set/color")),
-                           0));
-  mqtt.subscribeChannel(dimmerAndRgb.getChannelNumber());
+              subscribeTest(StrEq(expectedChannelTopic(
+                                dimmerAndRgb.getChannelNumber(), "set/color")),
+                            0));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "dimmer_rgb.commands",
+                      "Dimmer and RGB controller command topics",
+                      SUPLA_CHANNELTYPE_DIMMERANDRGBLED,
+                      SUPLA_CHANNELFNC_DIMMERANDRGBLIGHTING,
+                      dimmerAndRgb.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.subscribeChannel(dimmerAndRgb.getChannelNumber());
+  }
 
   EXPECT_CALL(mqtt,
-              subscribeImp(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
-                                                      "execute_action")),
-                           0));
+              subscribeTest(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
+                                                       "execute_action")),
+                            0));
   EXPECT_CALL(
       mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
-                                              "set/temperature_setpoint")),
-                   0));
-  EXPECT_CALL(
-      mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
-                                              "set/temperature_setpoint_heat")),
-                   0));
-  EXPECT_CALL(
-      mqtt,
-      subscribeImp(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
-                                              "set/temperature_setpoint_cool")),
-                   0));
-  mqtt.subscribeChannel(hvac.getChannelNumber());
+      subscribeTest(StrEq(expectedChannelTopic(hvac.getChannelNumber(),
+                                               "set/temperature_setpoint")),
+                    0));
+  EXPECT_CALL(mqtt,
+              subscribeTest(
+                  StrEq(expectedChannelTopic(hvac.getChannelNumber(),
+                                             "set/temperature_setpoint_heat")),
+                  0));
+  EXPECT_CALL(mqtt,
+              subscribeTest(
+                  StrEq(expectedChannelTopic(hvac.getChannelNumber(),
+                                             "set/temperature_setpoint_cool")),
+                  0));
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "hvac.thermostat_heat_cool.commands",
+                      "Basic heat-cool thermostat command topics",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL,
+                      hvac.getChannelNumber(),
+                      "public",
+                      kExpectedPrefix);
+    mqtt.subscribeChannel(hvac.getChannelNumber());
+  }
 }
 
 TEST_F(MqttChannelDispatchTests, subscribeChannelSkipsReadOnlyTypes) {
@@ -645,12 +1700,50 @@ TEST_F(MqttChannelDispatchTests, subscribeChannelSkipsReadOnlyTypes) {
 
   mqtt.test_setChannelsCount(255);
 
-  EXPECT_CALL(mqtt, subscribeImp(_, _)).Times(0);
+  EXPECT_CALL(mqtt, subscribeTest(_, _)).Times(0);
   mqtt.subscribeChannel(thermometer.getChannelNumber());
   mqtt.subscribeChannel(humidityAndTemp.getChannelNumber());
   mqtt.subscribeChannel(electricityMeter.getChannelNumber());
   mqtt.subscribeChannel(actionTrigger.getChannelNumber());
   mqtt.subscribeChannel(binarySensor.getChannelNumber());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       subscribeChannelUsesRelayRollerShutterPairPrimaryCurrentFunction) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.setDefaultFunction(SUPLA_CHANNELFNC_LIGHTSWITCH);
+  mqtt.test_setChannelsCount(255);
+
+  ASSERT_TRUE(pair.getChannel()->isRollerShutterRelayType());
+  EXPECT_CALL(
+      mqtt,
+      subscribeTest(
+          StrEq(expectedChannelTopic(pair.getChannelNumber(), "set/on")), 0));
+  EXPECT_CALL(mqtt,
+              subscribeTest(StrEq(expectedChannelTopic(pair.getChannelNumber(),
+                                                       "execute_action")),
+                            0));
+
+  mqtt.subscribeChannel(pair.getChannelNumber());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       subscribeChannelSkipsRelayRollerShutterPairUnavailableSecondary) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.getSecondaryChannel()->setStateOnlineAndNotAvailable();
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_CALL(mqtt, subscribeTest(_, _)).Times(0);
+
+  mqtt.subscribeChannel(pair.getSecondaryChannelNumber());
 }
 
 TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
@@ -693,18 +1786,7 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
   mqtt.test_setChannelsCount(255);
 
   auto baseDiscovery = [&](int channel) {
-    return nlohmann::json{
-        {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-        {"pl_avail", "true"},
-        {"pl_not_avail", "false"},
-        {"~",
-         std::string(kExpectedPrefix) + "/channels/" + std::to_string(channel)},
-        {"dev",
-         {{"ids", "my-device-0405ab"},
-          {"mf", "Unknown"},
-          {"name", "My Device"},
-          {"sw", ""}}},
-    };
+    return baseDiscoveryPayload(channel);
   };
 
   auto relayPayload = baseDiscovery(relay.getChannelNumber());
@@ -757,6 +1839,8 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
                           JsonEq(jsonToString(rollerPayload)),
                           0,
                           true));
+  expectEmptyDiscovery(mqtt, "light", roller.getChannelNumber());
+  expectEmptyDiscovery(mqtt, "switch", roller.getChannelNumber());
   mqtt.publishHADiscovery(roller.getChannelNumber());
 
   auto thermometerPayload = baseDiscovery(thermometer.getChannelNumber());
@@ -769,7 +1853,6 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
   thermometerPayload["dev_cla"] = "temperature";
   thermometerPayload["unit_of_meas"] = "°C";
   thermometerPayload["stat_cla"] = "measurement";
-  thermometerPayload["expire_after"] = 30;
   thermometerPayload["qos"] = 0;
   thermometerPayload["ret"] = false;
   thermometerPayload["opt"] = false;
@@ -780,7 +1863,17 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
                           JsonEq(jsonToString(thermometerPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(thermometer.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "home_assistant.thermometer",
+                      "Home Assistant discovery for a temperature sensor",
+                      SUPLA_CHANNELTYPE_THERMOMETER,
+                      0,
+                      thermometer.getChannelNumber(),
+                      "home_assistant",
+                      kExpectedPrefix);
+    mqtt.publishHADiscovery(thermometer.getChannelNumber());
+  }
 
   auto humidityPayload = baseDiscovery(humidityAndTemp.getChannelNumber());
   humidityPayload["name"] = std::string("#") +
@@ -792,7 +1885,6 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
   humidityPayload["uniq_id"] =
       std::string("supla_") + kExpectedObjectPrefix + "_" +
       std::to_string(humidityAndTemp.getChannelNumber()) + "_0";
-  humidityPayload["expire_after"] = 30;
   humidityPayload["qos"] = 0;
   humidityPayload["ret"] = false;
   humidityPayload["opt"] = false;
@@ -808,7 +1900,6 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
   humidityTemperaturePayload["dev_cla"] = "temperature";
   humidityTemperaturePayload["unit_of_meas"] = "°C";
   humidityTemperaturePayload["stat_cla"] = "measurement";
-  humidityTemperaturePayload["expire_after"] = 30;
   humidityTemperaturePayload["qos"] = 0;
   humidityTemperaturePayload["ret"] = false;
   humidityTemperaturePayload["opt"] = false;
@@ -825,7 +1916,18 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
                           JsonEq(jsonToString(humidityPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(humidityAndTemp.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(
+        mqtt.documentationRecorder(),
+        "home_assistant.therm_hygro",
+        "Home Assistant discovery for temperature and humidity entities",
+        SUPLA_CHANNELTYPE_HUMIDITYANDTEMPSENSOR,
+        0,
+        humidityAndTemp.getChannelNumber(),
+        "home_assistant",
+        kExpectedPrefix);
+    mqtt.publishHADiscovery(humidityAndTemp.getChannelNumber());
+  }
 
   auto dimmerPayload = baseDiscovery(dimmer.getChannelNumber());
   dimmerPayload["name"] = "Dimmer";
@@ -851,7 +1953,17 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
                           JsonEq(jsonToString(dimmerPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(dimmer.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "home_assistant.dimmer",
+                      "Home Assistant discovery for a dimmer",
+                      SUPLA_CHANNELTYPE_DIMMER,
+                      SUPLA_CHANNELFNC_DIMMER,
+                      dimmer.getChannelNumber(),
+                      "home_assistant",
+                      kExpectedPrefix);
+    mqtt.publishHADiscovery(dimmer.getChannelNumber());
+  }
 
   auto rgbPayload = baseDiscovery(rgb.getChannelNumber());
   rgbPayload["name"] = "RGB Lighting";
@@ -878,7 +1990,17 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
                           JsonEq(jsonToString(rgbPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(rgb.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "home_assistant.rgb",
+                      "Home Assistant discovery for an RGB controller",
+                      SUPLA_CHANNELTYPE_RGBLEDCONTROLLER,
+                      SUPLA_CHANNELFNC_RGBLIGHTING,
+                      rgb.getChannelNumber(),
+                      "home_assistant",
+                      kExpectedPrefix);
+    mqtt.publishHADiscovery(rgb.getChannelNumber());
+  }
 
   auto dimmerAndRgbDimmerPayload =
       baseDiscovery(dimmerAndRgb.getChannelNumber());
@@ -931,7 +2053,18 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversChannelTypes) {
                           JsonEq(jsonToString(dimmerAndRgbRgbPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(dimmerAndRgb.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(
+        mqtt.documentationRecorder(),
+        "home_assistant.dimmer_rgb",
+        "Home Assistant discovery for combined dimmer and RGB entities",
+        SUPLA_CHANNELTYPE_DIMMERANDRGBLED,
+        SUPLA_CHANNELFNC_DIMMERANDRGBLIGHTING,
+        dimmerAndRgb.getChannelNumber(),
+        "home_assistant",
+        kExpectedPrefix);
+    mqtt.publishHADiscovery(dimmerAndRgb.getChannelNumber());
+  }
 
   auto binarySensorPayload = baseDiscovery(binarySensor.getChannelNumber());
   binarySensorPayload["name"] =
@@ -1006,7 +2139,7 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversRelayImpulseVariants) {
 
   const std::vector<Case> cases = {
       {SUPLA_CHANNELFNC_CONTROLLINGTHEGATE, "gate"},
-      {SUPLA_CHANNELFNC_CONTROLLINGTHEGARAGEDOOR, "garage_door"},
+      {SUPLA_CHANNELFNC_CONTROLLINGTHEGARAGEDOOR, "garage"},
       {SUPLA_CHANNELFNC_CONTROLLINGTHEDOORLOCK, "door"},
       {SUPLA_CHANNELFNC_CONTROLLINGTHEGATEWAYLOCK, "door"},
   };
@@ -1015,6 +2148,14 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversRelayImpulseVariants) {
   relay.getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
   mqtt.test_setChannelsCount(255);
 
+  MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                    "home_assistant.relay.impulse_variants",
+                    "Home Assistant discovery for impulse relay variants",
+                    SUPLA_CHANNELTYPE_RELAY,
+                    SUPLA_CHANNELFNC_CONTROLLINGTHEGATE,
+                    relay.getChannelNumber(),
+                    "home_assistant",
+                    kExpectedPrefix);
   for (const auto &item : cases) {
     relay.getChannel()->setDefaultFunction(item.function);
 
@@ -1068,6 +2209,14 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversRelaySwitchVariants) {
   relay.getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
   mqtt.test_setChannelsCount(255);
 
+  MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                    "home_assistant.relay.switch_variants",
+                    "Home Assistant discovery for switch relay variants",
+                    SUPLA_CHANNELTYPE_RELAY,
+                    SUPLA_CHANNELFNC_POWERSWITCH,
+                    relay.getChannelNumber(),
+                    "home_assistant",
+                    kExpectedPrefix);
   for (const auto &item : cases) {
     relay.getChannel()->setDefaultFunction(item.function);
 
@@ -1093,6 +2242,176 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversRelaySwitchVariants) {
                             true));
     mqtt.publishHADiscovery(relay.getChannelNumber());
   }
+}
+
+TEST_F(MqttChannelDispatchTests,
+       publishHADiscoveryUsesRelayRollerShutterPairSecondaryChannel) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.getSecondaryChannel()->setDefaultFunction(SUPLA_CHANNELFNC_POWERSWITCH);
+  mqtt.test_setChannelsCount(255);
+
+  const int channelNumber = pair.getSecondaryChannelNumber();
+  auto payload = baseDiscoveryPayload(channelNumber);
+  payload["name"] = std::string("#") + std::to_string(channelNumber) + " " +
+                    Supla::getRelayChannelName(SUPLA_CHANNELFNC_POWERSWITCH);
+  payload["uniq_id"] = std::string("supla_") + kExpectedObjectPrefix + "_" +
+                       std::to_string(channelNumber) + "_0";
+  payload["qos"] = 0;
+  payload["ret"] = false;
+  payload["opt"] = false;
+  payload["stat_t"] = "~/state/on";
+  payload["cmd_t"] = "~/set/on";
+  payload["pl_on"] = "true";
+  payload["pl_off"] = "false";
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedDiscoveryTopic("switch", channelNumber, 0)),
+                  JsonEq(jsonToString(payload)),
+                  0,
+                  true));
+  mqtt.publishHADiscovery(channelNumber);
+}
+
+TEST_F(MqttChannelDispatchTests,
+       publishHADiscoveryClearsRelayRollerShutterPairUnavailableSecondary) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.getSecondaryChannel()->setStateOnlineAndNotAvailable();
+  mqtt.test_setChannelsCount(255);
+
+  const int channelNumber = pair.getSecondaryChannelNumber();
+  expectEmptyDiscovery(mqtt, "cover", channelNumber);
+  expectEmptyDiscovery(mqtt, "light", channelNumber);
+  expectEmptyDiscovery(mqtt, "switch", channelNumber);
+
+  mqtt.publishHADiscovery(channelNumber);
+}
+
+TEST_F(MqttChannelDispatchTests,
+       relayRollerShutterModeChangeRefreshesBothChannelsDiscovery) {
+  SuplaDeviceClass sd;
+  NiceMock<MqttTestMock> mqtt(&sd);
+  NiceMock<DigitalInterfaceMock> ioMock;
+  SimpleTime time;
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  const int primaryChannel = pair.getChannelNumber();
+  const int secondaryChannel = pair.getSecondaryChannelNumber();
+  mqtt.test_setChannelsCount(secondaryChannel + 1);
+
+  EXPECT_CALL(mqtt, publishTest(_, _, _, _)).Times(testing::AnyNumber());
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedDiscoveryTopic("light", primaryChannel)),
+                  Not(StrEq("")),
+                  0,
+                  true));
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedDiscoveryTopic("light", secondaryChannel)),
+                  Not(StrEq("")),
+                  0,
+                  true));
+
+  mqtt.notifyConfigChange(primaryChannel);
+  mqtt.notifyConfigChange(secondaryChannel);
+  mqtt.processConfigChanges();
+  testing::Mock::VerifyAndClearExpectations(&mqtt);
+
+  TSD_ChannelConfig config = {};
+  config.ChannelNumber = primaryChannel;
+  config.Func = SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER;
+  config.ConfigType = SUPLA_CONFIG_TYPE_DEFAULT;
+
+  EXPECT_CALL(mqtt, publishTest(_, _, _, _)).Times(testing::AnyNumber());
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedDiscoveryTopic("cover", primaryChannel)),
+                  Not(StrEq("")),
+                  0,
+                  true));
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedDiscoveryTopic("light", secondaryChannel)),
+                  StrEq(""),
+                  0,
+                  true));
+  EXPECT_CALL(mqtt,
+              unsubscribeTest(HasSubstr("/channels/" +
+                                        std::to_string(primaryChannel) + "/")))
+      .Times(0);
+  EXPECT_CALL(mqtt,
+              subscribeTest(StrEq(expectedChannelTopic(
+                                primaryChannel, "set/closing_percentage")),
+                            _));
+  EXPECT_CALL(
+      mqtt,
+      subscribeTest(
+          StrEq(expectedChannelTopic(primaryChannel, "execute_action")), _));
+  EXPECT_CALL(
+      mqtt,
+      unsubscribeTest(StrEq(expectedChannelTopic(secondaryChannel, "set/on"))));
+  EXPECT_CALL(mqtt,
+              unsubscribeTest(StrEq(expectedChannelTopic(
+                  secondaryChannel, "set/closing_percentage"))));
+  EXPECT_CALL(mqtt,
+              unsubscribeTest(
+                  StrEq(expectedChannelTopic(secondaryChannel, "set/tilt"))));
+  EXPECT_CALL(mqtt,
+              unsubscribeTest(StrEq(
+                  expectedChannelTopic(secondaryChannel, "execute_action"))));
+  EXPECT_CALL(
+      mqtt,
+      subscribeTest(
+          HasSubstr("/channels/" + std::to_string(secondaryChannel) + "/"), _))
+      .Times(0);
+
+  pair.handleChannelConfig(&config, false);
+  mqtt.processConfigChanges();
+}
+
+TEST_F(MqttChannelDispatchTests,
+       publishHADiscoveryUsesRelayRollerShutterPairPrimaryCurrentFunction) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.setDefaultFunction(SUPLA_CHANNELFNC_LIGHTSWITCH);
+  mqtt.test_setChannelsCount(255);
+
+  const int channelNumber = pair.getChannelNumber();
+  auto payload = baseDiscoveryPayload(channelNumber);
+  payload["name"] = std::string("#") + std::to_string(channelNumber) + " " +
+                    Supla::getRelayChannelName(SUPLA_CHANNELFNC_LIGHTSWITCH);
+  payload["uniq_id"] = std::string("supla_") + kExpectedObjectPrefix + "_" +
+                       std::to_string(channelNumber) + "_0";
+  payload["qos"] = 0;
+  payload["ret"] = false;
+  payload["opt"] = false;
+  payload["stat_t"] = "~/state/on";
+  payload["cmd_t"] = "~/set/on";
+  payload["pl_on"] = "true";
+  payload["pl_off"] = "false";
+
+  EXPECT_CALL(
+      mqtt,
+      publishTest(StrEq(expectedDiscoveryTopic("light", channelNumber, 0)),
+                  JsonEq(jsonToString(payload)),
+                  0,
+                  true));
+  expectEmptyDiscovery(mqtt, "cover", channelNumber);
+  expectEmptyDiscovery(mqtt, "switch", channelNumber);
+  mqtt.publishHADiscovery(channelNumber);
 }
 
 TEST_F(MqttChannelDispatchTests,
@@ -1131,7 +2450,7 @@ TEST_F(MqttChannelDispatchTests,
        false},
       {SUPLA_CHANNELFNC_ROLLER_GARAGE_DOOR,
        SUPLA_BIT_FUNC_ROLLER_GARAGE_DOOR,
-       "garage_door",
+       "garage",
        false},
       {SUPLA_CHANNELFNC_CURTAIN, SUPLA_BIT_FUNC_CURTAIN, "curtain", false},
       {SUPLA_CHANNELFNC_PROJECTOR_SCREEN,
@@ -1144,6 +2463,14 @@ TEST_F(MqttChannelDispatchTests,
   roller.getChannel()->setType(SUPLA_CHANNELTYPE_RELAY);
   mqtt.test_setChannelsCount(255);
 
+  MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                    "home_assistant.roller_shutter.variants",
+                    "Home Assistant discovery for cover function variants",
+                    SUPLA_CHANNELTYPE_RELAY,
+                    SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER,
+                    roller.getChannelNumber(),
+                    "home_assistant",
+                    kExpectedPrefix);
   for (const auto &item : cases) {
     roller.getChannel()->setDefaultFunction(item.function);
     roller.getChannel()->setFuncList(item.func_bit);
@@ -1187,6 +2514,8 @@ TEST_F(MqttChannelDispatchTests,
                             JsonEq(jsonToString(payload)),
                             0,
                             true));
+    expectEmptyDiscovery(mqtt, "light", roller.getChannelNumber());
+    expectEmptyDiscovery(mqtt, "switch", roller.getChannelNumber());
     mqtt.publishHADiscovery(roller.getChannelNumber());
   }
 }
@@ -1240,6 +2569,14 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversBinarySensorVariants) {
   sensor.getChannel()->setType(SUPLA_CHANNELTYPE_BINARYSENSOR);
   mqtt.test_setChannelsCount(255);
 
+  MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                    "home_assistant.binary_sensor.variants",
+                    "Home Assistant discovery for binary sensor variants",
+                    SUPLA_CHANNELTYPE_BINARYSENSOR,
+                    SUPLA_CHANNELFNC_OPENINGSENSOR_DOOR,
+                    sensor.getChannelNumber(),
+                    "home_assistant",
+                    kExpectedPrefix);
   for (const auto &item : cases) {
     sensor.getChannel()->setDefaultFunction(item.function);
 
@@ -1302,6 +2639,14 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversActionTriggerAllCaps) {
       {7, "button_turn_off"},
   };
 
+  MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                    "home_assistant.action_trigger.all_capabilities",
+                    "Home Assistant discovery for action trigger capabilities",
+                    SUPLA_CHANNELTYPE_ACTIONTRIGGER,
+                    SUPLA_CHANNELFNC_ACTIONTRIGGER,
+                    actionTrigger.getChannelNumber(),
+                    "home_assistant",
+                    kExpectedPrefix);
   for (const auto &item : cases) {
     auto payload = nlohmann::json{
         {"dev",
@@ -1350,9 +2695,16 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvac) {
       std::string(kExpectedPrefix) + "/channels/" +
       std::to_string(hvac.getMainThermometerChannelNo()) + "/state/temperature";
   nlohmann::json hvacPayload = {
-      {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-      {"pl_avail", "true"},
-      {"pl_not_avail", "false"},
+      {"avty",
+       {{{"t", std::string(kExpectedPrefix) + "/state/connected"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}},
+        {{"t",
+          std::string(kExpectedPrefix) + "/channels/" +
+              std::to_string(hvac.getChannelNumber()) + "/state/available"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}}}},
+      {"avty_mode", "all"},
       {"~",
        std::string(kExpectedPrefix) + "/channels/" +
            std::to_string(hvac.getChannelNumber())},
@@ -1392,7 +2744,17 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvac) {
                           JsonEq(jsonToString(hvacPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(hvac.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "home_assistant.hvac.thermostat_heat",
+                      "Home Assistant discovery for a heat thermostat",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT,
+                      hvac.getChannelNumber(),
+                      "home_assistant",
+                      kExpectedPrefix);
+    mqtt.publishHADiscovery(hvac.getChannelNumber());
+  }
 }
 
 TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvacCoolSubfunction) {
@@ -1412,9 +2774,16 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvacCoolSubfunction) {
       std::string(kExpectedPrefix) + "/channels/" +
       std::to_string(hvac.getMainThermometerChannelNo()) + "/state/temperature";
   nlohmann::json hvacPayload = {
-      {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-      {"pl_avail", "true"},
-      {"pl_not_avail", "false"},
+      {"avty",
+       {{{"t", std::string(kExpectedPrefix) + "/state/connected"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}},
+        {{"t",
+          std::string(kExpectedPrefix) + "/channels/" +
+              std::to_string(hvac.getChannelNumber()) + "/state/available"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}}}},
+      {"avty_mode", "all"},
       {"~",
        std::string(kExpectedPrefix) + "/channels/" +
            std::to_string(hvac.getChannelNumber())},
@@ -1454,7 +2823,17 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvacCoolSubfunction) {
                           JsonEq(jsonToString(hvacPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(hvac.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "home_assistant.hvac.thermostat_cool",
+                      "Home Assistant discovery for a cool thermostat",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT,
+                      hvac.getChannelNumber(),
+                      "home_assistant",
+                      kExpectedPrefix);
+    mqtt.publishHADiscovery(hvac.getChannelNumber());
+  }
 }
 
 TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvacHeatCoolVariant) {
@@ -1474,9 +2853,16 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvacHeatCoolVariant) {
       std::string(kExpectedPrefix) + "/channels/" +
       std::to_string(hvac.getMainThermometerChannelNo()) + "/state/temperature";
   nlohmann::json hvacPayload = {
-      {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-      {"pl_avail", "true"},
-      {"pl_not_avail", "false"},
+      {"avty",
+       {{{"t", std::string(kExpectedPrefix) + "/state/connected"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}},
+        {{"t",
+          std::string(kExpectedPrefix) + "/channels/" +
+              std::to_string(hvac.getChannelNumber()) + "/state/available"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}}}},
+      {"avty_mode", "all"},
       {"~",
        std::string(kExpectedPrefix) + "/channels/" +
            std::to_string(hvac.getChannelNumber())},
@@ -1519,7 +2905,17 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversHvacHeatCoolVariant) {
                           JsonEq(jsonToString(hvacPayload)),
                           0,
                           true));
-  mqtt.publishHADiscovery(hvac.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "home_assistant.hvac.thermostat_heat_cool",
+                      "Home Assistant discovery for a heat-cool thermostat",
+                      SUPLA_CHANNELTYPE_HVAC,
+                      SUPLA_CHANNELFNC_HVAC_THERMOSTAT_HEAT_COOL,
+                      hvac.getChannelNumber(),
+                      "home_assistant",
+                      kExpectedPrefix);
+    mqtt.publishHADiscovery(hvac.getChannelNumber());
+  }
 }
 
 TEST_F(MqttChannelDispatchTests,
@@ -1540,9 +2936,16 @@ TEST_F(MqttChannelDispatchTests,
       std::string(kExpectedPrefix) + "/channels/" +
       std::to_string(hvac.getMainThermometerChannelNo()) + "/state/temperature";
   nlohmann::json hvacPayload = {
-      {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-      {"pl_avail", "true"},
-      {"pl_not_avail", "false"},
+      {"avty",
+       {{{"t", std::string(kExpectedPrefix) + "/state/connected"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}},
+        {{"t",
+          std::string(kExpectedPrefix) + "/channels/" +
+              std::to_string(hvac.getChannelNumber()) + "/state/available"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}}}},
+      {"avty_mode", "all"},
       {"~",
        std::string(kExpectedPrefix) + "/channels/" +
            std::to_string(hvac.getChannelNumber())},
@@ -1603,9 +3006,16 @@ TEST_F(MqttChannelDispatchTests,
       std::string(kExpectedPrefix) + "/channels/" +
       std::to_string(hvac.getMainThermometerChannelNo()) + "/state/temperature";
   nlohmann::json hvacPayload = {
-      {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-      {"pl_avail", "true"},
-      {"pl_not_avail", "false"},
+      {"avty",
+       {{{"t", std::string(kExpectedPrefix) + "/state/connected"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}},
+        {{"t",
+          std::string(kExpectedPrefix) + "/channels/" +
+              std::to_string(hvac.getChannelNumber()) + "/state/available"},
+         {"pl_avail", "true"},
+         {"pl_not_avail", "false"}}}},
+      {"avty_mode", "all"},
       {"~",
        std::string(kExpectedPrefix) + "/channels/" +
            std::to_string(hvac.getChannelNumber())},
@@ -1704,18 +3114,9 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversElectricityMeter) {
                                const std::string &unitOfMeasure,
                                const std::string &statClass,
                                const std::string &deviceClass) {
-    nlohmann::json payload{
-        {"avty_t", std::string(kExpectedPrefix) + "/state/connected"},
-        {"pl_avail", "true"},
-        {"pl_not_avail", "false"},
-        {"~",
-         std::string(kExpectedPrefix) + "/channels/" +
-             std::to_string(electricityMeter.getChannelNumber())},
-        {"dev",
-         {{"ids", "my-device-0405ab"},
-          {"mf", "Unknown"},
-          {"name", "My Device"},
-          {"sw", ""}}},
+    nlohmann::json payload =
+        baseDiscoveryPayload(electricityMeter.getChannelNumber());
+    payload.update({
         {"name",
          std::string("#") +
              std::to_string(electricityMeter.getChannelNumber()) +
@@ -1728,7 +3129,7 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversElectricityMeter) {
         {"unit_of_meas", unitOfMeasure},
         {"stat_t", "~/state/" + stateTopic},
         {"stat_cla", statClass},
-    };
+    });
     if (!deviceClass.empty()) {
       payload["dev_cla"] = deviceClass;
     }
@@ -1758,14 +3159,14 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversElectricityMeter) {
        "total_increasing",
        "energy"},
       {3,
-       "Total forward active energy balanced",
-       "total_forward_active_energy_balanced",
+       "Total forward balanced active energy",
+       "total_forward_balanced_active_energy",
        "kWh",
        "total_increasing",
        "energy"},
       {4,
-       "Total reverse active energy balanced",
-       "total_reverse_active_energy_balanced",
+       "Total reverse balanced active energy",
+       "total_reverse_balanced_active_energy",
        "kWh",
        "total_increasing",
        "energy"},
@@ -2003,7 +3404,17 @@ TEST_F(MqttChannelDispatchTests, publishHADiscoveryCoversElectricityMeter) {
             0,
             true));
   }
-  mqtt.publishHADiscovery(electricityMeter.getChannelNumber());
+  {
+    MQTT_DOC_SCENARIO(mqtt.documentationRecorder(),
+                      "home_assistant.electricity_meter",
+                      "Home Assistant discovery for an electricity meter",
+                      SUPLA_CHANNELTYPE_ELECTRICITY_METER,
+                      SUPLA_CHANNELFNC_ELECTRICITY_METER,
+                      electricityMeter.getChannelNumber(),
+                      "home_assistant",
+                      kExpectedPrefix);
+    mqtt.publishHADiscovery(electricityMeter.getChannelNumber());
+  }
 }
 
 TEST_F(MqttChannelDispatchTests, processDataCoversControlTypes) {
@@ -2044,12 +3455,35 @@ TEST_F(MqttChannelDispatchTests, processDataCoversControlTypes) {
 
   EXPECT_CALL(roller, handleNewValueFromServer(_))
       .WillOnce([](TSD_SuplaChannelNewValue *value) {
-        EXPECT_EQ(20, value->value[1]);
+        EXPECT_EQ(30, value->value[1]);
         return 0;
       });
   EXPECT_TRUE(mqtt.processData(
       (expectedChannelTopic(roller.getChannelNumber(), "set/tilt")).c_str(),
       "20"));
+
+  EXPECT_CALL(roller, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        EXPECT_EQ(10, value->value[1]);
+        return 0;
+      });
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(roller.getChannelNumber(), "set/tilt")).c_str(),
+      "0"));
+
+  EXPECT_CALL(roller, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        EXPECT_EQ(110, value->value[1]);
+        return 0;
+      });
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(roller.getChannelNumber(), "set/tilt")).c_str(),
+      "100"));
+
+  EXPECT_CALL(roller, handleNewValueFromServer(_)).Times(0);
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(roller.getChannelNumber(), "set/tilt")).c_str(),
+      "malformed"));
 
   EXPECT_CALL(dimmer, handleNewValueFromServer(_))
       .WillOnce([](TSD_SuplaChannelNewValue *value) {
@@ -2073,6 +3507,55 @@ TEST_F(MqttChannelDispatchTests, processDataCoversControlTypes) {
   EXPECT_TRUE(mqtt.processData(
       (expectedChannelTopic(rgb.getChannelNumber(), "set/color")).c_str(),
       "1,2,3"));
+
+  EXPECT_CALL(rgb, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        EXPECT_EQ(44, value->value[1]);
+        EXPECT_EQ(RGBW_COMMAND_SET_COLOR_BRIGHTNESS_WITHOUT_TURN_ON,
+                  value->value[6]);
+        return 0;
+      });
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(rgb.getChannelNumber(), "set/color_brightness"))
+          .c_str(),
+      "44"));
+
+  EXPECT_CALL(dimmerAndRgb, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        EXPECT_EQ(7, value->value[2]);
+        EXPECT_EQ(8, value->value[3]);
+        EXPECT_EQ(9, value->value[4]);
+        EXPECT_EQ(RGBW_COMMAND_SET_RGB_WITHOUT_TURN_ON, value->value[6]);
+        return 0;
+      });
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(dimmerAndRgb.getChannelNumber(), "set/color"))
+          .c_str(),
+      "9,8,7"));
+
+  EXPECT_CALL(dimmerAndRgb, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        EXPECT_EQ(66, value->value[1]);
+        EXPECT_EQ(RGBW_COMMAND_SET_COLOR_BRIGHTNESS_WITHOUT_TURN_ON,
+                  value->value[6]);
+        return 0;
+      });
+  EXPECT_TRUE(
+      mqtt.processData((expectedChannelTopic(dimmerAndRgb.getChannelNumber(),
+                                             "set/color_brightness"))
+                           .c_str(),
+                       "66"));
+
+  EXPECT_CALL(dimmerAndRgb, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        EXPECT_EQ(77, value->value[0]);
+        EXPECT_EQ(RGBW_COMMAND_SET_BRIGHTNESS_WITHOUT_TURN_ON, value->value[6]);
+        return 0;
+      });
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(dimmerAndRgb.getChannelNumber(), "set/brightness"))
+          .c_str(),
+      "77"));
 
   EXPECT_CALL(dimmerAndRgb, handleNewValueFromServer(_))
       .WillOnce([](TSD_SuplaChannelNewValue *value) {
@@ -2098,4 +3581,225 @@ TEST_F(MqttChannelDispatchTests, processDataCoversControlTypes) {
                                              "set/temperature_setpoint"))
                            .c_str(),
                        "19.5"));
+
+  EXPECT_CALL(hvac, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        auto *hvacValue = reinterpret_cast<THVACValue *>(value->value);
+        EXPECT_EQ(1850, hvacValue->SetpointTemperatureHeat);
+        EXPECT_TRUE(hvacValue->Flags &
+                    SUPLA_HVAC_VALUE_FLAG_SETPOINT_TEMP_HEAT_SET);
+        return 0;
+      });
+  EXPECT_TRUE(
+      mqtt.processData((expectedChannelTopic(hvac.getChannelNumber(),
+                                             "set/temperature_setpoint_heat"))
+                           .c_str(),
+                       "18.5"));
+
+  EXPECT_CALL(hvac, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        auto *hvacValue = reinterpret_cast<THVACValue *>(value->value);
+        EXPECT_EQ(2250, hvacValue->SetpointTemperatureCool);
+        EXPECT_TRUE(hvacValue->Flags &
+                    SUPLA_HVAC_VALUE_FLAG_SETPOINT_TEMP_COOL_SET);
+        return 0;
+      });
+  EXPECT_TRUE(
+      mqtt.processData((expectedChannelTopic(hvac.getChannelNumber(),
+                                             "set/temperature_setpoint_cool"))
+                           .c_str(),
+                       "22.5"));
+}
+
+TEST_F(MqttChannelDispatchTests, processDataCoversHvacActionsAndBoundaries) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  ChannelElementMock hvac;
+  hvac.getChannel()->setType(SUPLA_CHANNELTYPE_HVAC);
+  hvac.getChannel()->setDefaultFunction(SUPLA_CHANNELFNC_HVAC_THERMOSTAT);
+  mqtt.test_setChannelsCount(255);
+
+  const std::vector<std::pair<const char *, int>> actions = {
+      {"turn_on", SUPLA_HVAC_MODE_CMD_TURN_ON},
+      {"turn_off", SUPLA_HVAC_MODE_OFF},
+      {"off", SUPLA_HVAC_MODE_OFF},
+      {"toggle", SUPLA_HVAC_MODE_CMD_TURN_ON},
+      {"auto", SUPLA_HVAC_MODE_CMD_WEEKLY_SCHEDULE},
+      {"heat", SUPLA_HVAC_MODE_HEAT},
+      {"cool", SUPLA_HVAC_MODE_COOL},
+      {"heat_cool", SUPLA_HVAC_MODE_HEAT_COOL},
+  };
+  const auto actionTopic =
+      expectedChannelTopic(hvac.getChannelNumber(), "execute_action");
+  for (const auto &[payload, expectedMode] : actions) {
+    EXPECT_CALL(hvac, handleNewValueFromServer(_))
+        .WillOnce([expectedMode](TSD_SuplaChannelNewValue *value) {
+          auto *hvacValue = reinterpret_cast<THVACValue *>(value->value);
+          EXPECT_EQ(expectedMode, hvacValue->Mode);
+          return 0;
+        });
+    EXPECT_TRUE(mqtt.processData(actionTopic.c_str(), payload));
+  }
+
+  EXPECT_CALL(hvac, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        auto *hvacValue = reinterpret_cast<THVACValue *>(value->value);
+        EXPECT_EQ(1950, hvacValue->SetpointTemperatureHeat);
+        EXPECT_TRUE(hvacValue->Flags &
+                    SUPLA_HVAC_VALUE_FLAG_SETPOINT_TEMP_HEAT_SET);
+        return 0;
+      });
+  EXPECT_TRUE(mqtt.processData(
+      expectedChannelTopic(hvac.getChannelNumber(), "set/temperature_setpoint")
+          .c_str(),
+      "19.5"));
+
+  EXPECT_CALL(hvac, handleNewValueFromServer(_)).Times(0);
+  EXPECT_TRUE(mqtt.processData(
+      expectedChannelTopic(hvac.getChannelNumber(), "set/temperature_setpoint")
+          .c_str(),
+      "9999"));
+  EXPECT_TRUE(mqtt.processData(actionTopic.c_str(), "unsupported"));
+}
+
+TEST_F(MqttChannelDispatchTests, processDataHvacToggleTurnsOffActiveHvac) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+
+  ChannelElementMock hvac;
+  hvac.getChannel()->setType(SUPLA_CHANNELTYPE_HVAC);
+  hvac.getChannel()->setDefaultFunction(SUPLA_CHANNELFNC_HVAC_THERMOSTAT);
+  hvac.getChannel()->setHvacMode(SUPLA_HVAC_MODE_HEAT);
+  hvac.getChannel()->setHvacIsOn(true);
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_CALL(hvac, handleNewValueFromServer(_))
+      .WillOnce([](TSD_SuplaChannelNewValue *value) {
+        auto *hvacValue = reinterpret_cast<THVACValue *>(value->value);
+        EXPECT_EQ(SUPLA_HVAC_MODE_OFF, hvacValue->Mode);
+        return 0;
+      });
+
+  const auto actionTopic =
+      expectedChannelTopic(hvac.getChannelNumber(), "execute_action");
+  EXPECT_TRUE(mqtt.processData(actionTopic.c_str(), "toggle"));
+}
+
+TEST_F(MqttChannelDispatchTests, processDataHvacToggleUsesSemanticIsOnState) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  mqtt.test_setChannelsCount(255);
+
+  auto expectToggle = [&](bool proportional,
+                          uint8_t percent,
+                          bool isOn,
+                          uint8_t expectedRaw,
+                          int expectedMode) {
+    ChannelElementMock hvac;
+    hvac.getChannel()->setType(SUPLA_CHANNELTYPE_HVAC);
+    hvac.getChannel()->setDefaultFunction(SUPLA_CHANNELFNC_HVAC_THERMOSTAT);
+    if (proportional) {
+      hvac.getChannel()->setHvacIsOnPercent(percent);
+    } else {
+      hvac.getChannel()->setHvacIsOn(isOn);
+    }
+    EXPECT_EQ(expectedRaw, hvac.getChannel()->getHvacIsOnRaw());
+
+    EXPECT_CALL(hvac, handleNewValueFromServer(_))
+        .WillOnce([expectedMode](TSD_SuplaChannelNewValue *value) {
+          auto *hvacValue = reinterpret_cast<THVACValue *>(value->value);
+          EXPECT_EQ(expectedMode, hvacValue->Mode);
+          return 0;
+        });
+
+    const auto actionTopic =
+        expectedChannelTopic(hvac.getChannelNumber(), "execute_action");
+    EXPECT_TRUE(mqtt.processData(actionTopic.c_str(), "toggle"));
+  };
+
+  expectToggle(false, 0, false, 0, SUPLA_HVAC_MODE_CMD_TURN_ON);
+  expectToggle(false, 0, true, 1, SUPLA_HVAC_MODE_OFF);
+  expectToggle(true, 0, false, 2, SUPLA_HVAC_MODE_CMD_TURN_ON);
+  expectToggle(true, 50, false, 52, SUPLA_HVAC_MODE_OFF);
+}
+
+TEST_F(MqttChannelDispatchTests,
+       processDataRoutesRelayRollerShutterPairSecondaryRelayTopic) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  DigitalInterfaceMock ioMock;
+  const int gpio0 = 1;
+  const int gpio1 = 2;
+  Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1);
+  mqtt.test_setChannelsCount(255);
+
+  ASSERT_EQ(Supla::Element::getElementByChannelNumber(
+                pair.getSecondaryChannelNumber()),
+            &pair);
+  ASSERT_FALSE(pair.getSecondaryChannel()->isRollerShutterRelayType());
+  EXPECT_CALL(ioMock, digitalWrite(gpio0, 0)).Times(2);
+  EXPECT_CALL(ioMock, pinMode(gpio0, OUTPUT));
+  EXPECT_CALL(ioMock, digitalWrite(gpio1, 0)).Times(2);
+  EXPECT_CALL(ioMock, pinMode(gpio1, OUTPUT));
+  pair.onInit();
+
+  EXPECT_CALL(ioMock, digitalWrite(gpio0, 1)).Times(0);
+  EXPECT_CALL(ioMock, digitalWrite(gpio1, 1));
+
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(pair.getSecondaryChannelNumber(), "set/on"))
+          .c_str(),
+      "true"));
+  EXPECT_FALSE(pair.getChannel()->getValueBool());
+  EXPECT_TRUE(pair.getSecondaryChannel()->getValueBool());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       processDataRoutesRelayRollerShutterPairPrimaryRelayFunctionTopic) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  DigitalInterfaceMock ioMock;
+  const int gpio0 = 1;
+  const int gpio1 = 2;
+  Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setDefaultFunction(SUPLA_CHANNELFNC_LIGHTSWITCH);
+  mqtt.test_setChannelsCount(255);
+
+  ASSERT_TRUE(pair.getChannel()->isRollerShutterRelayType());
+  EXPECT_CALL(ioMock, digitalWrite(gpio0, 0)).Times(2);
+  EXPECT_CALL(ioMock, pinMode(gpio0, OUTPUT));
+  EXPECT_CALL(ioMock, digitalWrite(gpio1, 0)).Times(2);
+  EXPECT_CALL(ioMock, pinMode(gpio1, OUTPUT));
+  pair.onInit();
+
+  EXPECT_CALL(ioMock, digitalWrite(gpio0, 1));
+  EXPECT_CALL(ioMock, digitalWrite(gpio1, 1)).Times(0);
+
+  EXPECT_TRUE(mqtt.processData(
+      (expectedChannelTopic(pair.getChannelNumber(), "set/on")).c_str(),
+      "true"));
+  EXPECT_TRUE(pair.getChannel()->getValueBool());
+  EXPECT_FALSE(pair.getSecondaryChannel()->getValueBool());
+}
+
+TEST_F(MqttChannelDispatchTests,
+       processDataRejectsRelayRollerShutterPairUnavailableSecondary) {
+  SuplaDeviceClass sd;
+  StrictMock<MqttTestMock> mqtt(&sd);
+  initMqtt(sd, mqtt);
+  Supla::Control::RelayRollerShutterPair pair(1, 2);
+  pair.getSecondaryChannel()->setStateOnlineAndNotAvailable();
+  mqtt.test_setChannelsCount(255);
+
+  EXPECT_FALSE(mqtt.processData(
+      (expectedChannelTopic(pair.getSecondaryChannelNumber(), "set/on"))
+          .c_str(),
+      "true"));
+  EXPECT_FALSE(pair.getSecondaryChannel()->getValueBool());
 }

@@ -1,0 +1,840 @@
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z. O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <gtest/gtest.h>
+#include <simple_time.h>
+#include <supla-common/proto.h>
+#include <supla/element.h>
+#include <supla/parser/parser.h>
+#include <supla/output/mqtt.h>
+#include <supla/source/mqtt_src.h>
+#include <supla/source/source.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <array>
+#include <fstream>
+#include <filesystem>  // NOLINT(build/c++17)
+#include <string>
+#include <variant>
+#include <vector>
+
+#include "linux_yaml_config.h"
+#include "supla/control/custom_hvac.h"
+#include "supla/control/custom_relay.h"
+#include "supla/control/rgbcct_parsed.h"
+
+extern "C" const char *supla_test_get_last_log();
+extern "C" void supla_test_clear_last_log();
+
+namespace Supla::Linux {
+void initExtensions() {
+}
+}  // namespace Supla::Linux
+
+Supla::Source::Mqtt::Mqtt(const Supla::LinuxYamlConfig&,
+                          const std::vector<std::string>& topics)
+    : topics(topics) {
+}
+
+Supla::Source::Mqtt::~Mqtt() {
+}
+
+std::string Supla::Source::Mqtt::getContent() {
+  return latestMessage;
+}
+
+bool Supla::Source::Mqtt::isConnected() {
+  return false;
+}
+
+Supla::Output::Mqtt::Mqtt(const Supla::LinuxYamlConfig&,
+                          const char* topic,
+                          int qos)
+    : controlTopic(topic), qos(qos) {
+}
+
+Supla::Output::Mqtt::~Mqtt() {
+}
+
+bool Supla::Output::Mqtt::putContent(int) {
+  return false;
+}
+
+bool Supla::Output::Mqtt::putContent(const std::string&) {
+  return false;
+}
+
+bool Supla::Output::Mqtt::putContent(const std::vector<int>&) {
+  return false;
+}
+
+bool Supla::Output::Mqtt::putContent(bool) {
+  return false;
+}
+
+namespace {
+
+class FakeYamlSource : public Supla::Source::Source {
+ public:
+  std::string getContent() override {
+    return {};
+  }
+};
+
+class FakeYamlParser : public Supla::Parser::Parser {
+ public:
+  explicit FakeYamlParser(Supla::Source::Source* source)
+      : Supla::Parser::Parser(source) {
+  }
+
+  std::variant<int, bool, std::string> state = 0;
+  bool stateValid = true;
+
+  double getValue(const std::string&) override {
+    return 0;
+  }
+
+  std::variant<int, bool, std::string> getStateValue(
+      const std::string&) override {
+    valid = stateValid;
+    return state;
+  }
+
+  bool isBasedOnIndex() override {
+    return false;
+  }
+
+ protected:
+  bool refreshSource() override {
+    valid = true;
+    return true;
+  }
+};
+
+class FakePayload : public Supla::Payload::Payload {
+ public:
+  explicit FakePayload(bool basedOnIndex = false)
+      : Supla::Payload::Payload(nullptr), basedOnIndex(basedOnIndex) {
+  }
+
+  bool isBasedOnIndex() override {
+    return basedOnIndex;
+  }
+
+  void turnOn(const std::string&,
+              std::variant<int, bool, std::string>) override {
+  }
+
+  void turnOff(const std::string&,
+               std::variant<int, bool, std::string>) override {
+  }
+
+  void addKey(const std::string& key, int index) override {
+    lastKey = key;
+    lastIndex = index;
+  }
+
+  std::string lastKey;
+  int lastIndex = -1;
+
+ private:
+  bool basedOnIndex;
+};
+
+class TestLinuxYamlConfig : public Supla::LinuxYamlConfig {
+ public:
+  TestLinuxYamlConfig() : Supla::LinuxYamlConfig("") {
+  }
+
+  using Supla::LinuxYamlConfig::addRgbCctParsed;
+  using Supla::LinuxYamlConfig::addCustomHvac;
+  using Supla::LinuxYamlConfig::addCustomChannel;
+  using Supla::LinuxYamlConfig::addCustomRelay;
+  using Supla::LinuxYamlConfig::addCmdRelay;
+  using Supla::LinuxYamlConfig::addCmdValve;
+  using Supla::LinuxYamlConfig::addCmdRollerShutter;
+  using Supla::LinuxYamlConfig::addHvac;
+  using Supla::LinuxYamlConfig::addOutput;
+  using Supla::LinuxYamlConfig::addVirtualRelay;
+  using Supla::LinuxYamlConfig::addSource;
+  using Supla::LinuxYamlConfig::loadTopLevelSources;
+  using Supla::LinuxYamlConfig::parseChannel;
+  using Supla::LinuxYamlConfig::saveGuidAuth;
+  using Supla::LinuxYamlConfig::config;
+};
+
+class UmaskGuard {
+ public:
+  explicit UmaskGuard(mode_t mask) : originalMask(::umask(mask)) {
+  }
+
+  ~UmaskGuard() {
+    ::umask(originalMask);
+  }
+
+ private:
+  mode_t originalMask;
+};
+
+class Sd4linuxYamlCredentialTests : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    const auto directoryTemplate =
+        std::filesystem::temp_directory_path() /
+        ("supla_yaml_credentials_tests_" + std::to_string(getpid()) +
+         "_XXXXXX");
+    std::string writableDirectoryTemplate = directoryTemplate.string();
+    std::vector<char> writableDirectory(writableDirectoryTemplate.begin(),
+                                        writableDirectoryTemplate.end());
+    writableDirectory.push_back('\0');
+
+    ASSERT_NE(mkdtemp(writableDirectory.data()), nullptr);
+    tempDirectory = writableDirectory.data();
+  }
+
+  void TearDown() override {
+    if (tempDirectory.empty()) {
+      return;
+    }
+
+    std::error_code error;
+    std::filesystem::remove_all(tempDirectory, error);
+    EXPECT_FALSE(error) << error.message();
+  }
+
+  static bool saveCredentials(const std::filesystem::path& stateDirectory) {
+    TestLinuxYamlConfig config;
+    std::array<char, SUPLA_GUID_SIZE> guid;
+    std::array<char, SUPLA_AUTHKEY_SIZE> authkey;
+    guid.fill(0x11);
+    authkey.fill(0x22);
+
+    return config.setGUID(guid.data()) && config.setAuthKey(authkey.data()) &&
+           config.saveGuidAuth(stateDirectory.string());
+  }
+
+  std::filesystem::path tempDirectory;
+};
+
+Supla::Control::RgbCctParsed* getCreatedRgb(Supla::Element* previousElement) {
+  auto createdElement = Supla::Element::last();
+  if (createdElement == previousElement) {
+    return nullptr;
+  }
+  return dynamic_cast<Supla::Control::RgbCctParsed*>(createdElement);
+}
+
+void deleteCreatedElement(Supla::Element* previousElement) {
+  auto createdElement = Supla::Element::last();
+  if (createdElement != previousElement) {
+    delete createdElement;
+  }
+}
+
+}  // namespace
+
+TEST_F(Sd4linuxYamlCredentialTests,
+       SavesCredentialsWithOwnerOnlyPermissionsRegardlessOfUmask) {
+  UmaskGuard umaskGuard(0022);
+  const auto stateDirectory = tempDirectory / "state";
+  const auto credentialPath = stateDirectory / "guid_auth.yaml";
+
+  ASSERT_TRUE(saveCredentials(stateDirectory));
+
+  struct stat fileStat = {};
+  ASSERT_EQ(::stat(credentialPath.c_str(), &fileStat), 0);
+  EXPECT_EQ(fileStat.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO), 0600);
+}
+
+TEST_F(Sd4linuxYamlCredentialTests,
+       TightensPermissionsOfExistingCredentialFileWhenRewritten) {
+  const auto stateDirectory = tempDirectory / "state";
+  const auto credentialPath = stateDirectory / "guid_auth.yaml";
+  ASSERT_TRUE(std::filesystem::create_directories(stateDirectory));
+
+  std::ofstream existingCredentials(credentialPath);
+  ASSERT_TRUE(existingCredentials.is_open());
+  existingCredentials << "old credentials";
+  existingCredentials.close();
+  ASSERT_EQ(::chmod(credentialPath.c_str(), 0644), 0);
+
+  ASSERT_TRUE(saveCredentials(stateDirectory));
+
+  struct stat fileStat = {};
+  ASSERT_EQ(::stat(credentialPath.c_str(), &fileStat), 0);
+  EXPECT_EQ(fileStat.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO), 0600);
+}
+
+TEST_F(Sd4linuxYamlCredentialTests,
+       RejectsCredentialPathSymlinkWithoutModifyingItsTarget) {
+  const auto stateDirectory = tempDirectory / "state";
+  const auto credentialPath = stateDirectory / "guid_auth.yaml";
+  const auto targetPath = tempDirectory / "credential-target";
+  ASSERT_TRUE(std::filesystem::create_directories(stateDirectory));
+
+  std::ofstream target(targetPath);
+  ASSERT_TRUE(target.is_open());
+  target << "unchanged";
+  target.close();
+  ASSERT_EQ(::symlink(targetPath.c_str(), credentialPath.c_str()), 0);
+
+  EXPECT_FALSE(saveCredentials(stateDirectory));
+
+  struct stat linkStat = {};
+  ASSERT_EQ(::lstat(credentialPath.c_str(), &linkStat), 0);
+  EXPECT_TRUE(S_ISLNK(linkStat.st_mode));
+
+  std::ifstream targetAfterSave(targetPath);
+  std::string targetContents;
+  std::getline(targetAfterSave, targetContents);
+  EXPECT_EQ(targetContents, "unchanged");
+}
+
+TEST(Sd4linuxYamlConfigTests, AllowsRgbCctWithoutStateAndRejectsMissingParser) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_TRUE(config.addRgbCctParsed(YAML::Load("fade_effect_ms: 100"),
+                                     0,
+                                     nullptr));
+  auto rgb = getCreatedRgb(previousElement);
+  ASSERT_NE(rgb, nullptr);
+  EXPECT_FALSE(rgb->isParameterConfigured("state"));
+  deleteCreatedElement(previousElement);
+
+  previousElement = Supla::Element::last();
+  EXPECT_FALSE(config.addRgbCctParsed(YAML::Load("state: status"),
+                                      0,
+                                      nullptr));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, UsesFixedTlsSuplaServerPort) {
+  TestLinuxYamlConfig config;
+  config.config = YAML::Load("port: 2015\n");
+
+  EXPECT_EQ(config.getSuplaServerPort(), 2016);
+}
+
+TEST(Sd4linuxYamlConfigTests, UsesDefaultAndConfiguredSuplaProtocolVersion) {
+  TestLinuxYamlConfig config;
+
+  config.config = YAML::Load("supla: {}\n");
+  EXPECT_EQ(config.getProtoVersion(), 27);
+
+  config.config = YAML::Load("supla:\n  proto: 29\n");
+  EXPECT_EQ(config.getProtoVersion(), 29);
+
+  config.config = YAML::Load("supla:\n  proto: 22\n");
+  EXPECT_EQ(config.getProtoVersion(), 23);
+
+  config.config = YAML::Load("supla:\n  proto: 30\n");
+  EXPECT_EQ(config.getProtoVersion(), 29);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsQosForMqttSource) {
+  TestLinuxYamlConfig config;
+
+  EXPECT_EQ(config.addSource(YAML::Load(
+                "type: MQTT\n"
+                "state_topic: state\n"
+                "qos: 1\n")),
+            nullptr);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsQosForReusedMqttSource) {
+  TestLinuxYamlConfig config;
+
+  ASSERT_TRUE(config.loadTopLevelSources(YAML::Load(
+      "mqtt_state:\n"
+      "  type: MQTT\n"
+      "  state_topic: state\n")));
+
+  EXPECT_EQ(config.addSource(YAML::Load(
+                "use: mqtt_state\n"
+                "qos: 1\n")),
+            nullptr);
+}
+
+TEST(Sd4linuxYamlConfigTests, AcceptsMqttOutputQosRange) {
+  TestLinuxYamlConfig config;
+
+  for (int qos = 0; qos <= 2; qos++) {
+    EXPECT_NE(config.addOutput(YAML::Load(
+                  "type: MQTT\n"
+                  "control_topic: control\n"
+                  "qos: " +
+                  std::to_string(qos))),
+              nullptr);
+  }
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsMqttOutputQosOutsideRange) {
+  TestLinuxYamlConfig config;
+
+  EXPECT_EQ(config.addOutput(YAML::Load(
+                "type: MQTT\n"
+                "control_topic: control\n"
+                "qos: -1\n")),
+            nullptr);
+  EXPECT_EQ(config.addOutput(YAML::Load(
+                "type: MQTT\n"
+                "control_topic: control\n"
+                "qos: 3\n")),
+            nullptr);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsCustomCaSecurityLevel) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    ("supla_yaml_security_level_" +
+                     std::to_string(getpid()) + ".yaml");
+  {
+    std::ofstream output(path);
+    ASSERT_TRUE(output.is_open());
+    output << "security_level: 1\n";
+  }
+
+  Supla::LinuxYamlConfig config(path.string());
+  EXPECT_FALSE(config.init());
+
+  std::error_code error;
+  EXPECT_TRUE(std::filesystem::remove(path, error));
+  EXPECT_FALSE(error) << error.message();
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsUnsupportedSecurityLevel) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    ("supla_yaml_security_level_unsupported_" +
+                     std::to_string(getpid()) + ".yaml");
+  {
+    std::ofstream output(path);
+    ASSERT_TRUE(output.is_open());
+    output << "security_level: 3\n";
+  }
+
+  Supla::LinuxYamlConfig config(path.string());
+  EXPECT_FALSE(config.init());
+
+  std::error_code error;
+  EXPECT_TRUE(std::filesystem::remove(path, error));
+  EXPECT_FALSE(error) << error.message();
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsUnsupportedLogLevel) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    ("supla_yaml_log_level_unsupported_" +
+                     std::to_string(getpid()) + ".yaml");
+  {
+    std::ofstream output(path);
+    ASSERT_TRUE(output.is_open());
+    output << "log_level: trace\n";
+  }
+
+  Supla::LinuxYamlConfig config(path.string());
+  EXPECT_FALSE(config.init());
+
+  std::error_code error;
+  EXPECT_TRUE(std::filesystem::remove(path, error));
+  EXPECT_FALSE(error) << error.message();
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsUnsupportedInitialStateForRelays) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+  auto invalidState = YAML::Load("initial_state: invalid\n");
+
+  EXPECT_FALSE(config.addVirtualRelay(invalidState, 0));
+  EXPECT_EQ(Supla::Element::last(), previousElement);
+  EXPECT_FALSE(config.addCmdRelay(invalidState, 0, nullptr));
+  EXPECT_EQ(Supla::Element::last(), previousElement);
+
+  FakePayload payload;
+  EXPECT_FALSE(config.addCustomRelay(invalidState, 0, nullptr, &payload));
+  EXPECT_EQ(Supla::Element::last(), previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsUnsupportedHvacDefaultFunction) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+  auto invalidFunction = YAML::Load(
+      "cmd_on: on\n"
+      "cmd_off: off\n"
+      "main_thermometer_channel_no: 1\n"
+      "default_function: unknown\n");
+
+  EXPECT_FALSE(config.addHvac(invalidFunction, 0));
+  deleteCreatedElement(previousElement);
+
+  FakePayload payload;
+  previousElement = Supla::Element::last();
+  auto customInvalidFunction = YAML::Load(
+      "main_thermometer_channel_no: 1\n"
+      "default_function: unknown\n");
+  EXPECT_FALSE(config.addCustomHvac(customInvalidFunction, 0, &payload));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, ParseErrorDoesNotLogYamlSource) {
+  const auto path = std::filesystem::temp_directory_path() /
+                    ("supla_yaml_parse_error_" + std::to_string(getpid()) +
+                     ".yaml");
+  {
+    std::ofstream output(path);
+    ASSERT_TRUE(output.is_open());
+    output << "password: [SUPER_SECRET_TEST_VALUE\n";
+  }
+
+  supla_test_clear_last_log();
+  Supla::LinuxYamlConfig config(path.string());
+  EXPECT_FALSE(config.init());
+
+  std::string log = supla_test_get_last_log();
+  EXPECT_NE(log.find("Config file YAML error"), std::string::npos);
+  EXPECT_NE(log.find("line"), std::string::npos);
+  EXPECT_NE(log.find("column"), std::string::npos);
+  EXPECT_EQ(log.find("SUPER_SECRET_TEST_VALUE"), std::string::npos);
+
+  std::error_code error;
+  EXPECT_TRUE(std::filesystem::remove(path, error));
+  EXPECT_FALSE(error) << error.message();
+}
+
+TEST(Sd4linuxYamlConfigTests, AllowsParserlessRgbCctForcedBatteryPowered) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_TRUE(config.addRgbCctParsed(
+      YAML::Load("force_battery_powered: true"), 0, nullptr));
+  auto rgb = getCreatedRgb(previousElement);
+  ASSERT_NE(rgb, nullptr);
+  EXPECT_TRUE(rgb->getChannel()->isBatteryPowered());
+  EXPECT_FALSE(rgb->isParameterConfigured("force_battery_powered"));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, AllowsParserlessRgbCctWithoutForcedBattery) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_TRUE(config.addRgbCctParsed(
+      YAML::Load("force_battery_powered: false"), 0, nullptr));
+  auto rgb = getCreatedRgb(previousElement);
+  ASSERT_NE(rgb, nullptr);
+  EXPECT_FALSE(rgb->getChannel()->isBatteryPowered());
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests,
+     RejectsParserlessRgbCctDynamicBatteryParameters) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.addRgbCctParsed(YAML::Load("battery_level: level"),
+                                      0,
+                                      nullptr));
+  deleteCreatedElement(previousElement);
+
+  previousElement = Supla::Element::last();
+  EXPECT_FALSE(config.addRgbCctParsed(YAML::Load("battery_powered: powered"),
+                                      0,
+                                      nullptr));
+  deleteCreatedElement(previousElement);
+
+  previousElement = Supla::Element::last();
+  EXPECT_FALSE(config.addRgbCctParsed(YAML::Load("battery_state: state"),
+                                      0,
+                                      nullptr));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests,
+     MapsRgbCctStateOnValuesAndOfflineHandlingThroughYaml) {
+  SimpleTime time;
+  TestLinuxYamlConfig config;
+  FakeYamlSource source;
+  FakeYamlParser parser(&source);
+  auto previousElement = Supla::Element::last();
+
+  auto channel = YAML::Load(
+      "state: status\n"
+      "state_on_values: [7]\n"
+      "offline_on_invalid_state: true\n"
+      "channel_number: 3\n");
+  EXPECT_TRUE(config.addRgbCctParsed(channel, 0, &parser));
+
+  auto rgb = getCreatedRgb(previousElement);
+  ASSERT_NE(rgb, nullptr);
+  EXPECT_TRUE(rgb->isParameterConfigured("state"));
+  EXPECT_EQ(rgb->getChannelNumber(), 3);
+
+  parser.state = 7;
+  EXPECT_EQ(rgb->getStateValue(), 1);
+  EXPECT_FALSE(rgb->isOffline());
+
+  parser.state = 6;
+  EXPECT_EQ(rgb->getStateValue(), 0);
+  EXPECT_FALSE(rgb->isOffline());
+
+  parser.state = -1;
+  EXPECT_EQ(rgb->getStateValue(), -1);
+  EXPECT_TRUE(rgb->isOffline());
+
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, ParserBackedRgbCctCanForceBatteryPowered) {
+  TestLinuxYamlConfig config;
+  FakeYamlSource source;
+  FakeYamlParser parser(&source);
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_TRUE(config.addRgbCctParsed(
+      YAML::Load("force_battery_powered: true"), 0, &parser));
+  auto rgb = getCreatedRgb(previousElement);
+  ASSERT_NE(rgb, nullptr);
+  EXPECT_TRUE(rgb->getChannel()->isBatteryPowered());
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, MapsBatteryStateAndWholeDeviceFlag) {
+  SimpleTime time;
+  TestLinuxYamlConfig config;
+  FakeYamlSource source;
+  FakeYamlParser parser(&source);
+  auto previousElement = Supla::Element::last();
+
+  auto channel = YAML::Load(
+      "battery_state: battery\n"
+      "battery_state_applies_to_whole_device: true\n");
+  ASSERT_TRUE(config.addRgbCctParsed(channel, 0, &parser));
+  auto rgb = getCreatedRgb(previousElement);
+  ASSERT_NE(rgb, nullptr);
+  EXPECT_TRUE(rgb->isParameterConfigured("battery_state"));
+
+  parser.state = std::string("low");
+  ASSERT_TRUE(rgb->refreshParserSource());
+  EXPECT_EQ(rgb->getChannel()->getBatteryState(), Supla::BatteryState::Low);
+  EXPECT_TRUE(rgb->getChannel()->isBatteryStateAppliedToWholeDevice());
+
+  TDSC_ChannelState channelState = {};
+  channelState.ChannelNumber = rgb->getChannelNumber();
+  rgb->handleGetChannelState(&channelState);
+  EXPECT_NE(channelState.Fields & SUPLA_CHANNELSTATE_FIELD_BATTERY_STATE, 0);
+  EXPECT_NE(channelState.Fields &
+                SUPLA_CHANNELSTATE_FIELD_DEVICE_BATTERY_STATE,
+            0);
+  EXPECT_EQ(channelState.BatteryState, SUPLA_BATTERY_STATE_LOW);
+
+  parser.state = std::string("normal");
+  rgb->updateBatteryInfoFlags();
+  EXPECT_EQ(rgb->getChannel()->getBatteryState(), Supla::BatteryState::Normal);
+
+  parser.state = 1;
+  rgb->updateBatteryInfoFlags();
+  EXPECT_EQ(rgb->getChannel()->getBatteryState(), Supla::BatteryState::Low);
+
+  parser.state = 0;
+  rgb->updateBatteryInfoFlags();
+  EXPECT_EQ(rgb->getChannel()->getBatteryState(), Supla::BatteryState::Normal);
+
+  parser.state = std::string("unknown");
+  rgb->updateBatteryInfoFlags();
+  EXPECT_EQ(rgb->getChannel()->getBatteryState(), Supla::BatteryState::NotSet);
+  EXPECT_FALSE(rgb->getChannel()->isBatteryStateAppliedToWholeDevice());
+
+  parser.state = std::string("low");
+  parser.stateValid = false;
+  rgb->updateBatteryInfoFlags();
+  EXPECT_EQ(rgb->getChannel()->getBatteryState(), Supla::BatteryState::NotSet);
+
+  channelState = {};
+  channelState.ChannelNumber = rgb->getChannelNumber();
+  rgb->handleGetChannelState(&channelState);
+  EXPECT_EQ(channelState.Fields & SUPLA_CHANNELSTATE_FIELD_BATTERY_STATE, 0);
+  EXPECT_EQ(channelState.Fields &
+                SUPLA_CHANNELSTATE_FIELD_DEVICE_BATTERY_STATE,
+            0);
+
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsCustomHvacWithoutPayload) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+  auto channel = YAML::Load(
+      "type: CustomHvac\n"
+      "main_thermometer_channel_no: 1\n");
+
+  EXPECT_FALSE(config.parseChannel(channel, 0));
+  EXPECT_EQ(Supla::Element::last(), previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, PreservesArbitraryCustomChannelTypes) {
+  TestLinuxYamlConfig config;
+
+  for (uint32_t type : {static_cast<uint32_t>(SUPLA_CHANNELTYPE_DIGIGLASS),
+                        424242u}) {
+    auto previousElement = Supla::Element::last();
+    auto channel = YAML::Load("channel_type: " + std::to_string(type) +
+                              "\nvalue: 01 02 03 04 05 06 07 08\n");
+
+    ASSERT_TRUE(config.addCustomChannel(channel, 0, nullptr));
+    auto createdElement = Supla::Element::last();
+    ASSERT_NE(createdElement, previousElement);
+
+    TDS_SuplaDeviceChannel_D registration = {};
+    createdElement->getChannel()->fillDeviceChannelStruct(&registration);
+    EXPECT_EQ(registration.Type, type);
+    deleteCreatedElement(previousElement);
+  }
+}
+
+TEST(Sd4linuxYamlConfigTests, AcceptsCustomHvacWithPayload) {
+  TestLinuxYamlConfig config;
+  FakePayload payload;
+  auto previousElement = Supla::Element::last();
+  auto channel = YAML::Load(
+      "type: CustomHvac\n"
+      "main_thermometer_channel_no: 1\n");
+
+  EXPECT_TRUE(config.addCustomHvac(channel, 0, &payload));
+
+  auto createdElement = Supla::Element::last();
+  auto customHvac = dynamic_cast<Supla::Control::CustomHvac*>(createdElement);
+  ASSERT_NE(createdElement, previousElement);
+  ASSERT_NE(customHvac, nullptr);
+  delete createdElement;
+}
+
+TEST(Sd4linuxYamlConfigTests, MapsCustomHvacJsonStateField) {
+  TestLinuxYamlConfig config;
+  FakePayload payload;
+  auto previousElement = Supla::Element::last();
+  auto channel = YAML::Load(
+      "type: CustomHvac\n"
+      "main_thermometer_channel_no: 1\n"
+      "set_state: state\n");
+
+  EXPECT_TRUE(config.addCustomHvac(channel, 0, &payload));
+  EXPECT_EQ(payload.lastKey, "state");
+  EXPECT_EQ(payload.lastIndex, -1);
+
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsCustomRelayWithoutPayload) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.parseChannel(YAML::Load("type: CustomRelay\n"), 0));
+  EXPECT_EQ(Supla::Element::last(), previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RequiresStateFieldForCustomRelayJsonPayload) {
+  TestLinuxYamlConfig config;
+  FakePayload payload;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.addCustomRelay(YAML::Load("type: CustomRelay\n"),
+                                     0,
+                                     nullptr,
+                                     &payload));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, AllowsCustomRelaySimplePayloadWithoutStateField) {
+  TestLinuxYamlConfig config;
+  FakePayload payload(true);
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_TRUE(config.addCustomRelay(YAML::Load("type: CustomRelay\n"),
+                                    0,
+                                    nullptr,
+                                    &payload));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsCmdValveWithoutRequiredCommand) {
+  TestLinuxYamlConfig config;
+  FakeYamlSource source;
+  FakeYamlParser parser(&source);
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.addCmdValve(YAML::Load(
+                                     "cmd_close: close\n"
+                                     "state: state\n"),
+                                 0,
+                                 &parser));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests,
+     RejectsCmdRollerShutterWithoutRequiredCommand) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.addCmdRollerShutter(YAML::Load(
+                                              "cmd_up_on: up\n"
+                                              "cmd_up_off: up_off\n"
+                                              "cmd_down_on: down\n"),
+                                          0,
+                                          nullptr));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsChannelNumberOutsideAllowedRange) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.parseChannel(
+      YAML::Load("type: VirtualRelay\nchannel_number: -1\n"), 0));
+  EXPECT_EQ(Supla::Element::last(), previousElement);
+
+  EXPECT_FALSE(config.parseChannel(
+      YAML::Load("type: VirtualRelay\nchannel_number: 128\n"), 0));
+  EXPECT_EQ(Supla::Element::last(), previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests,
+     RejectsDuplicateChannelNumberWithoutReassigningExistingChannel) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_TRUE(config.parseChannel(
+      YAML::Load("type: VirtualRelay\nchannel_number: 5\n"), 0));
+  auto firstChannel = Supla::Element::last();
+  ASSERT_NE(firstChannel, previousElement);
+  EXPECT_EQ(firstChannel->getChannelNumber(), 5);
+
+  EXPECT_FALSE(config.parseChannel(
+      YAML::Load("type: VirtualRelay\nchannel_number: 5\n"), 1));
+  EXPECT_EQ(Supla::Element::last(), firstChannel);
+  EXPECT_EQ(firstChannel->getChannelNumber(), 5);
+
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsIconIdOutsideAllowedRange) {
+  TestLinuxYamlConfig config;
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.addVirtualRelay(YAML::Load("icon_id: -1\n"), 0));
+  deleteCreatedElement(previousElement);
+
+  previousElement = Supla::Element::last();
+  EXPECT_FALSE(config.addVirtualRelay(YAML::Load("icon_id: 256\n"), 0));
+  deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, RejectsParsedIconIdOutsideAllowedRange) {
+  TestLinuxYamlConfig config;
+  FakeYamlSource source;
+  FakeYamlParser parser(&source);
+  auto previousElement = Supla::Element::last();
+
+  EXPECT_FALSE(config.addRgbCctParsed(YAML::Load("icon_id: 256\n"),
+                                      0,
+                                      &parser));
+  deleteCreatedElement(previousElement);
+}

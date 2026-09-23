@@ -1,20 +1,5 @@
-/*
- Copyright (C) AC SOFTWARE SP. Z O.O.
-
- This program is free software; you can redistribute it and/or
- modify it under the terms of the GNU General Public License
- as published by the Free Software Foundation; either version 2
- of the License, or (at your option) any later version.
-
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with this program; if not, write to the Free Software
- Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "web_server.h"
 
@@ -25,6 +10,7 @@
 #include <supla/network/html_element.h>
 #include <supla/storage/storage.h>
 #include <supla/tools.h>
+#include <supla/network/web_sender.h>
 
 #include "supla/network/html_generator.h"
 #include "supla/network/network.h"
@@ -41,7 +27,7 @@ bool matchesSensitiveField(const char *key) {
   static const char *const sensitiveFields[] = {
       "cfg_pwd",       "old_cfg_pwd", "confirm_cfg_pwd", "wpw",
       "altwpw",        "mqttpasswd",   "apiToken",        "apiKey",
-      "custom_ca",     "eml",          "mqttuser"
+      "custom_ca",     "mqtt_ca",      "eml",             "mqttuser"
   };
 
   for (const char *field : sensitiveFields) {
@@ -76,7 +62,7 @@ const char *Supla::redactLogValue(const char *key,
   return buffer;
 }
 
-const unsigned char Supla::favico[] = {
+const unsigned char Supla::favico[] SUPLA_WEB_PROGMEM = {
     0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, 0x10, 0x00, 0x00, 0x01, 0x00,
     0x20, 0x00, 0x68, 0x04, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00, 0x28, 0x00,
     0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01, 0x00,
@@ -237,6 +223,12 @@ void Supla::WebServer::addSecurityLog(uint32_t source, const char *log) const {
   }
 }
 
+void Supla::WebServer::addLastStateLog(const char *log) const {
+  if (sdc) {
+    sdc->addLastStateLog(log);
+  }
+}
+
 void Supla::WebServer::parsePost(const char *postContent,
                                  int size,
                                  bool lastChunk) {
@@ -347,10 +339,8 @@ void Supla::WebServer::parsePost(const char *postContent,
         if (strcmp(key, "rbt") == 0) {
           int reboot = stringToUInt(value);
           SUPLA_LOG_DEBUG("rbt found %d", reboot);
-          if (reboot == 2) {
-            sdc->scheduleSoftRestart(2500);
-          } else if (reboot) {
-            sdc->scheduleSoftRestart(1000);
+          if (reboot > pendingReboot) {
+            pendingReboot = reboot > 2 ? 2 : reboot;
           }
         }
         partialSize = 0;
@@ -366,6 +356,14 @@ void Supla::WebServer::parsePost(const char *postContent,
     if (csrfRejected || !csrfValidated) {
       cleanupParser();
       return;
+    }
+
+    if (sdc != nullptr) {
+      if (pendingReboot == 2) {
+        sdc->scheduleSoftRestart(2500);
+      } else if (pendingReboot == 1) {
+        sdc->scheduleSoftRestart(1000);
+      }
     }
 
     for (auto htmlElement = Supla::HtmlElement::begin(); htmlElement;
@@ -394,6 +392,7 @@ void Supla::WebServer::resetParser() {
   csrfFirstFieldRequired = true;
   csrfValidated = false;
   csrfRejected = false;
+  pendingReboot = 0;
 }
 
 void Supla::WebServer::cleanupParser() {
@@ -402,6 +401,7 @@ void Supla::WebServer::cleanupParser() {
   memset(key, 0, HTML_KEY_LENGTH);
   delete[] value;
   value = nullptr;
+  pendingReboot = 0;
 }
 
 bool Supla::WebServer::isSectionAllowed(Supla::HtmlSection section) const {

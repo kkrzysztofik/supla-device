@@ -1,22 +1,8 @@
-/*
-   Copyright (C) AC SOFTWARE SP. Z O.O
-
-   This program is free software; you can redistribute it and/or
-   modify it under the terms of the GNU General Public License
-   as published by the Free Software Foundation; either version 2
-   of the License, or (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
-*/
+// SPDX-FileCopyrightText: AC SOFTWARE SP. Z O.O.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <arduino_mock.h>
+#include <board_mock.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <protocol_layer_mock.h>
@@ -24,8 +10,11 @@
 #include <storage_mock.h>
 #include <supla/actions.h>
 #include <supla/channel.h>
+#include <supla/condition.h>
+#include <supla/condition_getter.h>
 #include <supla/control/relay.h>
 #include <supla/control/light_relay.h>
+#include <supla/events.h>
 #include <supla/device/register_device.h>
 #include <supla/io.h>
 #include <supla_io_mock.h>
@@ -33,9 +22,27 @@
 using ::testing::_;
 using ::testing::AtLeast;
 using ::testing::DoAll;
+using ::testing::InSequence;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SetArgPointee;
+
+namespace {
+
+class CountingActionHandler : public Supla::ActionHandler {
+ public:
+  void handleAction(int event, int action) override {
+    lastEvent = event;
+    lastAction = action;
+    count++;
+  }
+
+  int count = 0;
+  int lastEvent = -1;
+  int lastAction = -1;
+};
+
+}  // namespace
 
 class RelayFixture : public testing::Test {
  public:
@@ -52,10 +59,12 @@ class RelayFixture : public testing::Test {
 
   void SetUp() {
     Supla::Channel::resetToDefaults();
+    setLastResetSoft(false);
     EXPECT_CALL(storage, scheduleSave(_, 2000)).WillRepeatedly(Return());
   }
 
   void TearDown() {
+    setLastResetSoft(false);
     Supla::Channel::resetToDefaults();
   }
 
@@ -99,6 +108,64 @@ TEST_F(RelayFixture, IoPinConstructorUsesConfiguredIoAndPolarity) {
   Supla::Control::Relay relay(outputPin);
   relay.onInit();
   EXPECT_FALSE(relay.isOn());
+}
+
+TEST_F(RelayFixture, SoftResetKeepsLegacyInitOrderByDefault) {
+  const int gpio = 11;
+  Supla::Control::Relay relay(gpio);
+  relay.setDefaultStateOn();
+  setLastResetSoft(true);
+
+  InSequence sequence;
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, 1));
+
+  relay.onInit();
+}
+
+TEST_F(RelayFixture, SoftResetPreloadsStateBeforePinModeWhenEnabled) {
+  const int gpio = 11;
+  Supla::Control::Relay relay(gpio);
+  relay.setDefaultStateOn();
+  relay.setPreloadStateOnSoftReset();
+  setLastResetSoft(true);
+
+  InSequence sequence;
+  EXPECT_CALL(ioMock, digitalWrite(gpio, 1));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, 1));
+
+  relay.onInit();
+}
+
+TEST_F(RelayFixture, RestoredImpulseStateStartsOff) {
+  const int gpio = 11;
+  Supla::Control::Relay relay(gpio);
+  relay.setDefaultStateRestore();
+  storage.defaultInitialization(5);
+
+  EXPECT_CALL(storage, readStorage(_, _, 4, _))
+      .WillOnce([](uint32_t, unsigned char *data, int, bool) {
+        uint32_t storedDurationMs = 500;
+        memcpy(data, &storedDurationMs, sizeof(storedDurationMs));
+        return 4;
+      });
+  EXPECT_CALL(storage, readStorage(_, _, 1, _))
+      .WillOnce(DoAll(SetArgPointee<1>(
+                          RELAY_FLAGS_IMPULSE_FUNCTION | RELAY_FLAGS_ON),
+                      Return(1)));
+
+  int gpioValue = 1;
+  EXPECT_CALL(ioMock, digitalWrite(gpio, _))
+      .WillRepeatedly(::testing::SaveArg<1>(&gpioValue));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+
+  relay.onLoadState();
+  relay.onInit();
+
+  EXPECT_EQ(0, gpioValue);
+  EXPECT_EQ(500u, relay.getStoredTurnOnDurationMs());
+  EXPECT_TRUE(relay.isImpulseFunction());
 }
 
 TEST_F(RelayFixture, UnsetIoPinDoesNothing) {
@@ -1117,6 +1184,232 @@ TEST_F(RelayFixture, durationMsTests) {
   EXPECT_EQ(gpioValue, 0);
 }
 
+TEST_F(RelayFixture, TimerDurationKeepsInt32Range) {
+  const int gpio = 1;
+  Supla::Control::Relay relay(gpio);
+  int gpioValue = 0;
+
+  EXPECT_CALL(ioMock, digitalRead(gpio))
+      .WillRepeatedly(::testing::ReturnPointee(&gpioValue));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, _))
+      .WillRepeatedly(::testing::SaveArg<1>(&gpioValue));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+
+  relay.onInit();
+
+  const int32_t durations[] = {0, 1000, 32767, 32768, 60000, 120000};
+  for (int32_t duration : durations) {
+    relay.turnOn(duration);
+    EXPECT_EQ(gpioValue, 1);
+
+    if (duration == 0) {
+      time.advance(120001);
+      relay.iterateAlways();
+      EXPECT_EQ(gpioValue, 1);
+      continue;
+    }
+
+    time.advance(duration);
+    relay.iterateAlways();
+    EXPECT_EQ(gpioValue, 1);
+
+    time.advance(1);
+    relay.iterateAlways();
+    EXPECT_EQ(gpioValue, 0);
+  }
+}
+
+TEST_F(RelayFixture, CountdownTimerStartedAtMillisZeroRemainsActive) {
+  const int gpio = 1;
+  Supla::Control::Relay relay(gpio);
+  relay.setDefaultStateRestore();
+  storage.defaultInitialization(5);
+
+  EXPECT_CALL(storage, readStorage(_, _, 4, _))
+      .WillRepeatedly([](uint32_t, unsigned char *data, int, bool) {
+        uint32_t storedDurationMs = 0;
+        memcpy(data, &storedDurationMs, sizeof(storedDurationMs));
+        return 4;
+      });
+  EXPECT_CALL(storage, readStorage(_, _, 1, _))
+      .WillRepeatedly(DoAll(SetArgPointee<1>(0), Return(1)));
+
+  int gpioValue = 0;
+  EXPECT_CALL(ioMock, digitalRead(gpio))
+      .WillRepeatedly(::testing::ReturnPointee(&gpioValue));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, _))
+      .WillRepeatedly(::testing::SaveArg<1>(&gpioValue));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+
+  relay.onLoadState();
+  relay.onInit();
+  relay.onRegistered(nullptr);
+
+  uint32_t remainingSec = 0;
+  relay.turnOn(60000);
+  EXPECT_TRUE(relay.getRemainingCountdownTimerSec(&remainingSec));
+  EXPECT_EQ(remainingSec, 60u);
+
+  EXPECT_CALL(protoMock, sendRemainingTimeValue(0, 59999, 0, 0));
+  EXPECT_FALSE(relay.iterateConnected());
+
+  time.advance(1000);
+  EXPECT_TRUE(relay.getRemainingCountdownTimerSec(&remainingSec));
+  EXPECT_EQ(remainingSec, 59u);
+
+  EXPECT_CALL(storage, writeStorage(_, _, 4))
+      .WillOnce([](uint32_t, const unsigned char *value, int32_t) {
+        EXPECT_EQ(*reinterpret_cast<const uint32_t *>(value), 58999u);
+        return 4;
+      });
+  EXPECT_CALL(storage, writeStorage(_, Pointee(RELAY_FLAGS_ON), 1))
+      .WillOnce(Return(1));
+  relay.onSaveState();
+
+  relay.turnOff();
+  EXPECT_FALSE(relay.getRemainingCountdownTimerSec(&remainingSec));
+}
+
+TEST_F(RelayFixture, CyclicModeServerOffZeroStopsButOffWithDurationContinues) {
+  const int gpio = 1;
+  Supla::Control::Relay relay(gpio);
+  int gpioValue = 0;
+
+  EXPECT_CALL(ioMock, digitalRead(gpio))
+      .WillRepeatedly(::testing::ReturnPointee(&gpioValue));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, _))
+      .WillRepeatedly(::testing::SaveArg<1>(&gpioValue));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+
+  relay.enableCyclicMode(1000, 5000);
+  relay.onInit();
+  time.advance(1);
+
+  TSD_SuplaChannelNewValue newValue = {};
+  newValue.ChannelNumber = relay.getChannelNumber();
+  newValue.value[0] = 0;
+  newValue.DurationMS = 5000;
+
+  EXPECT_EQ(1, relay.handleNewValueFromServer(&newValue));
+  EXPECT_EQ(0, gpioValue);
+
+  time.advance(4999);
+  relay.iterateAlways();
+  EXPECT_EQ(0, gpioValue);
+
+  time.advance(1);
+  relay.iterateAlways();
+  EXPECT_EQ(0, gpioValue);
+
+  time.advance(1);
+  relay.iterateAlways();
+  EXPECT_EQ(1, gpioValue);
+
+  newValue.DurationMS = 0;
+  EXPECT_EQ(1, relay.handleNewValueFromServer(&newValue));
+  EXPECT_EQ(0, gpioValue);
+
+  time.advance(10000);
+  relay.iterateAlways();
+  EXPECT_EQ(0, gpioValue);
+}
+
+TEST_F(RelayFixture, CountdownTimerRemainingConditionFiresOnceOnThreshold) {
+  int gpio = 1;
+  int gpioValue = 0;
+  EXPECT_CALL(ioMock, digitalRead(gpio))
+      .WillRepeatedly(::testing::ReturnPointee(&gpioValue));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, _))
+      .WillRepeatedly(::testing::SaveArg<1>(&gpioValue));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+
+  CountingActionHandler actionCounter;
+  Supla::Control::Relay relay(gpio);
+  relay.onInit();
+
+  relay.addAction(Supla::TURN_ON,
+                  actionCounter,
+                  Supla::ON_COUNTDOWN_TIMER,
+                  OnLessEq(2, CountdownTimerRemainingSec()));
+
+  time.advance(1);
+  relay.turnOn(3000);
+
+  relay.iterateAlways();
+  EXPECT_EQ(actionCounter.count, 0);
+
+  time.advance(1000);
+  relay.iterateAlways();
+  EXPECT_EQ(actionCounter.count, 1);
+  EXPECT_EQ(actionCounter.lastEvent, Supla::ON_COUNTDOWN_TIMER);
+  EXPECT_EQ(actionCounter.lastAction, Supla::TURN_ON);
+
+  time.advance(1000);
+  relay.iterateAlways();
+  EXPECT_EQ(actionCounter.count, 1);
+}
+
+TEST_F(RelayFixture, InactiveCountdownTimerDoesNotFireCondition) {
+  int gpio = 1;
+  int gpioValue = 0;
+  EXPECT_CALL(ioMock, digitalRead(gpio))
+      .WillRepeatedly(::testing::ReturnPointee(&gpioValue));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, _))
+      .WillRepeatedly(::testing::SaveArg<1>(&gpioValue));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+
+  CountingActionHandler actionCounter;
+  Supla::Control::Relay relay(gpio);
+  relay.onInit();
+
+  relay.addAction(Supla::TURN_ON,
+                  actionCounter,
+                  Supla::ON_COUNTDOWN_TIMER,
+                  OnLess(60, CountdownTimerRemainingSec()));
+
+  for (int i = 0; i < 3; i++) {
+    relay.iterateAlways();
+    time.advance(1000);
+  }
+
+  EXPECT_EQ(actionCounter.count, 0);
+}
+
+TEST_F(RelayFixture, CountdownTimerConditionResetsAfterInactiveTransition) {
+  int gpio = 1;
+  int gpioValue = 0;
+  EXPECT_CALL(ioMock, digitalRead(gpio))
+      .WillRepeatedly(::testing::ReturnPointee(&gpioValue));
+  EXPECT_CALL(ioMock, digitalWrite(gpio, _))
+      .WillRepeatedly(::testing::SaveArg<1>(&gpioValue));
+  EXPECT_CALL(ioMock, pinMode(gpio, OUTPUT));
+
+  CountingActionHandler actionCounter;
+  Supla::Control::Relay relay(gpio);
+  relay.onInit();
+
+  relay.addAction(Supla::TURN_ON,
+                  actionCounter,
+                  Supla::ON_COUNTDOWN_TIMER,
+                  OnLessEq(1, CountdownTimerRemainingSec()));
+
+  time.advance(1);
+  relay.turnOn(1500);
+  time.advance(600);
+  relay.iterateAlways();
+  EXPECT_EQ(actionCounter.count, 1);
+
+  relay.turnOff();
+  relay.iterateAlways();
+  EXPECT_EQ(actionCounter.count, 1);
+
+  time.advance(1);
+  relay.turnOn(1500);
+  time.advance(600);
+  relay.iterateAlways();
+  EXPECT_EQ(actionCounter.count, 2);
+}
+
 TEST_F(RelayFixture, keepTurnOnDurationRestoreOnTests) {
   int gpio1 = 1;
   Supla::Control::Relay r1(gpio1);
@@ -1848,6 +2141,25 @@ TEST_F(RelayFixture, checkTimerStateStorageForStaircaseTimer) {
   EXPECT_EQ(0, gpioValue);
   // duration should be 0
   r1.onSaveState();
+}
+
+TEST_F(RelayFixture, RelayStorageSaveDelayIsClampedBeforeScheduling) {
+  Supla::Control::Relay relay(0);
+
+  EXPECT_CALL(storage, scheduleSave(5000, 2000)).Times(2);
+  EXPECT_CALL(storage, scheduleSave(60000, 2000));
+  EXPECT_CALL(storage, scheduleSave(UINT16_MAX, 2000));
+
+  Supla::Control::Relay::setRelayStorageSaveDelay(5000);
+  sendConfig(&relay, SUPLA_CHANNELFNC_STAIRCASETIMER, 1000);
+
+  Supla::Control::Relay::setRelayStorageSaveDelay(60000);
+  sendConfig(&relay, SUPLA_CHANNELFNC_STAIRCASETIMER, 2000);
+
+  Supla::Control::Relay::setRelayStorageSaveDelay(UINT16_MAX + 1u);
+  sendConfig(&relay, SUPLA_CHANNELFNC_STAIRCASETIMER, 3000);
+
+  Supla::Control::Relay::setRelayStorageSaveDelay(5000);
 }
 
 TEST_F(RelayFixture, checkTimerStateStorageForImpulseFunction) {
