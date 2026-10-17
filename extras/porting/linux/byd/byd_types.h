@@ -1,6 +1,11 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
 
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
+
  Wire-format and reading-key types for the native BYD cloud client.
  Crypto/envelope behaviour is derived from the pyBYD reference library (MIT).
 */
