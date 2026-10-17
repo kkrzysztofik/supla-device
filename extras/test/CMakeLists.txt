@@ -56,6 +56,13 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(json googletest cjson)
 
+FetchContent_Declare(mqttc
+  GIT_REPOSITORY https://github.com/LiamBindle/MQTT-C.git
+  GIT_TAG v1.1.6
+  GIT_SHALLOW TRUE)
+set(MQTT_C_EXAMPLES OFF CACHE BOOL "Build MQTT-C examples?" FORCE)
+FetchContent_MakeAvailable(mqttc)
+
 option(SUPLA_TEST_ENABLE_CURL_HTTP
   "Enable sd4linux HTTP source tests when CURL is available" ON)
 option(SUPLA_TEST_REQUIRE_CURL
@@ -116,7 +123,8 @@ file(GLOB SD4LINUX_TEST_SRC CONFIGURE_DEPENDS
 
 if(NOT SUPLA_TEST_CURL_HTTP_ENABLED)
   list(REMOVE_ITEM SD4LINUX_TEST_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/LinuxPortTests/sd4linux_http_source_tests.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/LinuxPortTests/sd4linux_http_source_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/LinuxPortTests/sd4linux_http_redirect_tests.cpp)
 endif()
 
 list(APPEND TEST_SRC ../../src/supla-common/proto_check.cpp)
@@ -143,6 +151,8 @@ list(REMOVE_ITEM DOUBLE_SRC ${ESP_IDF_SPI_DOUBLE_SRC})
 set(SD4LINUX_PORT_SRC
   ../porting/linux/linux_process.cpp
   ../porting/linux/linux_yaml_config.cpp
+  ../porting/linux/linux_mqtt_client.cpp
+  ../porting/linux/supla/source/mqtt_src.cpp
   ../porting/linux/linux_secure_file.cpp
   ../porting/linux/linux_file_state_logger.cpp
   ../porting/linux/linux_file_storage.cpp
@@ -163,6 +173,7 @@ set(SD4LINUX_PORT_SRC
   ../porting/linux/supla/parser/parser.cpp
   ../porting/linux/supla/parser/simple.cpp
   ../porting/linux/supla/output/file.cpp
+  ../porting/linux/supla/output/mqtt.cpp
   ../porting/linux/supla/payload/json.cpp
   ../porting/linux/supla/payload/simple.cpp
   ../porting/linux/supla/source/cmd.cpp
@@ -253,6 +264,25 @@ add_executable(sd4linuxtests
   ../porting/linux/extensions/ingecon/ingecon_extension.cpp
   )
 
+add_executable(arduinoesp8266_tls_lifetime_tests
+  ArduinoEspPlatformTests/arduino_esp_tls_lifetime_tests.cpp
+  ../../src/supla/network/client.cpp
+  ../../src/supla/network/ip_address.cpp
+)
+target_include_directories(arduinoesp8266_tls_lifetime_tests BEFORE PRIVATE
+  ArduinoEspPlatformTests/fakes
+)
+target_include_directories(arduinoesp8266_tls_lifetime_tests PRIVATE
+  ../../src
+)
+target_compile_definitions(arduinoesp8266_tls_lifetime_tests PRIVATE
+  ARDUINO_ARCH_ESP8266
+)
+target_link_libraries(arduinoesp8266_tls_lifetime_tests PRIVATE
+  gtest
+  gtest_main
+)
+
 target_include_directories(supladevicetests BEFORE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/MCP23008Tests
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles/esp_idf
@@ -292,6 +322,7 @@ target_link_libraries(sd4linuxtests
     supladevicelib
     nlohmann_json::nlohmann_json
     yaml-cpp
+    mqttc
     gtest
     gmock
     gtest_main
@@ -305,10 +336,13 @@ endif()
 
 add_test(NAME supladevicetests COMMAND supladevicetests)
 add_test(NAME sd4linuxtests COMMAND sd4linuxtests)
+add_test(NAME arduinoesp8266_tls_lifetime_tests
+  COMMAND arduinoesp8266_tls_lifetime_tests)
 
 
 supla_apply_warnings(supladevicetests)
 supla_apply_warnings(sd4linuxtests)
+supla_apply_warnings(arduinoesp8266_tls_lifetime_tests)
 supla_apply_warnings(supladevicelib)
 
 target_compile_definitions(supladevicetests PRIVATE

@@ -1006,7 +1006,17 @@ void logRawHexDump(const char *direction,
 }  // namespace
 
 Supla::Protocol::SuplaSrpc::SuplaSrpc(SuplaDeviceClass *sdc, int version)
-    : Supla::Protocol::ProtocolLayer(sdc), version(version) {
+    : Supla::Protocol::ProtocolLayer(sdc),
+      version(version),
+      requestNetworkRestart(false),
+      enabled(true),
+      setDeviceConfigReceivedAfterRegistration(false),
+      deviceSyncDoneReceived(false),
+      firstConnectionAttempt(true),
+      adErrorLogged(false),
+      writeFailure(false),
+      ownsSelectedCertificate(false),
+      versionErrorDisconnectPending(false) {
   setSuplaCACert(::suplaCACert);
   setSupla3rdPartyCACert(::supla3rdCACert);
 }
@@ -1206,16 +1216,27 @@ bool Supla::Protocol::SuplaSrpc::isSensitiveCallId(int callId) {
 
 Supla::Protocol::SuplaSrpc::~SuplaSrpc() {
   if (client) {
+    client->stop();
     delete client;
     client = nullptr;
   }
-  if (selectedCertificate) {
-    if (selectedCertificate != suplaCACert &&
-        selectedCertificate != supla3rdPartyCACert &&
-        selectedCertificate != wrongCert) {
-      delete[] selectedCertificate;
-    }
+  releaseOwnedCertificate();
+}
+
+void Supla::Protocol::SuplaSrpc::releaseOwnedCertificate() {
+  if (!ownsSelectedCertificate) {
+    return;
   }
+  if (client) {
+    client->stop();
+    client->setCACert(wrongCert);
+    registered = 0;
+    firstConnectionAttempt = true;
+    deinitializeSrpc();
+  }
+  delete[] selectedCertificate;
+  selectedCertificate = nullptr;
+  ownsSelectedCertificate = false;
 }
 
 void Supla::Protocol::SuplaSrpc::setNetworkClient(Supla::Client *newClient) {
@@ -1255,6 +1276,7 @@ bool Supla::Protocol::SuplaSrpc::onLoadConfig() {
     return false;
   }
 
+  releaseOwnedCertificate();
   bool configComplete = true;
   char buf[256] = {};
 
@@ -1325,8 +1347,14 @@ bool Supla::Protocol::SuplaSrpc::onLoadConfig() {
             len++;
             auto cert = new char[len];
             memset(cert, 0, len);
-            cfg->getCustomCA(cert, len);
-            selectedCertificate = cert;
+            if (cfg->getCustomCA(cert, len)) {
+              selectedCertificate = cert;
+              ownsSelectedCertificate = true;
+            } else {
+              delete[] cert;
+              selectedCertificate = wrongCert;
+              SUPLA_LOG_ERROR("Failed to read configured custom CA");
+            }
           } else {
             SUPLA_LOG_ERROR(
                 "Custom CA is selected, but certificate is"
@@ -1340,6 +1368,9 @@ bool Supla::Protocol::SuplaSrpc::onLoadConfig() {
           selectedCertificate = nullptr;
           break;
         }
+      }
+      if (client) {
+        client->setCACert(selectedCertificate);
       }
     }
   } else {
@@ -1358,6 +1389,7 @@ void Supla::Protocol::SuplaSrpc::onInit() {
     auto cfg = Supla::Storage::ConfigInstance();
 
     if (!cfg && (suplaCACert != nullptr || supla3rdPartyCACert != nullptr)) {
+      releaseOwnedCertificate();
       selectedCertificate = suplaCACert;
       if (suplaCACert != nullptr && supla3rdPartyCACert != nullptr) {
         bool usePublicServer =
@@ -1372,6 +1404,9 @@ void Supla::Protocol::SuplaSrpc::onInit() {
 
       if (suplaCACert == nullptr) {
         selectedCertificate = supla3rdPartyCACert;
+      }
+      if (client) {
+        client->setCACert(selectedCertificate);
       }
     }
   }
@@ -1570,15 +1605,15 @@ void Supla::messageReceived(void *srpc,
             switch (result->ConfigType) {
               default:
               case SUPLA_CONFIG_TYPE_DEFAULT: {
-                element->handleChannelConfig(result);
+                element->handleChannelConfig(result, false);
                 break;
               }
               case SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE: {
-                element->handleWeeklySchedule(result);
+                element->handleWeeklySchedule(result, false, false);
                 break;
               }
               case SUPLA_CONFIG_TYPE_ALT_WEEKLY_SCHEDULE: {
-                element->handleWeeklySchedule(result, true);
+                element->handleWeeklySchedule(result, true, false);
                 break;
               }
             }
@@ -1610,6 +1645,7 @@ void Supla::messageReceived(void *srpc,
         if (request) {
           TSDS_SetChannelConfigResult result = {};
           result.ChannelNumber = request->ChannelNumber;
+          result.ConfigType = request->ConfigType;
           result.Result = SUPLA_RESULTCODE_CHANNELNOTFOUND;
           auto element =
               Supla::Element::getElementByChannelNumber(request->ChannelNumber);
@@ -1625,15 +1661,17 @@ void Supla::messageReceived(void *srpc,
             switch (request->ConfigType) {
               default:
               case SUPLA_CONFIG_TYPE_DEFAULT: {
-                result.Result = element->handleChannelConfig(request);
+                result.Result = element->handleChannelConfig(request, false);
                 break;
               }
               case SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE: {
-                result.Result = element->handleWeeklySchedule(request);
+                result.Result =
+                    element->handleWeeklySchedule(request, false, false);
                 break;
               }
               case SUPLA_CONFIG_TYPE_ALT_WEEKLY_SCHEDULE: {
-                result.Result = element->handleWeeklySchedule(request, true);
+                result.Result =
+                    element->handleWeeklySchedule(request, true, false);
                 break;
               }
             }
@@ -2012,7 +2050,16 @@ bool Supla::Protocol::SuplaSrpc::autodiscover(uint32_t now) {
 
   if (1 == adClient->connect(server, 443)) {
     adClient->write("GET /users/");
-    adClient->write(Supla::RegisterDevice::getEmail());
+    const char *email = Supla::RegisterDevice::getEmail();
+    while (*email) {
+      char part[17] = {};
+      size_t len = strnlen(email, sizeof(part) - 1);
+      memcpy(part, email, len);
+      char encoded[3 * (sizeof(part) - 1) + 1] = {};
+      int encodedLen = urlEncode(part, encoded, sizeof(encoded));
+      adClient->write(encoded, encodedLen);
+      email += len;
+    }
     adClient->write(" HTTP/1.1\r\n");
     adClient->write("Host: ");
     adClient->write(server);

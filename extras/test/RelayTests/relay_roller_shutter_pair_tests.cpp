@@ -64,6 +64,27 @@ class RelayRollerShutterPairFixture : public testing::Test {
     EXPECT_CALL(ioMock, digitalRead(gpio1)).WillRepeatedly(Return(0));
   }
 
+  void expectMissingSecondaryLegacyWeeklyFlag(ConfigMock &config) {
+    EXPECT_CALL(config, getUInt8(StrEq("1_weekly_chng"), _))
+        .WillOnce(Return(false));
+  }
+
+  void expectMissingTypedConfigAndWeeklyStorage(ConfigMock &config) {
+    EXPECT_CALL(config, getUInt32(StrEq("0_cfg_chng_t"), _))
+        .WillOnce(Return(false));
+    EXPECT_CALL(config, getBlobSize(StrEq("0_r_weekly")))
+        .WillOnce(Return(0));
+    EXPECT_CALL(config, getBlobSize(StrEq("1_r_weekly")))
+        .WillOnce(Return(0));
+    EXPECT_CALL(config, getUInt32(StrEq("1_cfg_chng_t"), _))
+        .WillOnce(Return(false));
+  }
+
+  void expectMissingPrimaryLegacyWeeklyFlag(ConfigMock &config) {
+    EXPECT_CALL(config, getUInt8(StrEq("0_weekly_chng"), _))
+        .WillOnce(Return(false));
+  }
+
   const int8_t *channelValue(int channelNumber) {
     return Supla::RegisterDevice::getChannelValuePtr(channelNumber);
   }
@@ -83,6 +104,10 @@ class TestableRelayRollerShutterPair
 
   void markPrimaryDefaultConfigReceived() {
     receivedConfigTypes.set(SUPLA_CONFIG_TYPE_DEFAULT);
+  }
+
+  void markPrimaryWeeklyConfigReceived() {
+    receivedConfigTypes.set(SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE);
   }
 };
 
@@ -110,10 +135,88 @@ TEST_F(RelayRollerShutterPairFixture,
 }
 
 TEST_F(RelayRollerShutterPairFixture,
-       PrimaryChannelConfigFinishedDoesNotFinishSecondaryRelay) {
+       WeeklyScheduleRoutingUsesRelayForBothChannels) {
+  Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setWeeklyScheduleAvailable();
+  EXPECT_TRUE(pair.getPrimaryRelay()->isWeeklyScheduleAvailable());
+  EXPECT_TRUE(pair.getSecondaryRelay()->isWeeklyScheduleAvailable());
+  EXPECT_TRUE(pair.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+  EXPECT_TRUE(pair.getSecondaryChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+  TSD_ChannelConfig config = {};
+  config.Func = SUPLA_CHANNELFNC_LIGHTSWITCH;
+  config.ConfigType = SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+
+  config.ChannelNumber = pair.getChannelNumber();
+  EXPECT_EQ(pair.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_TRUE);
+
+  config.ChannelNumber = pair.getSecondaryChannelNumber();
+  EXPECT_EQ(pair.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_TRUE);
+}
+
+TEST_F(RelayRollerShutterPairFixture,
+       WeeklyScheduleIsDisabledByDefault) {
   ProtocolLayerMock protoMock;
   TestableRelayRollerShutterPair pair(gpio0, gpio1);
   pair.markPrimaryDefaultConfigReceived();
+
+  EXPECT_FALSE(pair.getPrimaryRelay()->isWeeklyScheduleAvailable());
+  EXPECT_FALSE(pair.getSecondaryRelay()->isWeeklyScheduleAvailable());
+  EXPECT_FALSE(pair.getChannel()->getFlags() &
+               SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+  EXPECT_FALSE(pair.getSecondaryChannel()->getFlags() &
+               SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+
+  pair.handleChannelConfigFinished(pair.getChannelNumber());
+  EXPECT_CALL(protoMock, setChannelConfig(_, _, _, _, _)).Times(0);
+  EXPECT_TRUE(pair.iterateConnected());
+}
+
+TEST_F(RelayRollerShutterPairFixture,
+       EmptyPrimaryWeeklyScheduleIsSentByPairConfigLifecycle) {
+  ProtocolLayerMock protoMock;
+  TestableRelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setWeeklyScheduleAvailable();
+  pair.markPrimaryDefaultConfigReceived();
+  TSD_ChannelConfig config = {};
+  config.ChannelNumber = pair.getChannelNumber();
+  config.Func = SUPLA_CHANNELFNC_LIGHTSWITCH;
+  config.ConfigType = SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+
+  EXPECT_EQ(pair.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_TRUE);
+  pair.handleChannelConfigFinished(pair.getChannelNumber());
+
+  EXPECT_CALL(protoMock,
+              setChannelConfig(pair.getChannelNumber(),
+                               SUPLA_CHANNELFNC_LIGHTSWITCH,
+                               _,
+                               sizeof(TChannelConfig_WeeklySchedule),
+                               SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE))
+      .WillOnce(Return(true));
+
+  EXPECT_FALSE(pair.iterateConnected());
+
+  TSDS_SetChannelConfigResult result = {};
+  result.ChannelNumber = pair.getChannelNumber();
+  result.ConfigType = SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+  result.Result = SUPLA_CONFIG_RESULT_TRUE;
+  pair.handleSetChannelConfigResult(&result);
+
+  EXPECT_CALL(protoMock, setChannelConfig(_, _, _, _, _)).Times(0);
+  EXPECT_TRUE(pair.iterateConnected());
+}
+
+TEST_F(RelayRollerShutterPairFixture,
+       PrimaryChannelConfigFinishedDoesNotFinishSecondaryRelay) {
+  ProtocolLayerMock protoMock;
+  TestableRelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setWeeklyScheduleAvailable();
+  pair.markPrimaryDefaultConfigReceived();
+  pair.markPrimaryWeeklyConfigReceived();
 
   EXPECT_CALL(protoMock,
               setChannelConfig(pair.getSecondaryChannelNumber(), _, _, _, _))
@@ -315,12 +418,16 @@ TEST_F(RelayRollerShutterPairFixture,
        PreInitFunctionRestoreDoesNotSwitchPhysicalOutputs) {
   ConfigMock config;
   Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setWeeklyScheduleAvailable();
   pair.setDefaultFunctions(SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER,
                            SUPLA_CHANNELFNC_LIGHTSWITCH);
   int32_t primaryFunction = SUPLA_CHANNELFNC_LIGHTSWITCH;
 
   EXPECT_TRUE(pair.isInRollerShutterMode());
   EXPECT_CALL(config, init()).WillRepeatedly(Return(true));
+  expectMissingPrimaryLegacyWeeklyFlag(config);
+  expectMissingSecondaryLegacyWeeklyFlag(config);
+  expectMissingTypedConfigAndWeeklyStorage(config);
   EXPECT_CALL(config, getInt32(StrEq("0_fnc"), _))
       .Times(1)
       .WillOnce(DoAll(SetArgPointee<1>(primaryFunction), Return(true)));
@@ -744,15 +851,26 @@ TEST_F(RelayRollerShutterPairFixture,
        PurgeConfigClearsPrimaryRelaySpecificConfig) {
   ConfigMock config;
   Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setWeeklyScheduleAvailable();
 
   EXPECT_CALL(config, init()).WillRepeatedly(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("0_fnc"))).WillOnce(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("0_cfg_chng")))
       .WillOnce(Return(true));
+  EXPECT_CALL(config, eraseKey(StrEq("0_cfg_chng_t")))
+      .WillOnce(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("0_oc_thr"))).WillOnce(Return(true));
+  EXPECT_CALL(config, eraseKey(StrEq("0_r_weekly"))).WillOnce(Return(true));
+  EXPECT_CALL(config, eraseKey(StrEq("0_weekly_chng")))
+      .WillOnce(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("1_fnc"))).WillOnce(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("1_cfg_chng"))).WillOnce(Return(true));
+  EXPECT_CALL(config, eraseKey(StrEq("1_cfg_chng_t")))
+      .WillOnce(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("1_oc_thr"))).WillOnce(Return(true));
+  EXPECT_CALL(config, eraseKey(StrEq("1_r_weekly"))).WillOnce(Return(true));
+  EXPECT_CALL(config, eraseKey(StrEq("1_weekly_chng")))
+      .WillOnce(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("0_rs_cfg"))).WillOnce(Return(true));
   EXPECT_CALL(config, eraseKey(StrEq("0_tilt_cfg"))).WillOnce(Return(true));
 
@@ -763,8 +881,12 @@ TEST_F(RelayRollerShutterPairFixture,
        LoadConfigKeepsPrimaryChannelCommonFieldsOwnedByWrapper) {
   ConfigMock config;
   Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setWeeklyScheduleAvailable();
 
   EXPECT_CALL(config, init()).WillRepeatedly(Return(true));
+  expectMissingPrimaryLegacyWeeklyFlag(config);
+  expectMissingSecondaryLegacyWeeklyFlag(config);
+  expectMissingTypedConfigAndWeeklyStorage(config);
 
   EXPECT_CALL(config, getInt32(StrEq("0_fnc"), _))
       .Times(1)
@@ -792,9 +914,12 @@ TEST_F(RelayRollerShutterPairFixture,
        LoadConfigFacadeBlindFunctionMakesRollerEngineReadTiltConfig) {
   ConfigMock config;
   Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1, true);
+  pair.setWeeklyScheduleAvailable();
   int32_t primaryFunction = SUPLA_CHANNELFNC_CONTROLLINGTHEFACADEBLIND;
 
   EXPECT_CALL(config, init()).WillRepeatedly(Return(true));
+  expectMissingSecondaryLegacyWeeklyFlag(config);
+  expectMissingTypedConfigAndWeeklyStorage(config);
   EXPECT_CALL(config, getInt32(StrEq("0_fnc"), _))
       .Times(1)
       .WillOnce(DoAll(SetArgPointee<1>(primaryFunction), Return(true)));
@@ -829,9 +954,12 @@ TEST_F(RelayRollerShutterPairFixture,
        LoadConfigRollerFunctionDoesNotMakeRollerEngineReadTiltConfig) {
   ConfigMock config;
   Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1, true);
+  pair.setWeeklyScheduleAvailable();
   int32_t primaryFunction = SUPLA_CHANNELFNC_CONTROLLINGTHEROLLERSHUTTER;
 
   EXPECT_CALL(config, init()).WillRepeatedly(Return(true));
+  expectMissingSecondaryLegacyWeeklyFlag(config);
+  expectMissingTypedConfigAndWeeklyStorage(config);
   EXPECT_CALL(config, getInt32(StrEq("0_fnc"), _))
       .Times(1)
       .WillOnce(DoAll(SetArgPointee<1>(primaryFunction), Return(true)));
@@ -865,9 +993,13 @@ TEST_F(RelayRollerShutterPairFixture,
        LoadConfigStaircaseFunctionMakesRelayEngineFillStaircaseConfig) {
   ConfigMock config;
   Supla::Control::RelayRollerShutterPair pair(gpio0, gpio1);
+  pair.setWeeklyScheduleAvailable();
   int32_t primaryFunction = SUPLA_CHANNELFNC_STAIRCASETIMER;
 
   EXPECT_CALL(config, init()).WillRepeatedly(Return(true));
+  expectMissingPrimaryLegacyWeeklyFlag(config);
+  expectMissingSecondaryLegacyWeeklyFlag(config);
+  expectMissingTypedConfigAndWeeklyStorage(config);
   EXPECT_CALL(config, getInt32(StrEq("0_fnc"), _))
       .Times(1)
       .WillOnce(DoAll(SetArgPointee<1>(primaryFunction), Return(true)));

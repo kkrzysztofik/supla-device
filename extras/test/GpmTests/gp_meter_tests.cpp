@@ -402,6 +402,8 @@ TEST_F(GpMeterTestsFixture, defaultParametersShouldntOverwriteConfig) {
   EXPECT_CALL(config, init());
 
   EXPECT_CALL(config, saveWithDelay(_)).Times(0);
+  EXPECT_CALL(config, getUInt32(StrEq("0_cfg_chng_t"), _))
+      .WillOnce(Return(false));
   EXPECT_CALL(
       config,
       getBlob(
@@ -676,7 +678,7 @@ TEST_F(GpMeterTestsFixture, localConfigChangeShouldBeSavedAndSend) {
       .Times(1)
       .WillOnce(Return(
           sizeof(Supla::Sensor::GeneralPurposeMeter::GPMMeterSpecificConfig)));
-  EXPECT_CALL(cfg, setUInt8(StrEq("0_cfg_chng"), 1))
+  EXPECT_CALL(cfg, setUInt32(StrEq("0_cfg_chng_t"), 1))
       .Times(2)
       .WillOnce(Return(1))
       .WillOnce(Return(1));

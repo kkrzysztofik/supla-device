@@ -43,7 +43,6 @@ h57g2Xm1Ye07CqHJFJsLmjdK7o3aatAogru7/T4+yliNEL0MHAvm24rjt5wt6j4w
 b+hI
 -----END CERTIFICATE-----
 )SUPLACERT";
-
 // CA used for private Supla servers signed by Supla root CA
 const char supla3rdCACert[] PROGMEM = R"SUPLACERT(
 -----BEGIN CERTIFICATE-----
@@ -86,4 +85,3 @@ Jmkfy9+RB8SgnJ+b5FDAPPAA0n91WDT8SondqvBi+n/Lro4cuQTUQ4IsjAyIk0fZ
 nPr3s8s=
 -----END CERTIFICATE-----
 )SUPLACERT";
-

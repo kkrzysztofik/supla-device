@@ -14,6 +14,7 @@
 #include "../action_handler.h"
 #include "../channel_element.h"
 #include "../io.h"
+#include "weekly_schedule_component.h"
 
 #define STATE_ON_INIT_RESTORED_OFF -3
 #define STATE_ON_INIT_RESTORED_ON  -2
@@ -21,11 +22,16 @@
 #define STATE_ON_INIT_OFF          0
 #define STATE_ON_INIT_ON           1
 
-#define RELAY_FLAGS_ON (1 << 0)
-#define RELAY_FLAGS_STAIRCASE (1 << 1)
+#define RELAY_FLAGS_ON               (1 << 0)
+#define RELAY_FLAGS_STAIRCASE        (1 << 1)
 #define RELAY_FLAGS_IMPULSE_FUNCTION (1 << 2)  // i.e. gate, door, gateway
-#define RELAY_FLAGS_OVERCURRENT (1 << 3)
+#define RELAY_FLAGS_OVERCURRENT      (1 << 3)
+#define RELAY_FLAGS_AUTOMATIC_MODE   (1 << 5)
 
+#define RELAY_STORED_MODE_NOT_SET    0
+#define RELAY_STORED_MODE_AUTOMATIC  1
+#define RELAY_STORED_MODE_FORCED_OFF 2
+#define RELAY_STORED_MODE_FORCED_ON  3
 
 namespace Supla {
 namespace Io {
@@ -34,20 +40,41 @@ struct IoPin;
 
 namespace Control {
 class Button;
+class RelayWeeklySchedule;
 
 class Relay : public ChannelElement, public ActionHandler {
  public:
+  friend class RelayWeeklySchedule;
+
+  union RelayFlags {
+    struct {
+      uint8_t relayOn : 1;
+      uint8_t staircaseFunction : 1;
+      uint8_t impulseFunction : 1;
+      uint8_t overcurrent : 1;
+      uint8_t weeklySchedule : 1;
+      // AUTOMATIC remains encoded as bit 5 for OTA compatibility.
+      uint8_t operatingMode : 2;
+      uint8_t reserved : 1;
+    } flags;
+    uint8_t rawValue = 0;
+  };
+
+  static_assert(sizeof(RelayFlags) == sizeof(uint8_t),
+                "Flags size must be 1 byte");
+
   explicit Relay(Supla::Io::IoPin outputPin,
                  _supla_int_t functions =
                      (0xFF ^ SUPLA_BIT_FUNC_CONTROLLINGTHEROLLERSHUTTER));
-  explicit Relay(Supla::Io::Base *io, int pin,
-        bool highIsOn = true,
-        _supla_int_t functions = (0xFF ^
-                                  SUPLA_BIT_FUNC_CONTROLLINGTHEROLLERSHUTTER));
+  explicit Relay(Supla::Io::Base *io,
+                 int pin,
+                 bool highIsOn = true,
+                 _supla_int_t functions =
+                     (0xFF ^ SUPLA_BIT_FUNC_CONTROLLINGTHEROLLERSHUTTER));
   explicit Relay(int pin,
-        bool highIsOn = true,
-        _supla_int_t functions = (0xFF ^
-                                  SUPLA_BIT_FUNC_CONTROLLINGTHEROLLERSHUTTER));
+                 bool highIsOn = true,
+                 _supla_int_t functions =
+                     (0xFF ^ SUPLA_BIT_FUNC_CONTROLLINGTHEROLLERSHUTTER));
 
   virtual ~Relay();
 
@@ -57,10 +84,10 @@ class Relay : public ChannelElement, public ActionHandler {
   virtual Relay &setPreloadStateOnSoftReset(bool enabled = true);
   virtual Relay &keepTurnOnDuration(bool keep = true);  // DEPREACATED
 
-  [[deprecated("Use IoPin::writeActive/writeInactive instead")]]
-  virtual uint8_t pinOnValue();
-  [[deprecated("Use IoPin::writeActive/writeInactive instead")]]
-  virtual uint8_t pinOffValue();
+  [[deprecated("Use IoPin::writeActive/writeInactive instead")]] virtual uint8_t
+  pinOnValue();
+  [[deprecated("Use IoPin::writeActive/writeInactive instead")]] virtual uint8_t
+  pinOffValue();
   virtual void turnOn(_supla_int_t duration = 0);
   virtual void turnOff(_supla_int_t duration = 0);
   virtual bool isOn();
@@ -80,7 +107,7 @@ class Relay : public ChannelElement, public ActionHandler {
   int32_t handleNewValueFromServer(TSD_SuplaChannelNewValue *newValue) override;
   void onRegistered(Supla::Protocol::SuplaSrpc *suplaSrpc) override;
   Supla::ApplyConfigResult applyChannelConfig(TSD_ChannelConfig *result,
-                              bool local = false) override;
+                                              bool local = false) override;
   void fillChannelConfig(void *channelConfig,
                          int *size,
                          uint8_t configType) override;
@@ -127,7 +154,9 @@ class Relay : public ChannelElement, public ActionHandler {
    *
    * @return Value in 0.01 A
    */
-  uint32_t getOvercurrentThreshold() const { return overcurrentThreshold; }
+  uint32_t getOvercurrentThreshold() const {
+    return overcurrentThreshold;
+  }
 
   /**
    * Set overcurrent max level allowed
@@ -141,7 +170,9 @@ class Relay : public ChannelElement, public ActionHandler {
    *
    * @return Value in 0.01 A
    */
-  uint32_t getOvercurrentMaxAllowed() const { return overcurrentMaxAllowed; }
+  uint32_t getOvercurrentMaxAllowed() const {
+    return overcurrentMaxAllowed;
+  }
 
   /**
    * Set default duration for staircase timer function
@@ -209,6 +240,18 @@ class Relay : public ChannelElement, public ActionHandler {
   void disableCyclicMode();
   bool isCyclicMode() const;
 
+  bool isWeeklyScheduleSupported() const;
+  Relay &setWeeklyScheduleAvailable(bool available = true);
+  bool isWeeklyScheduleAvailable() const;
+  Relay &setAutomaticModeSupported(bool supported = true);
+  bool isAutomaticModeSupported() const;
+  bool isAutomaticMode() const;
+  bool setAutomaticMode(bool enabled);
+  bool setWeeklyScheduleController(
+      WeeklyScheduleController *controller,
+      WeeklyScheduleConfigHandler *configHandler = nullptr,
+      WeeklyScheduleProgramSource *programSource = nullptr);
+
  protected:
   Relay(Supla::Io::IoPin outputPin,
         _supla_int_t functions,
@@ -224,13 +267,34 @@ class Relay : public ChannelElement, public ActionHandler {
   void setOvercurrentThreshold(uint32_t value, bool local);
 
   virtual void setNewChannelValue(bool value);
+  virtual void fillDefaultWeeklySchedule(
+      TChannelConfig_WeeklySchedule *schedule);
+  virtual bool canUseWeeklySchedule() const;
+  // Registration capability. Overrides must not depend on the function
+  // currently selected on the server.
+  virtual bool isWeeklyScheduleProgramModeSupported(uint8_t mode) const;
+  bool isWeeklyScheduleProgramModeAvailable(uint8_t mode) const;
+  // Runtime applicability after the server-selected function is known.
+  bool isWeeklyScheduleProgramModeApplicable(uint8_t mode) const;
+  bool hasAnyWeeklyScheduleProgramModeAvailable() const;
+  virtual void iterateAutomaticMode();
 
   void saveConfig() const;
   void loadRelayConfigOnly();
+  bool ensureNativeWeeklyScheduleController();
+  void updateWeeklyScheduleCapabilities();
+  void updateAutomaticModeCapability();
   void purgeRelayConfigOnly();
   void updateTimerValue();
   void emitCountdownTimerActionIfNeeded();
   void updateRelayHvacAggregator();
+  bool isManualActionAllowed(bool turnOn) const;
+  bool isManualForcedModeSupported(uint8_t mode) const;
+  bool setManualForcedMode(uint8_t mode);
+  void disableWeeklySchedule();
+  void applyWeeklyScheduleProgram(uint8_t programMode, bool programChanged);
+  virtual bool applyWeeklyScheduleState(bool on);
+  void notifyWeeklyScheduleManualAction();
   uint32_t durationMs = 0;
   uint32_t storedTurnOnDurationMs = 0;
   uint32_t durationTimestamp = 0;
@@ -252,15 +316,38 @@ class Relay : public ChannelElement, public ActionHandler {
   uint16_t minimumAllowedDurationMs = 0;
   int16_t defaultRelatedMeterChannelNo = -1;
 
-  bool keepTurnOnDurationMs = false;
-  bool turnOffWhenEmptyAggregator = true;
-  bool initDone = false;
-  bool restartTimerOnToggle = false;
-  bool skipInitialStateSetting = false;
-  bool preloadStateOnSoftReset = false;
+  // Runtime-only flags; state storage uses a separate representation.
+  struct RuntimeFlags {
+    RuntimeFlags()
+        : keepTurnOnDurationMs(false),
+          turnOffWhenEmptyAggregator(true),
+          initDone(false),
+          restartTimerOnToggle(false),
+          skipInitialStateSetting(false),
+          preloadStateOnSoftReset(false),
+          automaticModeSupported(false),
+          weeklyScheduleAvailable(false) {}
+
+    uint8_t keepTurnOnDurationMs : 1;
+    uint8_t turnOffWhenEmptyAggregator : 1;
+    uint8_t initDone : 1;
+    uint8_t restartTimerOnToggle : 1;
+    uint8_t skipInitialStateSetting : 1;
+    uint8_t preloadStateOnSoftReset : 1;
+    uint8_t automaticModeSupported : 1;
+    // Native weekly schedule remains opt-in.
+    uint8_t weeklyScheduleAvailable : 1;
+  };
+
+  static_assert(sizeof(RuntimeFlags) == sizeof(uint8_t),
+                "Relay runtime flags must fit in uint8_t");
+
+  RuntimeFlags runtimeFlags;
 
   int8_t stateOnInit = STATE_ON_INIT_OFF;
+  bool timerTargetOn = false;
   Supla::Io::IoPin outputPin;
+  WeeklyScheduleComponents weeklyScheduleComponents;
 
   static uint16_t relayStorageSaveDelay;
 };

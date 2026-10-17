@@ -11,6 +11,7 @@ const char DeviceConfigChangeCfgTag[] = "devcfg_chng";
 
 const char ChannelFunctionTag[] = "fnc";
 const char ChannelConfigChangedFlagTag[] = "cfg_chng";
+const char ChannelConfigChangedTypesTag[] = "cfg_chng_t";
 
 const char ScreenBrightnessCfgTag[] = "bright";
 const char ScreenAdjustmentForAutomaticCfgTag[] = "adj_auto_br";
@@ -30,6 +31,7 @@ const char BtnHoldTag[] = "btn_hold";
 const char BtnMulticlickTag[] = "btn_multiclick";
 const char BtnConfigTag[] = "btn_cfg";
 const char BtnActionTriggerCfgTagPrefix[] = "mqtt_at";
+const char BtnActionTriggerLocalUnlockTagPrefix[] = "at_unlock";
 
 const char VolumeCfgTag[] = "volume";
 
@@ -61,6 +63,9 @@ const char RelayTurnOnDuration[] = "on_dur";
 const char HvacCfgTag[] = "hvac_cfg";
 const char HvacWeeklyCfgTag[] = "hvac_weekly";
 const char HvacAltWeeklyCfgTag[] = "hvac_aweekly";
+const char RelayWeeklyCfgTag[] = "r_weekly";
+const char ActionTriggerWeeklyCfgTag[] = "at_weekly";
+const char WeeklyScheduleChangedFlagTag[] = "weekly_chng";
 
 const char BinarySensorServerInvertedLogicTag[] = "srv_invrt";
 const char BinarySensorCfgTag[] = "bs_cfg";
@@ -82,6 +87,7 @@ const char DsSensorConfig[] = "ds_sensor";
 static_assert(sizeof(DeviceConfigChangeCfgTag) < 16);
 static_assert(sizeof(ChannelFunctionTag) < 12);
 static_assert(sizeof(ChannelConfigChangedFlagTag) < 12);
+static_assert(sizeof(ChannelConfigChangedTypesTag) < 12);
 static_assert(sizeof(ScreenBrightnessCfgTag) < 16);
 static_assert(sizeof(ScreenAdjustmentForAutomaticCfgTag) < 16);
 static_assert(sizeof(HomeScreenContentTag) < 16);
@@ -98,6 +104,7 @@ static_assert(sizeof(BtnHoldTag) < 16);
 static_assert(sizeof(BtnMulticlickTag) < 16);
 static_assert(sizeof(BtnConfigTag) < 16);
 static_assert(sizeof(BtnActionTriggerCfgTagPrefix) < 16);
+static_assert(sizeof(BtnActionTriggerLocalUnlockTagPrefix) < 16);
 static_assert(sizeof(VolumeCfgTag) < 16);
 static_assert(sizeof(EmCtTypeTag) < 12);
 static_assert(sizeof(EmPhaseLedTag) < 12);
@@ -120,6 +127,9 @@ static_assert(sizeof(RelayTurnOnDuration) < 12);
 static_assert(sizeof(HvacCfgTag) < 12);
 static_assert(sizeof(HvacWeeklyCfgTag) <= 12);
 static_assert(sizeof(HvacAltWeeklyCfgTag) <= 13);
+static_assert(sizeof(RelayWeeklyCfgTag) <= 12);
+static_assert(sizeof(ActionTriggerWeeklyCfgTag) <= 12);
+static_assert(sizeof(WeeklyScheduleChangedFlagTag) <= 12);
 static_assert(sizeof(BinarySensorServerInvertedLogicTag) < 12);
 static_assert(sizeof(BinarySensorCfgTag) < 12);
 static_assert(sizeof(ContainerTag) < 12);
