@@ -10,6 +10,10 @@
 // Regression tests for the locking bugs fixed in the BYD client and poller.
 // Both used to hang forever instead of returning, so every call is run with a
 // watchdog and the tests assert that it came back in time.
+//
+// Everything a timed-out call touches (callable, client, buffers, completion
+// flag) is heap-allocated and shared with the worker thread, so a hung call
+// cannot reach destroyed objects after the test returns.
 
 #include <gtest/gtest.h>
 
@@ -164,29 +168,69 @@ class FakeHttpTransport : public BydHttpTransport {
   std::atomic<bool> gateOpen_{false};
 };
 
-// Runs fn() on its own thread and reports whether it finished in time. A hung
-// call is detached rather than joined so the watchdog itself cannot block.
-bool runWithTimeout(const std::function<bool()>& fn,
-                    std::chrono::milliseconds timeout,
-                    bool* result) {
-  std::atomic<bool> done{false};
-  std::thread worker([&fn, &done, result] {
-    *result = fn();
-    done.store(true);
+enum class WatchdogResult { Completed, TimedOut };
+
+// Runs fn() on its own thread and reports whether it finished in time. The
+// callable, its result and the completion flag live in a heap block owned by
+// the worker, so a timed-out call that keeps running after the test returns
+// cannot touch destroyed memory. A hung call is detached so the watchdog itself
+// cannot block.
+WatchdogResult runWithTimeout(std::function<bool()> fn,
+                              std::chrono::milliseconds timeout,
+                              bool* result) {
+  struct State {
+    std::function<bool()> fn;
+    std::atomic<bool> done{false};
+    bool result = false;
+  };
+  auto state = std::make_shared<State>();
+  state->fn = std::move(fn);
+
+  std::thread worker([state] {
+    state->result = state->fn();
+    state->done.store(true);
   });
 
   const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (!done.load() && std::chrono::steady_clock::now() < deadline) {
+  while (!state->done.load() && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(10ms);
   }
 
-  if (!done.load()) {
+  if (!state->done.load()) {
     worker.detach();
-    return false;
+    return WatchdogResult::TimedOut;
   }
   worker.join();
-  return true;
+  *result = state->result;
+  return WatchdogResult::Completed;
 }
+
+// Owns everything a fetch call touches, and is captured by value in the worker
+// lambda so it outlives a timed-out test.
+struct FetchCall {
+  std::shared_ptr<BydCloudClient> client;
+  nlohmann::json out;
+  std::string error;
+
+  bool fetchRealtime(const BydVehicleConfig& vehicle) {
+    return client->fetchRealtime(vehicle, &out, &error);
+  }
+
+  bool fetchChargingHomepage(const std::string& vin) {
+    return client->fetchChargingHomepage(vin, &out, &error);
+  }
+};
+
+// Same for the poller test, including the hook synchronisation.
+struct UnsubscribeCall {
+  std::shared_ptr<BydVehiclePoller> poller;
+  void* owner = nullptr;
+  std::atomic<bool> done{false};
+
+  std::mutex hookMutex;
+  std::condition_variable hookCv;
+  bool lockHeld = false;
+};
 
 }  // namespace
 
@@ -197,24 +241,19 @@ bool runWithTimeout(const std::function<bool()>& fn,
 TEST(BydConcurrencyTest, FetchReturnsInsteadOfDeadlockingOnClientMutex) {
   auto transport = std::make_unique<FakeHttpTransport>();
   FakeHttpTransport* fake = transport.get();
-  auto client =
-      std::make_unique<BydCloudClient>(testAccount(), std::move(transport));
+  auto call = std::make_shared<FetchCall>();
+  call->client =
+      std::make_shared<BydCloudClient>(testAccount(), std::move(transport));
 
-  nlohmann::json out;
-  std::string error;
   bool fetched = true;
-  const bool returned = runWithTimeout(
-      [&client, &out, &error] {
-        return client->fetchRealtime(
-            testVehicle("TESTVINCONCURRENCY0001"), &out, &error);
+  const auto outcome = runWithTimeout(
+      [call] {
+        return call->fetchRealtime(testVehicle("TESTVINCONCURRENCY0001"));
       },
       5s,
       &fetched);
 
-  if (!returned) {
-    // Intentional leak: the hung thread still reads the client, so destroying
-    // it here would be a use-after-free in the failure path.
-    new std::unique_ptr<BydCloudClient>(std::move(client));
+  if (outcome == WatchdogResult::TimedOut) {
     FAIL() << "fetchRealtime() deadlocked: ensureLoggedIn() re-locked mutex_";
   }
   // No login response is served, so the fetch reports failure - the point is
@@ -230,23 +269,17 @@ TEST(BydConcurrencyTest, FetchReturnsInsteadOfDeadlockingOnClientMutex) {
 TEST(BydConcurrencyTest, ChargingHomepageFetchReturnsInsteadOfDeadlocking) {
   auto transport = std::make_unique<FakeHttpTransport>();
   FakeHttpTransport* fake = transport.get();
-  auto client =
-      std::make_unique<BydCloudClient>(testAccount(), std::move(transport));
+  auto call = std::make_shared<FetchCall>();
+  call->client =
+      std::make_shared<BydCloudClient>(testAccount(), std::move(transport));
 
-  nlohmann::json out;
-  std::string error;
   bool fetched = true;
-  const bool returned = runWithTimeout(
-      [&client, &out, &error] {
-        return client->fetchChargingHomepage(
-            "TESTVINCONCURRENCY0002", &out, &error);
-      },
+  const auto outcome = runWithTimeout(
+      [call] { return call->fetchChargingHomepage("TESTVINCONCURRENCY0002"); },
       5s,
       &fetched);
 
-  if (!returned) {
-    // Intentional leak, as above.
-    new std::unique_ptr<BydCloudClient>(std::move(client));
+  if (outcome == WatchdogResult::TimedOut) {
     FAIL() << "fetchChargingHomepage() deadlocked: ensureLoggedIn() re-locked "
               "mutex_";
   }
@@ -283,45 +316,43 @@ TEST(BydConcurrencyTest, UnsubscribeReturnsWhileWorkerIsPublishing) {
       << "worker never called the transport; Bangcle tables not found from "
          "the current directory";
 
+  auto call = std::make_shared<UnsubscribeCall>();
+  call->poller = poller;
+  call->owner = state->owner;
+
   // The hook fires while unsubscribe() holds subscribersMutex_, which removes
   // the timing guesswork: the worker is only released once the lock is
   // provably held, so a join performed under that lock must deadlock.
-  std::mutex hookMutex;
-  std::condition_variable hookCv;
-  bool lockHeld = false;
-  poller->setSubscribersLockHookForTest([&hookMutex, &hookCv, &lockHeld] {
+  poller->setSubscribersLockHookForTest([call] {
     {
-      std::lock_guard<std::mutex> hookLock(hookMutex);
-      lockHeld = true;
+      std::lock_guard<std::mutex> hookLock(call->hookMutex);
+      call->lockHeld = true;
     }
-    hookCv.notify_all();
+    call->hookCv.notify_all();
   });
 
-  std::atomic<bool> unsubscribed{false};
-  std::thread unsubscriber([&poller, &state, &unsubscribed] {
-    poller->unsubscribe(state->owner);
-    unsubscribed.store(true);
+  std::thread unsubscriber([call] {
+    call->poller->unsubscribe(call->owner);
+    call->done.store(true);
   });
 
   {
-    std::unique_lock<std::mutex> hookLock(hookMutex);
-    ASSERT_TRUE(hookCv.wait_for(hookLock, 10s, [&lockHeld] {
-      return lockHeld;
+    std::unique_lock<std::mutex> hookLock(call->hookMutex);
+    ASSERT_TRUE(call->hookCv.wait_for(hookLock, 10s, [&call] {
+      return call->lockHeld;
     })) << "unsubscribe() never reached subscribersMutex_";
   }
   fake->openGate();
 
   const auto deadline = std::chrono::steady_clock::now() + 10s;
-  while (!unsubscribed.load() && std::chrono::steady_clock::now() < deadline) {
+  while (!call->done.load() && std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(10ms);
   }
 
-  if (!unsubscribed.load()) {
+  if (!call->done.load()) {
+    // The detached unsubscriber keeps `call` - and with it the poller - alive,
+    // so nothing is destroyed while the hung call still references it.
     unsubscriber.detach();
-    // Intentional leak: destroying the poller here would destroy a still
-    // joinable std::thread and call std::terminate, which would hide the
-    // deadlock this test exists to report.
-    new std::shared_ptr<BydVehiclePoller>(std::move(poller));
     FAIL() << "unsubscribe() deadlocked on subscribersMutex_ while joining "
               "the worker";
   }
