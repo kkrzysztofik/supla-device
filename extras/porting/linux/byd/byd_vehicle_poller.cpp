@@ -1,5 +1,10 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
 */
 
 #include "byd_vehicle_poller.h"
@@ -64,14 +69,18 @@ void BydVehiclePoller::subscribe(Subscriber subscriber) {
 }
 
 void BydVehiclePoller::unsubscribe(void* owner) {
-  std::lock_guard<std::mutex> lock(subscribersMutex_);
-  subscribers_.erase(
-      std::remove_if(subscribers_.begin(),
-                     subscribers_.end(),
-                     [owner](const Subscriber& sub) {
-                       return sub.state && sub.state->owner == owner;
-                     }),
-      subscribers_.end());
+  {
+    std::lock_guard<std::mutex> lock(subscribersMutex_);
+    subscribers_.erase(
+        std::remove_if(subscribers_.begin(),
+                       subscribers_.end(),
+                       [owner](const Subscriber& sub) {
+                         return sub.state && sub.state->owner == owner;
+                       }),
+        subscribers_.end());
+  }
+  // Joins the worker, so it must run without subscribersMutex_ held:
+  // pollOnce() takes the same mutex to publish readings.
   stopWorkerIfIdle();
 }
 
@@ -85,8 +94,11 @@ void BydVehiclePoller::startWorkerIfNeeded() {
 }
 
 void BydVehiclePoller::stopWorkerIfIdle() {
-  if (!subscribers_.empty()) {
-    return;
+  {
+    std::lock_guard<std::mutex> lock(subscribersMutex_);
+    if (!subscribers_.empty()) {
+      return;
+    }
   }
   stopWorker_.store(true);
   if (worker_.joinable()) {
@@ -163,7 +175,15 @@ void BydVehiclePoller::pollOnce() {
 void BydVehiclePoller::workerLoop() {
   const int intervalSec = std::max(5, vehicle_.pollIntervalSec);
   while (!stopWorker_.load()) {
-    pollOnce();
+    // A malformed cloud response must not escape the thread: an uncaught
+    // exception in a std::thread calls std::terminate.
+    try {
+      pollOnce();
+    } catch (const std::exception& ex) {
+      SUPLA_LOG_WARNING("BYD poller vin=%s: poll failed: %s",
+                        vehicle_.vin.c_str(),
+                        ex.what());
+    }
     ++cycleCounter_;
     for (int i = 0; i < intervalSec * 10 && !stopWorker_.load(); ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

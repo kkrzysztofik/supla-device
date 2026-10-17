@@ -1,5 +1,10 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
 */
 
 #include "byd_readings.h"
@@ -110,6 +115,16 @@ std::optional<double> BydReadingsBuilder::getNumber(const nlohmann::json& obj,
   return jsonNumber(obj.at(key));
 }
 
+int BydReadingsBuilder::getInt(const nlohmann::json& obj,
+                               const char* key,
+                               int fallback) {
+  const auto value = getNumber(obj, key);
+  if (!value.has_value() || !std::isfinite(*value)) {
+    return fallback;
+  }
+  return static_cast<int>(*value);
+}
+
 void BydReadingsBuilder::putNumber(BydReadings* out,
                                    const std::string& key,
                                    const nlohmann::json& obj,
@@ -191,15 +206,15 @@ BydReadings BydReadingsBuilder::fromSources(const nlohmann::json& realtime,
     putNumber(&out, "fuel_range_km", realtime, "oilEndurance");
 
     const int chargeState =
-        realtime.value("chargeState", realtime.value("chargingState", -1));
+        getInt(realtime, "chargeState", getInt(realtime, "chargingState", -1));
     const ChargingState state = toChargingState(chargeState);
     putBool(&out, "is_charging", state == ChargingState::Charging);
     putBool(
         &out,
         "is_plugged",
         state == ChargingState::Charging || state == ChargingState::Connected);
-    putBool(&out, "is_online", realtime.value("onlineState", -1) == 1);
-    putBool(&out, "is_connected", realtime.value("connectState", -1) == 1);
+    putBool(&out, "is_online", getInt(realtime, "onlineState", -1) == 1);
+    putBool(&out, "is_connected", getInt(realtime, "connectState", -1) == 1);
 
     const auto fullHour = getNumber(realtime, "fullHour");
     const auto fullMinute = getNumber(realtime, "fullMinute");
@@ -233,7 +248,7 @@ BydReadings BydReadingsBuilder::fromSources(const nlohmann::json& realtime,
     if (!out.values.count("soc")) {
       putNumber(&out, "soc", charging, "soc");
     }
-    const int chargingState = charging.value("chargingState", -1);
+    const int chargingState = getInt(charging, "chargingState", -1);
     if (chargingState == 1) {
       putBool(&out, "is_charging", true);
     }

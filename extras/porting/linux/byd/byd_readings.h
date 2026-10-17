@@ -1,5 +1,10 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
 */
 
 #ifndef EXTRAS_PORTING_LINUX_BYD_BYD_READINGS_H_
@@ -39,6 +44,7 @@ class BydReadingsBuilder {
   static std::optional<double> jsonNumber(const nlohmann::json& value);
   static std::optional<double> getNumber(const nlohmann::json& obj,
                                          const char* key);
+  static int getInt(const nlohmann::json& obj, const char* key, int fallback);
   static void putNumber(BydReadings* out,
                         const std::string& key,
                         const nlohmann::json& obj,

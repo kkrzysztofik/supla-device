@@ -1,5 +1,10 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
 */
 
 #include "byd_aes.h"
@@ -28,6 +33,10 @@ std::vector<unsigned char> parseHexKey(const std::string& keyHex) {
   out.reserve(text.size() / 2);
   for (size_t i = 0; i < text.size(); i += 2) {
     const std::string byteStr = text.substr(i, 2);
+    if (!std::isxdigit(static_cast<unsigned char>(byteStr[0])) ||
+        !std::isxdigit(static_cast<unsigned char>(byteStr[1]))) {
+      return {};
+    }
     out.push_back(static_cast<unsigned char>(std::stoul(byteStr, nullptr, 16)));
   }
   return out;
