@@ -103,8 +103,8 @@ TEST_F(Sd4linuxSmaExtensionTests, RegistersAllBydChannelFactories) {
 TEST_F(Sd4linuxSmaExtensionTests, ExampleBydYamlUsesRegisteredChannelTypes) {
   Supla::Linux::initBydExtension();
 
-  const YAML::Node root = YAML::LoadFile(
-      "../../examples/linux/supla-device-byd.yaml");
+  const YAML::Node root =
+      YAML::LoadFile("../../examples/linux/supla-device-byd.yaml");
   ASSERT_TRUE(root["channels"].IsSequence());
 
   for (const auto& channel : root["channels"]) {

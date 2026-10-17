@@ -4,13 +4,13 @@
 
 #include "byd_bangcle.h"
 
-#include "byd_pkcs7.h"
-
 #include <supla/log_wrapper.h>
 
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+
+#include "byd_pkcs7.h"
 
 namespace Supla {
 namespace Linux {
@@ -72,22 +72,21 @@ std::string normaliseEnvelopeInput(const std::string& envelope) {
 
 std::vector<unsigned char> base64Decode(const std::string& input) {
   static const int kDecode[256] = {
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
-      52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
-      -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
-      15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
-      -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
-      41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63, 52, 53, 54, 55, 56, 57,
+      58, 59, 60, 61, -1, -1, -1, -1, -1, -1, -1, 0,  1,  2,  3,  4,  5,  6,
+      7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+      25, -1, -1, -1, -1, -1, -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+      37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+      -1, -1, -1, -1,
   };
 
   std::vector<unsigned char> out;
@@ -346,13 +345,16 @@ void encryptBlockAuth(const BangcleTablesView& tables,
       state[row] = tables.finalTables[tmp32[row0] + row0 * 0x400];
 
       const int row1 = (uVar11 + row) & 3;
-      state[8 + row] = tables.finalTables[tmp32[8 + row1] + row1 * 0x400 + 0x100];
+      state[8 + row] =
+          tables.finalTables[tmp32[8 + row1] + row1 * 0x400 + 0x100];
 
       const int row2 = (uVar9 + row) & 3;
-      state[0x10 + row] = tables.finalTables[tmp32[0x10 + row2] + row2 * 0x400 + 0x200];
+      state[0x10 + row] =
+          tables.finalTables[tmp32[0x10 + row2] + row2 * 0x400 + 0x200];
 
       const int row3 = (uVar13 + row) & 3;
-      state[0x18 + row] = tables.finalTables[tmp32[0x18 + row3] + row3 * 0x400 + 0x300];
+      state[0x18 + row] =
+          tables.finalTables[tmp32[0x18 + row3] + row3 * 0x400 + 0x300];
     }
   }
 
@@ -400,7 +402,8 @@ std::vector<unsigned char> encryptCbc(const BangcleTablesView& tables,
 }
 
 BangcleCodec::BangcleCodec(const std::string& tablesPath)
-    : tablesPath_(tablesPath) {}
+    : tablesPath_(tablesPath) {
+}
 
 bool BangcleCodec::loadTables() {
   if (loaded_) {
@@ -437,7 +440,8 @@ bool BangcleCodec::loadTables() {
     return false;
   }
 
-  const auto loadTable = [&](size_t index, size_t expectedLen,
+  const auto loadTable = [&](size_t index,
+                             size_t expectedLen,
                              std::vector<unsigned char>* out) -> bool {
     const size_t idxOffset = 8 + index * 8;
     uint32_t offset = 0;
@@ -456,8 +460,9 @@ bool BangcleCodec::loadTables() {
   std::vector<unsigned char> permEncrypt;
   if (!loadTable(0, 0x28000, &invRound_) || !loadTable(1, 0x3C000, &invXor_) ||
       !loadTable(2, 0x1000, &invFirst_) || !loadTable(3, 0x28000, &round_) ||
-      !loadTable(4, 0x3C000, &xorTables_) || !loadTable(5, 0x1000, &finalTables_) ||
-      !loadTable(6, 8, &permDecrypt) || !loadTable(7, 8, &permEncrypt)) {
+      !loadTable(4, 0x3C000, &xorTables_) ||
+      !loadTable(5, 0x1000, &finalTables_) || !loadTable(6, 8, &permDecrypt) ||
+      !loadTable(7, 8, &permEncrypt)) {
     return false;
   }
   std::memcpy(permDecrypt_, permDecrypt.data(), 8);
@@ -471,10 +476,17 @@ std::string BangcleCodec::encodeEnvelope(const std::string& plaintext) const {
   if (!loaded_) {
     return {};
   }
-  BangcleTablesView view{invRound_,     invXor_,      invFirst_, round_,
-                         xorTables_,    finalTables_, permDecrypt_, permEncrypt_};
-  const auto padded = addPkcs7(reinterpret_cast<const unsigned char*>(plaintext.data()),
-                               plaintext.size());
+  BangcleTablesView view{invRound_,
+                         invXor_,
+                         invFirst_,
+                         round_,
+                         xorTables_,
+                         finalTables_,
+                         permDecrypt_,
+                         permEncrypt_};
+  const auto padded =
+      addPkcs7(reinterpret_cast<const unsigned char*>(plaintext.data()),
+               plaintext.size());
   const auto ciphertext = encryptCbc(view, padded.data(), padded.size());
   return "F" + base64Encode(ciphertext.data(), ciphertext.size());
 }
@@ -484,8 +496,14 @@ std::vector<unsigned char> BangcleCodec::decodeEnvelope(
   if (!loaded_) {
     return {};
   }
-  BangcleTablesView view{invRound_,     invXor_,      invFirst_, round_,
-                         xorTables_,    finalTables_, permDecrypt_, permEncrypt_};
+  BangcleTablesView view{invRound_,
+                         invXor_,
+                         invFirst_,
+                         round_,
+                         xorTables_,
+                         finalTables_,
+                         permDecrypt_,
+                         permEncrypt_};
   const std::string b64 = normaliseEnvelopeInput(envelope);
   const auto ciphertext = base64Decode(b64);
   if (ciphertext.empty() || (ciphertext.size() % 16) != 0) {

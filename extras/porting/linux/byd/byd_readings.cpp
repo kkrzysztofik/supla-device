@@ -4,11 +4,11 @@
 
 #include "byd_readings.h"
 
-#include "byd_types.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+
+#include "byd_types.h"
 
 namespace Supla {
 namespace Linux {
@@ -122,7 +122,8 @@ void BydReadingsBuilder::putNumber(BydReadings* out,
     if (isTemperatureKey && (*value == -129.0 || *value <= -120.0)) {
       return;
     }
-    if (*value < 0 && (key == "range_km" || key == "soc" || key == "odometer_km")) {
+    if (*value < 0 &&
+        (key == "range_km" || key == "soc" || key == "odometer_km")) {
       return;
     }
     if (key == "charge_rate" && *value <= -9.0) {
@@ -144,7 +145,8 @@ std::optional<double> BydReadingsBuilder::parseConsumptionEv(
     return std::nullopt;
   }
   const auto slash = text.find('/');
-  const std::string evPart = slash == std::string::npos ? text : text.substr(0, slash);
+  const std::string evPart =
+      slash == std::string::npos ? text : text.substr(0, slash);
   const auto space = evPart.find(' ');
   std::string numberPart = evPart;
   if (space != std::string::npos) {
@@ -188,11 +190,14 @@ BydReadings BydReadingsBuilder::fromSources(const nlohmann::json& realtime,
     putNumber(&out, "fuel_percent", realtime, "oilPercent");
     putNumber(&out, "fuel_range_km", realtime, "oilEndurance");
 
-    const int chargeState = realtime.value("chargeState", realtime.value("chargingState", -1));
+    const int chargeState =
+        realtime.value("chargeState", realtime.value("chargingState", -1));
     const ChargingState state = toChargingState(chargeState);
     putBool(&out, "is_charging", state == ChargingState::Charging);
-    putBool(&out, "is_plugged",
-            state == ChargingState::Charging || state == ChargingState::Connected);
+    putBool(
+        &out,
+        "is_plugged",
+        state == ChargingState::Charging || state == ChargingState::Connected);
     putBool(&out, "is_online", realtime.value("onlineState", -1) == 1);
     putBool(&out, "is_connected", realtime.value("connectState", -1) == 1);
 
@@ -206,8 +211,8 @@ BydReadings BydReadingsBuilder::fromSources(const nlohmann::json& realtime,
 
     if (realtime.contains("nearestEnergyConsumption") &&
         realtime["nearestEnergyConsumption"].is_string()) {
-      const auto parsed =
-          parseConsumptionEv(realtime["nearestEnergyConsumption"].get<std::string>());
+      const auto parsed = parseConsumptionEv(
+          realtime["nearestEnergyConsumption"].get<std::string>());
       if (parsed.has_value()) {
         out.values["consumption_ev_kwh_per_100km"] = *parsed;
       }
@@ -216,7 +221,8 @@ BydReadings BydReadingsBuilder::fromSources(const nlohmann::json& realtime,
         realtime["totalConsumptionEn"].is_string()) {
       const auto parsed =
           parseConsumptionEv(realtime["totalConsumptionEn"].get<std::string>());
-      if (parsed.has_value() && !out.values.count("consumption_ev_kwh_per_100km")) {
+      if (parsed.has_value() &&
+          !out.values.count("consumption_ev_kwh_per_100km")) {
         out.values["consumption_ev_kwh_per_100km"] = *parsed;
       }
     }

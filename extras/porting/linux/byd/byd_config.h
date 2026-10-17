@@ -10,8 +10,8 @@
 #include <cstdlib>
 #include <string>
 
-#include "byd_types.h"
 #include "byd_readings.h"
+#include "byd_types.h"
 #include "linux_channel_factory.h"
 #include "linux_yaml_config.h"
 
@@ -94,8 +94,7 @@ inline bool parseVehicleConfig(const ChannelFactoryContext& context,
   }
   if (ch["energy_type"]) {
     context.config.markChannelParameterUsed();
-    out->energyType =
-        static_cast<EnergyType>(ch["energy_type"].as<int>());
+    out->energyType = static_cast<EnergyType>(ch["energy_type"].as<int>());
   }
   if (ch["model_name"]) {
     context.config.markChannelParameterUsed();

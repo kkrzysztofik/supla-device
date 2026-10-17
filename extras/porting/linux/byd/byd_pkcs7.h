@@ -13,8 +13,9 @@ namespace Supla {
 namespace Linux {
 namespace Byd {
 
-std::vector<unsigned char> addPkcs7(const unsigned char* data, size_t len,
-                                  size_t blockSize = 16);
+std::vector<unsigned char> addPkcs7(const unsigned char* data,
+                                    size_t len,
+                                    size_t blockSize = 16);
 std::vector<unsigned char> stripPkcs7(const std::vector<unsigned char>& data);
 
 }  // namespace Byd

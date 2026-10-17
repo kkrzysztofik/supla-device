@@ -52,14 +52,16 @@ bool BydHttpClient::postJson(const std::string& url,
   curl_easy_setopt(handle, CURLOPT_URL, url.c_str());
   curl_easy_setopt(handle, CURLOPT_POST, 1L);
   curl_easy_setopt(handle, CURLOPT_POSTFIELDS, body.c_str());
-  curl_easy_setopt(handle, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+  curl_easy_setopt(
+      handle, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
   curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeCallback);
   curl_easy_setopt(handle, CURLOPT_WRITEDATA, responseBody);
   curl_easy_setopt(handle, CURLOPT_TIMEOUT, 30L);
   curl_easy_setopt(handle, CURLOPT_ACCEPT_ENCODING, "identity");
 
   struct curl_slist* headers = nullptr;
-  headers = curl_slist_append(headers, "content-type: application/json; charset=UTF-8");
+  headers = curl_slist_append(headers,
+                              "content-type: application/json; charset=UTF-8");
   const std::string uaHeader = "user-agent: " + userAgent;
   headers = curl_slist_append(headers, uaHeader.c_str());
   curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers);

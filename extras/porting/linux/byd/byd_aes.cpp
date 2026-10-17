@@ -63,10 +63,14 @@ std::string aesEncryptHex(const std::string& plaintext,
   int outLen1 = 0;
   int outLen2 = 0;
 
-  if (EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), nullptr, key.data(), zeroIv) != 1 ||
-      EVP_EncryptUpdate(ctx, ciphertext.data(), &outLen1,
-                        reinterpret_cast<const unsigned char*>(plaintext.data()),
-                        static_cast<int>(plaintext.size())) != 1 ||
+  if (EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), nullptr, key.data(), zeroIv) !=
+          1 ||
+      EVP_EncryptUpdate(
+          ctx,
+          ciphertext.data(),
+          &outLen1,
+          reinterpret_cast<const unsigned char*>(plaintext.data()),
+          static_cast<int>(plaintext.size())) != 1 ||
       EVP_EncryptFinal_ex(ctx, ciphertext.data() + outLen1, &outLen2) != 1) {
     EVP_CIPHER_CTX_free(ctx);
     return {};
@@ -97,15 +101,20 @@ std::string aesDecryptUtf8(const std::string& cipherHex,
   int outLen1 = 0;
   int outLen2 = 0;
 
-  if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), nullptr, key.data(), zeroIv) != 1 ||
-      EVP_DecryptUpdate(ctx, plaintext.data(), &outLen1, cipher.data(),
+  if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), nullptr, key.data(), zeroIv) !=
+          1 ||
+      EVP_DecryptUpdate(ctx,
+                        plaintext.data(),
+                        &outLen1,
+                        cipher.data(),
                         static_cast<int>(cipher.size())) != 1 ||
       EVP_DecryptFinal_ex(ctx, plaintext.data() + outLen1, &outLen2) != 1) {
     EVP_CIPHER_CTX_free(ctx);
     return {};
   }
   EVP_CIPHER_CTX_free(ctx);
-  return std::string(reinterpret_cast<char*>(plaintext.data()), outLen1 + outLen2);
+  return std::string(reinterpret_cast<char*>(plaintext.data()),
+                     outLen1 + outLen2);
 }
 
 }  // namespace Byd

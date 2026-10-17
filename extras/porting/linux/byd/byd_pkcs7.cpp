@@ -8,11 +8,12 @@ namespace Supla {
 namespace Linux {
 namespace Byd {
 
-std::vector<unsigned char> addPkcs7(const unsigned char* data, size_t len,
+std::vector<unsigned char> addPkcs7(const unsigned char* data,
+                                    size_t len,
                                     size_t blockSize) {
   const size_t remainder = len % blockSize;
-  const unsigned char padLen =
-      static_cast<unsigned char>(remainder == 0 ? blockSize : blockSize - remainder);
+  const unsigned char padLen = static_cast<unsigned char>(
+      remainder == 0 ? blockSize : blockSize - remainder);
   std::vector<unsigned char> out;
   out.reserve(len + padLen);
   out.insert(out.end(), data, data + len);

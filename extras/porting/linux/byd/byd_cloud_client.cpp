@@ -4,16 +4,15 @@
 
 #include "byd_cloud_client.h"
 
-#include "byd_aes.h"
-#include "byd_hash.h"
-#include "byd_sign.h"
-
-#include <supla/log_wrapper.h>
-
 #include <openssl/rand.h>
+#include <supla/log_wrapper.h>
 
 #include <chrono>
 #include <thread>
+
+#include "byd_aes.h"
+#include "byd_hash.h"
+#include "byd_sign.h"
 
 namespace Supla {
 namespace Linux {
@@ -38,7 +37,8 @@ nlohmann::json buildInnerBase(const BydAccountConfig& config,
                               const std::string& requestSerial) {
   nlohmann::json inner = {
       {"deviceType", config.deviceType},
-      {"imeiMD5", config.imeiMd5.empty() ? md5Hex(config.username) : config.imeiMd5},
+      {"imeiMD5",
+       config.imeiMd5.empty() ? md5Hex(config.username) : config.imeiMd5},
       {"networkType", config.networkType},
       {"random", ""},
       {"timeStamp", std::to_string(nowMs)},
@@ -65,8 +65,10 @@ bool isRealtimeReady(const nlohmann::json& payload) {
     return false;
   }
   static const char* kTireFields[] = {
-      "leftFrontTirepressure", "rightFrontTirepressure",
-      "leftRearTirepressure",  "rightRearTirepressure",
+      "leftFrontTirepressure",
+      "rightFrontTirepressure",
+      "leftRearTirepressure",
+      "rightRearTirepressure",
   };
   for (const char* field : kTireFields) {
     if (payload.value(field, 0.0) > 0.0) {
@@ -134,7 +136,11 @@ bool BydCloudClient::postSecure(const std::string& endpoint,
   int status = 0;
   std::string responseBody;
   std::string httpError;
-  if (!http_.postJson(url, jsonCompact(body), kUserAgent, &status, &responseBody,
+  if (!http_.postJson(url,
+                      jsonCompact(body),
+                      kUserAgent,
+                      &status,
+                      &responseBody,
                       &httpError)) {
     if (error) {
       *error = httpError;
@@ -143,7 +149,8 @@ bool BydCloudClient::postSecure(const std::string& endpoint,
   }
   if (status != 200) {
     if (error) {
-      *error = "HTTP " + std::to_string(status) + ": " + responseBody.substr(0, 200);
+      *error =
+          "HTTP " + std::to_string(status) + ": " + responseBody.substr(0, 200);
     }
     return false;
   }
@@ -233,8 +240,9 @@ bool BydCloudClient::login(std::string* error) {
 
   std::map<std::string, std::string> signFields;
   for (auto it = inner.begin(); it != inner.end(); ++it) {
-    signFields[it.key()] = it.value().is_string() ? it.value().get<std::string>()
-                                                  : jsonCompact(it.value());
+    signFields[it.key()] = it.value().is_string()
+                               ? it.value().get<std::string>()
+                               : jsonCompact(it.value());
   }
   signFields["appName"] = kAppName;
   signFields["countryCode"] = config_.countryCode;
@@ -255,7 +263,8 @@ bool BydCloudClient::login(std::string* error) {
       {"isAuto", config_.isAuto},
       {"language", config_.language},
       {"reqTimestamp", reqTimestamp},
-      {"sign", sha1Mixed(buildSignString(signFields, md5Hex(config_.password)))},
+      {"sign",
+       sha1Mixed(buildSignString(signFields, md5Hex(config_.password)))},
       {"signKey", config_.password},
       {"ostype", config_.ostype},
       {"imei", config_.imei},
@@ -268,8 +277,9 @@ bool BydCloudClient::login(std::string* error) {
 
   std::map<std::string, std::string> checkFields;
   for (auto it = outer.begin(); it != outer.end(); ++it) {
-    checkFields[it.key()] = it.value().is_string() ? it.value().get<std::string>()
-                                                     : jsonCompact(it.value());
+    checkFields[it.key()] = it.value().is_string()
+                                ? it.value().get<std::string>()
+                                : jsonCompact(it.value());
   }
   outer["checkcode"] = computeCheckcodeJson(jsonCompact(outer));
 
@@ -280,8 +290,8 @@ bool BydCloudClient::login(std::string* error) {
 
   if (response.value("code", "") != "0") {
     if (error) {
-      *error = "login failed code=" + response.value("code", "") + " msg=" +
-               response.value("message", "");
+      *error = "login failed code=" + response.value("code", "") +
+               " msg=" + response.value("message", "");
     }
     return false;
   }
@@ -405,8 +415,8 @@ bool BydCloudClient::postTokenJson(const std::string& endpoint,
       }
     }
     if (error) {
-      *error = endpoint + " failed code=" + code + " msg=" +
-               response.value("message", "");
+      *error = endpoint + " failed code=" + code +
+               " msg=" + response.value("message", "");
     }
     return false;
   }
@@ -444,8 +454,7 @@ bool BydCloudClient::triggerAndPoll(const std::string& triggerEndpoint,
   const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();
-  nlohmann::json inner =
-      buildInnerBase(config_, nowMs, vin, std::string());
+  nlohmann::json inner = buildInnerBase(config_, nowMs, vin, std::string());
   if (includeEnergyType) {
     inner["energyType"] = std::to_string(static_cast<int>(energyType));
     inner["tboxVersion"] = config_.tboxVersion;
@@ -453,7 +462,8 @@ bool BydCloudClient::triggerAndPoll(const std::string& triggerEndpoint,
 
   nlohmann::json triggerPayload;
   std::string localError;
-  if (!postTokenJson(triggerEndpoint, inner, &triggerPayload, vin, &localError)) {
+  if (!postTokenJson(
+          triggerEndpoint, inner, &triggerPayload, vin, &localError)) {
     if (error) {
       *error = localError;
     }
@@ -484,7 +494,8 @@ bool BydCloudClient::triggerAndPoll(const std::string& triggerEndpoint,
       pollInner["tboxVersion"] = config_.tboxVersion;
     }
     nlohmann::json pollPayload;
-    if (!postTokenJson(pollEndpoint, pollInner, &pollPayload, vin, &localError)) {
+    if (!postTokenJson(
+            pollEndpoint, pollInner, &pollPayload, vin, &localError)) {
       if (error) {
         *error = localError;
       }
@@ -523,13 +534,13 @@ bool BydCloudClient::fetchChargingHomepage(const std::string& vin,
                                            nlohmann::json* out,
                                            std::string* error) {
   std::lock_guard<std::mutex> lock(mutex_);
-  nlohmann::json inner = buildInnerBase(
-      config_,
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::system_clock::now().time_since_epoch())
-          .count(),
-      vin,
-      std::string());
+  nlohmann::json inner =
+      buildInnerBase(config_,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count(),
+                     vin,
+                     std::string());
   return postTokenJson("/control/smartCharge/homePage", inner, out, vin, error);
 }
 
@@ -537,13 +548,13 @@ bool BydCloudClient::fetchHvacStatus(const std::string& vin,
                                      nlohmann::json* out,
                                      std::string* error) {
   std::lock_guard<std::mutex> lock(mutex_);
-  nlohmann::json inner = buildInnerBase(
-      config_,
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::system_clock::now().time_since_epoch())
-          .count(),
-      vin,
-      std::string());
+  nlohmann::json inner =
+      buildInnerBase(config_,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count(),
+                     vin,
+                     std::string());
   nlohmann::json decoded;
   if (!postTokenJson("/control/getStatusNow", inner, &decoded, vin, error)) {
     return false;
@@ -573,20 +584,23 @@ bool BydCloudClient::fetchEnergyConsumption(const BydVehicleConfig& vehicle,
                                             nlohmann::json* out,
                                             std::string* error) {
   std::lock_guard<std::mutex> lock(mutex_);
-  nlohmann::json inner = buildInnerBase(
-      config_,
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::system_clock::now().time_since_epoch())
-          .count(),
-      vehicle.vin,
-      std::string());
+  nlohmann::json inner =
+      buildInnerBase(config_,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count(),
+                     vehicle.vin,
+                     std::string());
   inner["powerType"] = std::to_string(static_cast<int>(vehicle.energyType));
   inner["requestType"] = 0;
   if (!vehicle.modelName.empty()) {
     inner["autoModelNameOut"] = vehicle.modelName;
   }
-  return postTokenJson("/vehicleInfo/vehicle/getEnergyConsumption", inner, out,
-                       vehicle.vin, error);
+  return postTokenJson("/vehicleInfo/vehicle/getEnergyConsumption",
+                       inner,
+                       out,
+                       vehicle.vin,
+                       error);
 }
 
 }  // namespace Byd

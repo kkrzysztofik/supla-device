@@ -21,7 +21,9 @@ class BangcleCodec {
   explicit BangcleCodec(const std::string& tablesPath = {});
 
   bool loadTables();
-  bool isLoaded() const { return loaded_; }
+  bool isLoaded() const {
+    return loaded_;
+  }
 
   std::string encodeEnvelope(const std::string& plaintext) const;
   std::vector<unsigned char> decodeEnvelope(const std::string& envelope) const;

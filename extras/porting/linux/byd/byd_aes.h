@@ -11,8 +11,10 @@ namespace Supla {
 namespace Linux {
 namespace Byd {
 
-std::string aesEncryptHex(const std::string& plaintext, const std::string& keyHex);
-std::string aesDecryptUtf8(const std::string& cipherHex, const std::string& keyHex);
+std::string aesEncryptHex(const std::string& plaintext,
+                          const std::string& keyHex);
+std::string aesDecryptUtf8(const std::string& cipherHex,
+                           const std::string& keyHex);
 
 }  // namespace Byd
 }  // namespace Linux

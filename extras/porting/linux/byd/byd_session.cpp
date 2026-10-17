@@ -18,7 +18,8 @@ BydSession::BydSession(std::string userId,
       signToken_(std::move(signToken)),
       encryToken_(std::move(encryToken)),
       createdAt_(std::chrono::steady_clock::now()),
-      ttlSec_(ttlSec) {}
+      ttlSec_(ttlSec) {
+}
 
 bool BydSession::isExpired() const {
   if (ttlSec_ <= 0) {

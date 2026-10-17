@@ -18,8 +18,8 @@ namespace PV {
 class BydMeasurement : public Supla::Sensor::GeneralPurposeMeasurement {
  public:
   BydMeasurement(Supla::Linux::Byd::BydAccountConfig account,
-                   Supla::Linux::Byd::BydVehicleConfig vehicle,
-                   std::string fieldKey);
+                 Supla::Linux::Byd::BydVehicleConfig vehicle,
+                 std::string fieldKey);
   ~BydMeasurement() override;
 
   void onInit() override;

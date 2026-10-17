@@ -86,7 +86,8 @@ std::string sha1Mixed(const std::string& value) {
   return filtered;
 }
 
-std::string computeCheckcode(const std::map<std::string, std::string>& payload) {
+std::string computeCheckcode(
+    const std::map<std::string, std::string>& payload) {
   std::ostringstream json;
   json << '{';
   bool first = true;

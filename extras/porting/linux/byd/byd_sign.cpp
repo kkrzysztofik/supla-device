@@ -4,9 +4,9 @@
 
 #include "byd_sign.h"
 
-#include "byd_hash.h"
-
 #include <map>
+
+#include "byd_hash.h"
 
 namespace Supla {
 namespace Linux {

@@ -5,9 +5,8 @@
 #ifndef EXTRAS_PORTING_LINUX_BYD_BYD_CLOUD_CLIENT_H_
 #define EXTRAS_PORTING_LINUX_BYD_BYD_CLOUD_CLIENT_H_
 
-#include <nlohmann/json.hpp>
-
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <string>
 
 #include "byd_bangcle.h"

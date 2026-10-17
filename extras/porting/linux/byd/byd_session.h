@@ -21,7 +21,9 @@ class BydSession {
              double ttlSec);
 
   bool isExpired() const;
-  const std::string& userId() const { return userId_; }
+  const std::string& userId() const {
+    return userId_;
+  }
   std::string contentKey() const;
   std::string signKey() const;
 

@@ -5,9 +5,8 @@
 #ifndef EXTRAS_PORTING_LINUX_BYD_BYD_READINGS_H_
 #define EXTRAS_PORTING_LINUX_BYD_BYD_READINGS_H_
 
-#include <nlohmann/json.hpp>
-
 #include <map>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 

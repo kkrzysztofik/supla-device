@@ -860,9 +860,8 @@ bool Supla::LinuxYamlConfig::parseChannel(const YAML::Node& ch,
       channelNumberConfigured = true;
       channelNumber = channelNumberParameter.as<int>();
       if (channelNumber < 0 || channelNumber >= SUPLA_CHANNELMAXCOUNT) {
-        SUPLA_LOG_ERROR(
-            "Config: channel_number has to be in range 0..%d",
-            SUPLA_CHANNELMAXCOUNT - 1);
+        SUPLA_LOG_ERROR("Config: channel_number has to be in range 0..%d",
+                        SUPLA_CHANNELMAXCOUNT - 1);
         return false;
       }
     }
@@ -1174,18 +1173,16 @@ bool Supla::LinuxYamlConfig::addCmdRollerShutter(
     auto cmdUpOn = cmdUpOnParameter.as<std::string>();
     cr->setCmdUpOn(cmdUpOn);
   } else {
-    SUPLA_LOG_ERROR(
-        "CmdRollerShutter[%d]: missing \"cmd_up_on\" parameter",
-        channelNumber);
+    SUPLA_LOG_ERROR("CmdRollerShutter[%d]: missing \"cmd_up_on\" parameter",
+                    channelNumber);
     return false;
   }
   if (auto cmdUpOffParameter = getAndMarkChannelParameter(ch, "cmd_up_off")) {
     auto cmdUpOff = cmdUpOffParameter.as<std::string>();
     cr->setCmdUpOff(cmdUpOff);
   } else {
-    SUPLA_LOG_ERROR(
-        "CmdRollerShutter[%d]: missing \"cmd_up_off\" parameter",
-        channelNumber);
+    SUPLA_LOG_ERROR("CmdRollerShutter[%d]: missing \"cmd_up_off\" parameter",
+                    channelNumber);
     return false;
   }
 
@@ -1193,9 +1190,8 @@ bool Supla::LinuxYamlConfig::addCmdRollerShutter(
     auto cmdDownOn = cmdDownOnParameter.as<std::string>();
     cr->setCmdDownOn(cmdDownOn);
   } else {
-    SUPLA_LOG_ERROR(
-        "CmdRollerShutter[%d]: missing \"cmd_down_on\" parameter",
-        channelNumber);
+    SUPLA_LOG_ERROR("CmdRollerShutter[%d]: missing \"cmd_down_on\" parameter",
+                    channelNumber);
     return false;
   }
   if (auto cmdDownOffParameter =
@@ -1203,9 +1199,8 @@ bool Supla::LinuxYamlConfig::addCmdRollerShutter(
     auto cmdDownOff = cmdDownOffParameter.as<std::string>();
     cr->setCmdDownOff(cmdDownOff);
   } else {
-    SUPLA_LOG_ERROR(
-        "CmdRollerShutter[%d]: missing \"cmd_down_off\" parameter",
-        channelNumber);
+    SUPLA_LOG_ERROR("CmdRollerShutter[%d]: missing \"cmd_down_off\" parameter",
+                    channelNumber);
     return false;
   }
 
@@ -2448,8 +2443,7 @@ Supla::Output::Output* Supla::LinuxYamlConfig::addOutput(
       int qos = output["qos"].as<int>(0);
       if (qos < 0 || qos > 2) {
         SUPLA_LOG_ERROR(
-            "Config: MQTT output qos has to be in range 0..2 (got %d)",
-            qos);
+            "Config: MQTT output qos has to be in range 0..2 (got %d)", qos);
         return nullptr;
       }
       out = new Supla::Output::Mqtt(*this, controlTopic.c_str(), qos);
@@ -3078,9 +3072,8 @@ bool Supla::LinuxYamlConfig::addCommonParametersParsed(
           getAndMarkChannelParameter(ch, "channel_number")) {  // optional
     int channelNumber = channelNumberParameter.as<int>();
     if (channelNumber < 0 || channelNumber >= SUPLA_CHANNELMAXCOUNT) {
-      SUPLA_LOG_ERROR(
-          "Channel config: channel_number has to be in range 0..%d",
-          SUPLA_CHANNELMAXCOUNT - 1);
+      SUPLA_LOG_ERROR("Channel config: channel_number has to be in range 0..%d",
+                      SUPLA_CHANNELMAXCOUNT - 1);
       return false;
     }
     auto ch = sensor->getChannel();
@@ -3101,8 +3094,7 @@ bool Supla::LinuxYamlConfig::addCommonParametersParsed(
           getAndMarkChannelParameter(ch, "icon_id")) {  // optional
     int iconId = iconIdParameter.as<int>();
     if (iconId < 0 || iconId > 255) {
-      SUPLA_LOG_ERROR(
-          "Channel config: icon_id has to be in range 0..255");
+      SUPLA_LOG_ERROR("Channel config: icon_id has to be in range 0..255");
       return false;
     }
     auto ch = sensor->getChannel();
@@ -3134,9 +3126,8 @@ bool Supla::LinuxYamlConfig::addCommonParameters(const YAML::Node& ch,
           getAndMarkChannelParameter(ch, "channel_number")) {  // optional
     int channelNumber = channelNumberParameter.as<int>();
     if (channelNumber < 0 || channelNumber >= SUPLA_CHANNELMAXCOUNT) {
-      SUPLA_LOG_ERROR(
-          "Channel config: channel_number has to be in range 0..%d",
-          SUPLA_CHANNELMAXCOUNT - 1);
+      SUPLA_LOG_ERROR("Channel config: channel_number has to be in range 0..%d",
+                      SUPLA_CHANNELMAXCOUNT - 1);
       return false;
     }
     auto ch = element->getChannel();
@@ -3157,8 +3148,7 @@ bool Supla::LinuxYamlConfig::addCommonParameters(const YAML::Node& ch,
           getAndMarkChannelParameter(ch, "icon_id")) {  // optional
     int iconId = iconIdParameter.as<int>();
     if (iconId < 0 || iconId > 255) {
-      SUPLA_LOG_ERROR(
-          "Channel config: icon_id has to be in range 0..255");
+      SUPLA_LOG_ERROR("Channel config: icon_id has to be in range 0..255");
       return false;
     }
     auto ch = element->getChannel();
