@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -40,18 +41,52 @@ using Supla::Linux::Byd::BydHttpTransport;
 using Supla::Linux::Byd::BydVehicleConfig;
 using Supla::Linux::Byd::BydVehiclePoller;
 
-// Relative to the test working directory (extras/test/build). postSecure()
-// refuses to touch the transport until the Bangcle codec has loaded these, so
-// a wrong path shows up below as "transport never reached".
-constexpr const char* kBangcleTablesPath =
-    "../../porting/linux/byd/data/bangcle_tables.bin";
+// postSecure() refuses to touch the transport until the Bangcle codec has
+// loaded its tables, so the tests need the repository copy. ctest runs from the
+// build directory, but the binary is also started by hand and by IDE runners
+// from other directories, so search upwards instead of hard-coding one
+// relative path. Returns an empty string if the repository is not reachable;
+// the assertions below then report it.
+std::string searchUpwardsForBangcleTables(std::filesystem::path directory) {
+  const std::filesystem::path relativePath =
+      "extras/porting/linux/byd/data/bangcle_tables.bin";
+  std::error_code error;
+  while (!directory.empty()) {
+    const auto candidate = directory / relativePath;
+    if (std::filesystem::exists(candidate, error)) {
+      return candidate.string();
+    }
+    const auto parent = directory.parent_path();
+    if (parent == directory) {
+      break;
+    }
+    directory = parent;
+  }
+  return {};
+}
+
+std::string findBangcleTables() {
+  std::error_code error;
+  const auto fromCwd =
+      searchUpwardsForBangcleTables(std::filesystem::current_path(error));
+  if (!fromCwd.empty()) {
+    return fromCwd;
+  }
+  // Started from outside the repository: look next to this executable.
+  const auto executable =
+      std::filesystem::read_symlink("/proc/self/exe", error);
+  if (error || executable.empty()) {
+    return {};
+  }
+  return searchUpwardsForBangcleTables(executable.parent_path());
+}
 
 BydAccountConfig testAccount() {
   BydAccountConfig account;
   account.username = "concurrency-test@example.com";
   account.password = "secret";
   account.baseUrl = "https://example.invalid";
-  account.bangcleTablesPath = kBangcleTablesPath;
+  account.bangcleTablesPath = findBangcleTables();
   return account;
 }
 
@@ -162,27 +197,32 @@ bool runWithTimeout(const std::function<bool()>& fn,
 TEST(BydConcurrencyTest, FetchReturnsInsteadOfDeadlockingOnClientMutex) {
   auto transport = std::make_unique<FakeHttpTransport>();
   FakeHttpTransport* fake = transport.get();
-  BydCloudClient client(testAccount(), std::move(transport));
+  auto client =
+      std::make_unique<BydCloudClient>(testAccount(), std::move(transport));
 
   nlohmann::json out;
   std::string error;
   bool fetched = true;
   const bool returned = runWithTimeout(
       [&client, &out, &error] {
-        return client.fetchRealtime(
+        return client->fetchRealtime(
             testVehicle("TESTVINCONCURRENCY0001"), &out, &error);
       },
       5s,
       &fetched);
 
-  ASSERT_TRUE(returned)
-      << "fetchRealtime() deadlocked: ensureLoggedIn() re-locked mutex_";
+  if (!returned) {
+    // Intentional leak: the hung thread still reads the client, so destroying
+    // it here would be a use-after-free in the failure path.
+    new std::unique_ptr<BydCloudClient>(std::move(client));
+    FAIL() << "fetchRealtime() deadlocked: ensureLoggedIn() re-locked mutex_";
+  }
   // No login response is served, so the fetch reports failure - the point is
   // that it returns at all, and with the request actually sent.
   EXPECT_FALSE(fetched);
   EXPECT_GT(fake->calls(), 0)
-      << "transport was never reached; missing Bangcle tables at "
-      << kBangcleTablesPath;
+      << "transport was never reached; Bangcle tables not found from the "
+         "current directory";
 }
 
 // Same lock-recursion on another entry point, which also retries once on a
@@ -190,25 +230,30 @@ TEST(BydConcurrencyTest, FetchReturnsInsteadOfDeadlockingOnClientMutex) {
 TEST(BydConcurrencyTest, ChargingHomepageFetchReturnsInsteadOfDeadlocking) {
   auto transport = std::make_unique<FakeHttpTransport>();
   FakeHttpTransport* fake = transport.get();
-  BydCloudClient client(testAccount(), std::move(transport));
+  auto client =
+      std::make_unique<BydCloudClient>(testAccount(), std::move(transport));
 
   nlohmann::json out;
   std::string error;
   bool fetched = true;
   const bool returned = runWithTimeout(
       [&client, &out, &error] {
-        return client.fetchChargingHomepage(
+        return client->fetchChargingHomepage(
             "TESTVINCONCURRENCY0002", &out, &error);
       },
       5s,
       &fetched);
 
-  ASSERT_TRUE(returned) << "fetchChargingHomepage() deadlocked: "
-                           "ensureLoggedIn() re-locked mutex_";
+  if (!returned) {
+    // Intentional leak, as above.
+    new std::unique_ptr<BydCloudClient>(std::move(client));
+    FAIL() << "fetchChargingHomepage() deadlocked: ensureLoggedIn() re-locked "
+              "mutex_";
+  }
   EXPECT_FALSE(fetched);
   EXPECT_GT(fake->calls(), 0)
-      << "transport was never reached; missing Bangcle tables at "
-      << kBangcleTablesPath;
+      << "transport was never reached; Bangcle tables not found from the "
+         "current directory";
 }
 
 // unsubscribe() erased the subscriber and then joined the worker while still
@@ -235,8 +280,22 @@ TEST(BydConcurrencyTest, UnsubscribeReturnsWhileWorkerIsPublishing) {
   // Park the worker inside pollOnce(), before it takes subscribersMutex_ to
   // publish the readings it just fetched.
   ASSERT_TRUE(fake->waitForFirstCall(10s))
-      << "worker never called the transport; missing Bangcle tables at "
-      << kBangcleTablesPath;
+      << "worker never called the transport; Bangcle tables not found from "
+         "the current directory";
+
+  // The hook fires while unsubscribe() holds subscribersMutex_, which removes
+  // the timing guesswork: the worker is only released once the lock is
+  // provably held, so a join performed under that lock must deadlock.
+  std::mutex hookMutex;
+  std::condition_variable hookCv;
+  bool lockHeld = false;
+  poller->setSubscribersLockHookForTest([&hookMutex, &hookCv, &lockHeld] {
+    {
+      std::lock_guard<std::mutex> hookLock(hookMutex);
+      lockHeld = true;
+    }
+    hookCv.notify_all();
+  });
 
   std::atomic<bool> unsubscribed{false};
   std::thread unsubscriber([&poller, &state, &unsubscribed] {
@@ -244,9 +303,12 @@ TEST(BydConcurrencyTest, UnsubscribeReturnsWhileWorkerIsPublishing) {
     unsubscribed.store(true);
   });
 
-  // Let unsubscribe() take subscribersMutex_, then release the worker so it
-  // needs that same mutex to publish before it can reach the stop flag.
-  std::this_thread::sleep_for(200ms);
+  {
+    std::unique_lock<std::mutex> hookLock(hookMutex);
+    ASSERT_TRUE(hookCv.wait_for(hookLock, 10s, [&lockHeld] {
+      return lockHeld;
+    })) << "unsubscribe() never reached subscribersMutex_";
+  }
   fake->openGate();
 
   const auto deadline = std::chrono::steady_clock::now() + 10s;
