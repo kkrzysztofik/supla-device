@@ -63,3 +63,24 @@ TEST(IngeconBusTest, InvalidateCachedReadingsMarksCacheInvalidButKeepsValues) {
   EXPECT_EQ(state->readings.pac, 1234);
   EXPECT_EQ(state->readings.alarms, 99u);
 }
+
+TEST(IngeconBusTest, EnergyFilterRejectsSpikeAndConfirmsReset) {
+  using Supla::Linux::Ingecon::EnergyFilter;
+  using Supla::Linux::Ingecon::filterTotalEnergyKwh;
+
+  EnergyFilter filter;
+  EXPECT_EQ(filterTotalEnergyKwh(&filter, 58480u), 58480u);
+  EXPECT_EQ(filterTotalEnergyKwh(&filter, 58481u), 58481u);
+  // Garbage high word observed on AAS1340_U: one-off spike is held back.
+  EXPECT_EQ(filterTotalEnergyKwh(&filter, 0x8080E470u), 58481u);
+  EXPECT_EQ(filterTotalEnergyKwh(&filter, 58481u), 58481u);
+  // Genuine counter reset is accepted once a second poll confirms it.
+  EXPECT_EQ(filterTotalEnergyKwh(&filter, 10u), 58481u);
+  EXPECT_EQ(filterTotalEnergyKwh(&filter, 10u), 10u);
+
+  // Garbage as the very first reading recovers after one confirmation.
+  EnergyFilter fresh;
+  EXPECT_EQ(filterTotalEnergyKwh(&fresh, 0x8080E470u), 0x8080E470u);
+  EXPECT_EQ(filterTotalEnergyKwh(&fresh, 58480u), 0x8080E470u);
+  EXPECT_EQ(filterTotalEnergyKwh(&fresh, 58480u), 58480u);
+}

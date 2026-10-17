@@ -9,9 +9,37 @@
 
 #include "ingecon_types.h"
 
+#include <supla/log_wrapper.h>
+
 namespace Supla {
 namespace Linux {
 namespace Ingecon {
+
+namespace {
+
+bool isPlausibleEnergyStep(uint32_t from, uint32_t to) {
+  return to >= from && to - from <= kMaxEnergyStepKwh;
+}
+
+}  // namespace
+
+uint32_t filterTotalEnergyKwh(EnergyFilter* filter, uint32_t kwh) {
+  if (!filter->hasAccepted || isPlausibleEnergyStep(filter->accepted, kwh) ||
+      (filter->hasCandidate && isPlausibleEnergyStep(filter->candidate, kwh))) {
+    filter->hasAccepted = true;
+    filter->accepted = kwh;
+    filter->hasCandidate = false;
+    return kwh;
+  }
+  SUPLA_LOG_WARNING(
+      "Ingecon: implausible total energy %u kWh (last accepted %u kWh), "
+      "keeping last value until confirmed",
+      kwh,
+      filter->accepted);
+  filter->hasCandidate = true;
+  filter->candidate = kwh;
+  return filter->accepted;
+}
 
 int normalizePollIntervalSec(int pollIntervalSec) {
   if (pollIntervalSec < 1) {

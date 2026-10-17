@@ -77,6 +77,7 @@ class Bus : public std::enable_shared_from_this<Bus> {
   bool discoveryAttempted_ = false;
   Profile resolvedProfile_ = Profile::Lite27;
   Readings discoveryReadings_;
+  EnergyFilter energyFilter_;  // worker thread only
 };
 
 }  // namespace Ingecon
