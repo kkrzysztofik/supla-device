@@ -236,6 +236,12 @@ bool Bus::poll(Readings* readings) {
       SUPLA_LOG_WARNING("IngeconBus: main block parse failed");
       continue;
     }
+    const auto filteredEnergy =
+        filterTotalEnergyKwh(&energyFilter_, parsed.totalEnergyKwh);
+    parsed.totalEnergyValid = filteredEnergy.has_value();
+    if (filteredEnergy.has_value()) {
+      parsed.totalEnergyKwh = *filteredEnergy;
+    }
     if (discoveryReadings_.discoveryValid) {
       parsed.discoveryValid = true;
       parsed.serialNumber = discoveryReadings_.serialNumber;

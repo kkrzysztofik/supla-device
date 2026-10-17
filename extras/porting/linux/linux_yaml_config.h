@@ -51,12 +51,12 @@ channels:
 #include <supla/control/control_payload.h>
 #include <supla/output/output.h>
 #include <supla/parser/parser.h>
+#include <supla/payload/payload.h>
 #include <supla/sensor/electricity_meter_parsed.h>
 #include <supla/sensor/sensor_parsed.h>
 #include <supla/source/source.h>
 #include <supla/storage/config.h>
 #include <supla/storage/key_value.h>
-#include <supla/payload/payload.h>
 #include <yaml-cpp/exceptions.h>
 #include <yaml-cpp/yaml.h>
 
@@ -134,7 +134,10 @@ class LinuxYamlConfig : public KeyValue {
 
   void markChannelParameterUsed();
   YAML::Node getAndMarkChannelParameter(const YAML::Node& channel,
-                                         const char* parameter);
+                                        const char* parameter);
+  const YAML::Node& yamlRoot() const {
+    return config;
+  }
   bool addCommonChannelParameters(const YAML::Node& ch,
                                   Supla::Element* element);
 
@@ -153,7 +156,7 @@ class LinuxYamlConfig : public KeyValue {
                                    Supla::Source::Source* src);
   Supla::Source::Source* addSource(const YAML::Node& ch);
   Supla::Payload::Payload* addPayload(const YAML::Node& payload,
-                                         Supla::Output::Output* out);
+                                      Supla::Output::Output* out);
   Supla::Output::Output* addOutput(const YAML::Node& ch);
 
   bool addVirtualRelay(const YAML::Node& ch, int channelNumber);
@@ -180,8 +183,7 @@ class LinuxYamlConfig : public KeyValue {
   bool addCustomHvac(const YAML::Node& ch,
                      int channelNumber,
                      Payload::Payload* payload);
-  bool addCommonParameters(const YAML::Node& ch,
-                           Supla::Element* element);
+  bool addCommonParameters(const YAML::Node& ch, Supla::Element* element);
   bool addWeeklyScheduleParameter(const YAML::Node& ch,
                                   Supla::Element* element);
   bool addDefaultFunctionNumber(const YAML::Node& ch,
@@ -219,14 +221,14 @@ class LinuxYamlConfig : public KeyValue {
                        int channelNumber,
                        Supla::Parser::Parser* parser);
   bool addContainerParsed(const YAML::Node& ch,
-                       int channelNumber,
-                       Supla::Parser::Parser* parser);
+                          int channelNumber,
+                          Supla::Parser::Parser* parser);
   bool addDistanceParsed(const YAML::Node& ch,
                          int channelNumber,
                          Supla::Parser::Parser* parser);
   bool addCustomChannel(const YAML::Node& ch,
-                         int channelNumber,
-                         Supla::Parser::Parser* parser);
+                        int channelNumber,
+                        Supla::Parser::Parser* parser);
   bool addCommonParametersParsed(const YAML::Node& ch,
                                  Supla::Sensor::SensorParsedBase* sensor,
                                  Supla::Parser::Parser* parser);
@@ -237,9 +239,9 @@ class LinuxYamlConfig : public KeyValue {
                       Supla::Parser::Parser* parser,
                       bool mandatory);
   bool addStatePayload(const YAML::Node& ch,
-                        Supla::Payload::ControlPayloadBase* control,
-                        Payload::Payload* payload,
-                        bool mandatory);
+                       Supla::Payload::ControlPayloadBase* control,
+                       Payload::Payload* payload,
+                       bool mandatory);
   bool addActionTriggerActions(const YAML::Node& ch,
                                Supla::Sensor::SensorParsedBase* sensor,
                                bool mandatory);

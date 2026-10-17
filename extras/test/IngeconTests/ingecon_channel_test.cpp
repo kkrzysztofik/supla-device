@@ -35,6 +35,7 @@ BusConfig testConfig() {
 Readings sampleReadings() {
   Readings readings;
   readings.totalEnergyKwh = 12;
+  readings.totalEnergyValid = true;
   readings.vac = 230;
   readings.iac = 5;
   readings.pac = 1234;
@@ -50,6 +51,7 @@ Readings sampleThreePhaseReadings() {
   Readings readings;
   readings.profile = Supla::Linux::Ingecon::Profile::TrifAasV1;
   readings.totalEnergyKwh = 120;
+  readings.totalEnergyValid = true;
   readings.vac = 229;
   readings.vac2 = 230;
   readings.vac3 = 231;

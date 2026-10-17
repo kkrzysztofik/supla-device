@@ -15,8 +15,8 @@
 #include <utility>
 #include <vector>
 
-#include "linux_extension_config_helpers.h"
 #include "linux_channel_factory.h"
+#include "linux_extension_config_helpers.h"
 #include "sma_bus.h"
 #include "sma_bus_client.h"
 #include "sma_dc_meter.h"

@@ -119,11 +119,13 @@ void IngeconInverter::applyValidReadings(
 
 void IngeconInverter::applyOnePhaseReadings(
     const Supla::Linux::Ingecon::Readings& readings) {
-  const uint64_t energy = kwhToSuplaEnergy(readings.totalEnergyKwh);
-  if (energyMapping_ == IngeconEnergyMapping::Forward) {
-    setFwdActEnergy(0, energy);
-  } else {
-    setRvrActEnergy(0, energy);
+  if (readings.totalEnergyValid) {
+    const uint64_t energy = kwhToSuplaEnergy(readings.totalEnergyKwh);
+    if (energyMapping_ == IngeconEnergyMapping::Forward) {
+      setFwdActEnergy(0, energy);
+    } else {
+      setRvrActEnergy(0, energy);
+    }
   }
 
   setPowerActive(0, inverterPowerToSuplaExport(readings.pac));
@@ -144,12 +146,14 @@ void IngeconInverter::applyThreePhaseReadings(
   const uint16_t currents[3] = {readings.iac, readings.iac2, readings.iac3};
 
   for (int phase = 0; phase < 3; ++phase) {
-    if (energyMapping_ == IngeconEnergyMapping::Forward) {
-      setFwdActEnergy(phase, energy);
-      setRvrActEnergy(phase, 0);
-    } else {
-      setRvrActEnergy(phase, energy);
-      setFwdActEnergy(phase, 0);
+    if (readings.totalEnergyValid) {
+      if (energyMapping_ == IngeconEnergyMapping::Forward) {
+        setFwdActEnergy(phase, energy);
+        setRvrActEnergy(phase, 0);
+      } else {
+        setRvrActEnergy(phase, energy);
+        setFwdActEnergy(phase, 0);
+      }
     }
     setVoltage(phase, voltageToSupla(voltages[phase]));
     setCurrent(phase, currentToSupla(currents[phase]));

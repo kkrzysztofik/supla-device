@@ -19,8 +19,7 @@
 
 namespace {
 
-Supla::Linux::SharedBusClientRegistry<Supla::Linux::Sma::SmaBusClient>
-    gClients;
+Supla::Linux::SharedBusClientRegistry<Supla::Linux::Sma::SmaBusClient> gClients;
 
 }  // namespace
 
