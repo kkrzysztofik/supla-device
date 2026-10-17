@@ -13,6 +13,8 @@
 #include <supla/log_wrapper.h>
 
 #include <chrono>
+#include <cmath>
+#include <cstddef>
 #include <thread>
 
 #include "byd_aes.h"
@@ -73,7 +75,8 @@ double jsonNumberOr(const nlohmann::json& obj,
   }
   const auto& value = obj.at(key);
   if (value.is_number()) {
-    return value.get<double>();
+    const double number = value.get<double>();
+    return std::isfinite(number) ? number : fallback;
   }
   if (value.is_string()) {
     const std::string text = value.get<std::string>();
@@ -81,7 +84,14 @@ double jsonNumberOr(const nlohmann::json& obj,
       return fallback;
     }
     try {
-      return std::stod(text);
+      std::size_t consumed = 0;
+      const double number = std::stod(text, &consumed);
+      // Reject partial parses ("1invalid") and non-finite values ("inf",
+      // "nan"): accepting them would make a half-filled response look ready.
+      if (consumed != text.size() || !std::isfinite(number)) {
+        return fallback;
+      }
+      return number;
     } catch (const std::exception&) {
       return fallback;
     }

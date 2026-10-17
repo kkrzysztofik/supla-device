@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 #include "byd_types.h"
 
@@ -119,7 +120,12 @@ int BydReadingsBuilder::getInt(const nlohmann::json& obj,
                                const char* key,
                                int fallback) {
   const auto value = getNumber(obj, key);
-  if (!value.has_value() || !std::isfinite(*value)) {
+  const double intMin = static_cast<double>(std::numeric_limits<int>::min());
+  const double intMax = static_cast<double>(std::numeric_limits<int>::max());
+  if (!value.has_value() || !std::isfinite(*value) ||
+      std::trunc(*value) != *value || *value < intMin || *value > intMax) {
+    // Out-of-range or fractional state codes are rejected rather than
+    // converted: static_cast<int> on them is undefined behaviour.
     return fallback;
   }
   return static_cast<int>(*value);
