@@ -1,10 +1,16 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
 */
 
 #ifndef EXTRAS_PORTING_LINUX_BYD_BYD_CONFIG_H_
 #define EXTRAS_PORTING_LINUX_BYD_BYD_CONFIG_H_
 
+#include <supla/log_wrapper.h>
 #include <yaml-cpp/yaml.h>
 
 #include <cstdlib>
@@ -32,7 +38,11 @@ inline bool parseAccountConfig(const LinuxYamlConfig& yamlConfig,
   }
 
   const YAML::Node rootByd = yamlConfig.yamlRoot()["byd"];
-  const YAML::Node source = channel["byd"] ? channel["byd"] : rootByd;
+  // Reading a key from an invalid node throws YAML::InvalidNode, so fall back
+  // to a defined empty map when neither the channel nor the root has `byd`.
+  const YAML::Node emptyByd(YAML::NodeType::Map);
+  const YAML::Node source =
+      channel["byd"] ? channel["byd"] : (rootByd ? rootByd : emptyByd);
 
   out->username = source["email"] ? source["email"].as<std::string>()
                                   : envOrEmpty("BYD_USERNAME");
@@ -84,13 +94,12 @@ inline bool parseVehicleConfig(const ChannelFactoryContext& context,
   }
   context.config.markChannelParameterUsed();
   out->vin = ch["vin"].as<std::string>();
+  const YAML::Node rootByd = context.config.yamlRoot()["byd"];
   if (ch["poll_interval_sec"]) {
     context.config.markChannelParameterUsed();
     out->pollIntervalSec = ch["poll_interval_sec"].as<int>();
-  } else if (context.config.yamlRoot()["byd"] &&
-             context.config.yamlRoot()["byd"]["poll_interval_sec"]) {
-    out->pollIntervalSec =
-        context.config.yamlRoot()["byd"]["poll_interval_sec"].as<int>();
+  } else if (rootByd && rootByd["poll_interval_sec"]) {
+    out->pollIntervalSec = rootByd["poll_interval_sec"].as<int>();
   }
   if (ch["energy_type"]) {
     context.config.markChannelParameterUsed();
