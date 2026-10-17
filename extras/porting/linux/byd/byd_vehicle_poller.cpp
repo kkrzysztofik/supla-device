@@ -55,6 +55,9 @@ BydVehiclePoller::BydVehiclePoller(BydAccountConfig account,
       client_(std::move(client)) {}
 
 void BydVehiclePoller::shutdown() {
+  // Serialized with subscribe()/unsubscribe() so a subscriber added
+  // concurrently cannot be left without a worker.
+  std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
   stopWorker_.store(true);
   if (worker_.joinable()) {
     worker_.join();
@@ -63,12 +66,17 @@ void BydVehiclePoller::shutdown() {
 }
 
 void BydVehiclePoller::subscribe(Subscriber subscriber) {
-  std::lock_guard<std::mutex> lock(subscribersMutex_);
-  subscribers_.push_back(std::move(subscriber));
+  std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
+  {
+    std::lock_guard<std::mutex> lock(subscribersMutex_);
+    subscribers_.push_back(std::move(subscriber));
+  }
   startWorkerIfNeeded();
 }
 
 void BydVehiclePoller::unsubscribe(void* owner) {
+  std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
+  bool idle = false;
   {
     std::lock_guard<std::mutex> lock(subscribersMutex_);
 #ifdef SUPLA_TEST
@@ -83,10 +91,15 @@ void BydVehiclePoller::unsubscribe(void* owner) {
                          return sub.state && sub.state->owner == owner;
                        }),
         subscribers_.end());
+    idle = subscribers_.empty();
   }
-  // Joins the worker, so it must run without subscribersMutex_ held:
-  // pollOnce() takes the same mutex to publish readings.
-  stopWorkerIfIdle();
+  if (idle) {
+    // Joins the worker, so it must run without subscribersMutex_ held:
+    // pollOnce() takes that mutex to publish readings. lifecycleMutex_ may stay
+    // held, because the worker never takes it - and holding it here is what
+    // keeps a concurrent subscribe() from missing the worker restart.
+    stopWorkerIfIdle();
+  }
 }
 
 void BydVehiclePoller::startWorkerIfNeeded() {

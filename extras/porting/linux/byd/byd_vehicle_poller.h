@@ -72,6 +72,10 @@ class BydVehiclePoller : public std::enable_shared_from_this<BydVehiclePoller> {
   BydVehicleConfig vehicle_;
   std::shared_ptr<BydCloudClient> client_;
 
+  // Serializes subscriber changes against the worker start/stop transition.
+  // Never taken by the worker itself, so a join may be performed while holding
+  // it; subscribersMutex_ only protects the subscriber list.
+  std::mutex lifecycleMutex_;
   std::mutex subscribersMutex_;
   std::vector<Subscriber> subscribers_;
 
