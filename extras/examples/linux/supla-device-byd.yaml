@@ -8,10 +8,14 @@ supla:
 
 byd:
   email: user@example.com
-  password: "${BYD_PASSWORD}"
+  # A password set here is used verbatim: "${BYD_PASSWORD}" is NOT expanded by
+  # the config loader, so it would be sent literally. Leave this key out to
+  # read the password from the BYD_PASSWORD environment variable instead.
   region: eu
   poll_interval_sec: 60
-  bangcle_tables_path: extras/porting/linux/byd/data/bangcle_tables.bin
+  # Resolved against the working directory the binary is started in; the
+  # documented flow starts it from extras/examples/linux.
+  bangcle_tables_path: ../../porting/linux/byd/data/bangcle_tables.bin
 
 channels:
   - type: BydMeasurement

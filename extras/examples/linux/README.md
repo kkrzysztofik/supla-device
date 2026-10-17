@@ -193,24 +193,28 @@ production in the forward/consumption field.
 
 ### BYD cloud telemetry extension
 
-Build with the native BYD extension (read-only DiLink cloud telemetry via
-[`pyBYD`](../../../pyBYD/) wire-format port, no Python runtime):
+Build with the native BYD extension (read-only DiLink cloud telemetry via the
+[pyBYD](https://github.com/jkaberg/pyBYD) wire-format port, no Python runtime):
 
     cd extras/examples/linux
     ./build-byd.sh
     export BYD_PASSWORD='your-password'
-    ./build-linux-byd/supla-device-linux -c supla-device-byd.yaml --verbose
+    ../../../build-linux-byd/supla-device-linux -c supla-device-byd.yaml --verbose
 
-Manual equivalent:
+Manual equivalent (same build directory as `build-byd.sh`):
 
-    cmake -B build-linux-byd \
-      -DSUPLA_LINUX_EXTENSION_DIRS="../../../porting/linux/extensions/byd"
-    cmake --build build-linux-byd -j$(nproc)
+    cmake -S . -B ../../../build-linux-byd \
+      -DSUPLA_LINUX_EXTENSION_DIRS="../../porting/linux/extensions/byd"
+    cmake --build ../../../build-linux-byd -j$(nproc)
 
-Copy `supla-device-byd.yaml`, set SUPLA credentials, BYD account (`byd.email` /
-`byd.password` or `BYD_USERNAME` / `BYD_PASSWORD` env vars), vehicle VIN per
-channel, and `byd.bangcle_tables_path` (defaults to
-`extras/porting/linux/byd/data/bangcle_tables.bin`). Channel types:
+Copy `supla-device-byd.yaml`, set SUPLA credentials, the BYD account
+(`byd.email` plus either `byd.password` in the YAML or the `BYD_PASSWORD`
+environment variable — the config loader does not expand `${...}` placeholders,
+so an unexpanded one would be sent as the password), vehicle VIN per channel,
+and `byd.bangcle_tables_path`. Relative paths there are resolved against the
+working directory the binary is started in; built-in fallbacks cover
+`extras/porting/linux/byd/data/bangcle_tables.bin` and
+`../extras/porting/linux/byd/data/bangcle_tables.bin`. Channel types:
 `BydMeasurement`, `BydMeter`, `BydThermometer`, `BydBinary` — each channel
 declares `byd_field` (e.g. `soc`, `is_charging`, `cabin_temp_c`). Multiple
 channels on one VIN share a single poll loop.
