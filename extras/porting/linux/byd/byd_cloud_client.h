@@ -10,6 +10,7 @@
 #ifndef EXTRAS_PORTING_LINUX_BYD_BYD_CLOUD_CLIENT_H_
 #define EXTRAS_PORTING_LINUX_BYD_BYD_CLOUD_CLIENT_H_
 
+#include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -26,6 +27,9 @@ namespace Byd {
 class BydCloudClient {
  public:
   explicit BydCloudClient(BydAccountConfig config);
+  // Injects the HTTP transport instead of the libcurl one.
+  BydCloudClient(BydAccountConfig config,
+                 std::unique_ptr<BydHttpTransport> transport);
   ~BydCloudClient() = default;
 
   bool ensureLoggedIn(std::string* error);
@@ -80,7 +84,7 @@ class BydCloudClient {
 
   BydAccountConfig config_;
   BangcleCodec codec_;
-  BydHttpClient http_;
+  std::unique_ptr<BydHttpTransport> http_;
   std::mutex mutex_;
   BydSession session_;
   bool hasSession_ = false;

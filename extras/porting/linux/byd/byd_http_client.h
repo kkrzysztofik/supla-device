@@ -16,10 +16,24 @@ namespace Supla {
 namespace Linux {
 namespace Byd {
 
-class BydHttpClient {
+// HTTP transport used by BydCloudClient. The interface exists so tests can
+// drive the client without network access.
+class BydHttpTransport {
+ public:
+  virtual ~BydHttpTransport() = default;
+
+  virtual bool postJson(const std::string& url,
+                        const std::string& body,
+                        const std::string& userAgent,
+                        int* statusCode,
+                        std::string* responseBody,
+                        std::string* error) = 0;
+};
+
+class BydHttpClient : public BydHttpTransport {
  public:
   BydHttpClient();
-  ~BydHttpClient();
+  ~BydHttpClient() override;
 
   BydHttpClient(const BydHttpClient&) = delete;
   BydHttpClient& operator=(const BydHttpClient&) = delete;
@@ -29,7 +43,7 @@ class BydHttpClient {
                 const std::string& userAgent,
                 int* statusCode,
                 std::string* responseBody,
-                std::string* error);
+                std::string* error) override;
 
  private:
   void* curl_ = nullptr;

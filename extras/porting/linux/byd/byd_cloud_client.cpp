@@ -148,7 +148,17 @@ bool isGpsReady(const nlohmann::json& payload) {
 }  // namespace
 
 BydCloudClient::BydCloudClient(BydAccountConfig config)
-    : config_(std::move(config)), codec_(config_.bangcleTablesPath) {
+    : BydCloudClient(std::move(config), std::make_unique<BydHttpClient>()) {
+}
+
+BydCloudClient::BydCloudClient(BydAccountConfig config,
+                               std::unique_ptr<BydHttpTransport> transport)
+    : config_(std::move(config)),
+      codec_(config_.bangcleTablesPath),
+      http_(std::move(transport)) {
+  if (!http_) {
+    http_ = std::make_unique<BydHttpClient>();
+  }
   if (config_.imeiMd5.empty()) {
     config_.imeiMd5 = md5Hex(config_.username);
   }
@@ -190,12 +200,12 @@ bool BydCloudClient::postSecure(const std::string& endpoint,
   int status = 0;
   std::string responseBody;
   std::string httpError;
-  if (!http_.postJson(url,
-                      jsonCompact(body),
-                      kUserAgent,
-                      &status,
-                      &responseBody,
-                      &httpError)) {
+  if (!http_->postJson(url,
+                       jsonCompact(body),
+                       kUserAgent,
+                       &status,
+                       &responseBody,
+                       &httpError)) {
     if (error) {
       *error = httpError;
     }
