@@ -4,14 +4,14 @@
 #include "container.h"
 
 #include <supla-common/proto.h>
-#include <supla/time.h>
-#include <supla/log_wrapper.h>
-#include <supla/storage/config.h>
-#include <supla/storage/storage.h>
-#include <supla/storage/config_tags.h>
 #include <supla/actions.h>
 #include <supla/events.h>
+#include <supla/log_wrapper.h>
 #include <supla/protocol/protocol_layer.h>
+#include <supla/storage/config.h>
+#include <supla/storage/config_tags.h>
+#include <supla/storage/storage.h>
+#include <supla/time.h>
 
 using Supla::Sensor::Container;
 
@@ -119,30 +119,28 @@ void Container::setReadIntervalMs(uint32_t timeMs) {
   readIntervalMs = timeMs;
 }
 
-
 void Container::setAlarmActive(bool alarmActive) {
   channel.setContainerAlarm(alarmActive);
 }
-
 
 bool Container::isAlarmActive() const {
   return channel.isContainerAlarmActive();
 }
 
 void Container::setWarningActive(bool warningActive) {
-    channel.setContainerWarning(warningActive);
+  channel.setContainerWarning(warningActive);
 }
 
 bool Container::isWarningActive() const {
-    return channel.isContainerWarningActive();
+  return channel.isContainerWarningActive();
 }
 
 void Container::setInvalidSensorStateActive(bool invalidSensorStateActive) {
-    channel.setContainerInvalidSensorState(invalidSensorStateActive);
+  channel.setContainerInvalidSensorState(invalidSensorStateActive);
 }
 
 bool Container::isInvalidSensorStateActive() const {
-    return channel.isContainerInvalidSensorStateActive();
+  return channel.isContainerInvalidSensorStateActive();
 }
 
 void Container::setSoundAlarmOn(uint8_t level) {
@@ -325,7 +323,6 @@ int8_t Container::getHighestSensorValueAndUpdateState() {
     sensorOfflineReported = false;
   }
 
-
   return highestValue;
 }
 
@@ -431,7 +428,8 @@ void Container::onLoadConfig(SuplaDeviceClass *) {
 Supla::ApplyConfigResult Container::applyChannelConfig(
     TSD_ChannelConfig *result, bool) {
   SUPLA_LOG_DEBUG(
-      "Contaier[%d]:applyChannelConfig, func %d, configtype %d, configsize %d",
+      "Contaier[%d]:applyChannelConfig, func %d, configtype %d, "
+      "configsize %d",
       getChannelNumber(),
       result->Func,
       result->ConfigType,
@@ -485,8 +483,7 @@ Supla::ApplyConfigResult Container::applyChannelConfig(
     }
     default: {
       SUPLA_LOG_WARNING("Container[%d]: unsupported func %d",
-                        getChannelNumber(),
-                        result->Func);
+                        getChannelNumber(), result->Func);
       break;
     }
   }
@@ -536,8 +533,7 @@ void Container::fillChannelConfig(void *channelConfig,
     case SUPLA_CHANNELFNC_CONTAINER:
     case SUPLA_CHANNELFNC_SEPTIC_TANK:
     case SUPLA_CHANNELFNC_WATER_TANK: {
-      auto cfg = reinterpret_cast<TChannelConfig_Container *>(
-          channelConfig);
+      auto cfg = reinterpret_cast<TChannelConfig_Container *>(channelConfig);
       *size = sizeof(TChannelConfig_Container);
       cfg->AlarmAboveLevel = config.alarmAboveLevel;
       cfg->AlarmBelowLevel = config.alarmBelowLevel;
@@ -589,8 +585,8 @@ void Container::saveConfig() {
     saveConfigChangeFlag();
     cfg->saveWithDelay(5000);
   }
-  for (auto proto = Supla::Protocol::ProtocolLayer::first();
-      proto != nullptr; proto = proto->next()) {
+  for (auto proto = Supla::Protocol::ProtocolLayer::first(); proto != nullptr;
+       proto = proto->next()) {
     proto->notifyConfigChange(getChannelNumber());
   }
 }
@@ -602,7 +598,6 @@ void Container::setSoundAlarmSupported(bool soundAlarmSupported) {
 bool Container::isSoundAlarmSupported() const {
   return soundAlarmSupported;
 }
-
 
 int Container::handleCalcfgFromServer(TSD_DeviceCalCfgRequest *request) {
   if (request) {

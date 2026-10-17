@@ -4,12 +4,14 @@
 #include "linux_yaml_config.h"
 
 #include <supla-common/proto.h>
+#include <supla/control/action_trigger.h>
 #include <supla/control/action_trigger_parsed.h>
 #include <supla/control/cmd_relay.h>
 #include <supla/control/cmd_roller_shutter.h>
 #include <supla/control/cmd_valve.h>
 #include <supla/control/control_payload.h>
 #include <supla/control/custom_relay.h>
+#include <supla/control/relay.h>
 #include <supla/control/rgbcct_parsed.h>
 #include <supla/control/virtual_relay.h>
 #include <supla/custom_channel.h>
@@ -353,19 +355,23 @@ bool Supla::LinuxYamlConfig::getUInt8(const char* key, uint8_t* result) {
 }
 
 void Supla::LinuxYamlConfig::commit() {
+  commitWithResult();
+}
+
+bool Supla::LinuxYamlConfig::commitWithResult() {
   uint8_t buf[SUPLA_LINUX_CONFIG_BUF_SIZE] = {};
 
   size_t dataSize = serializeToMemory(buf, SUPLA_LINUX_CONFIG_BUF_SIZE);
 
-  std::ofstream rwConfigFile(
-      getStateFilesPath() + Supla::ReadWriteConfigStorage,
-      std::ofstream::out | std::ios::binary);
-
-  for (size_t i = 0; i < dataSize; i++) {
-    rwConfigFile << buf[i];
+  if (!Supla::Linux::writeSecureFile(
+          getStateFilesPath() + Supla::ReadWriteConfigStorage,
+          buf,
+          dataSize,
+          false)) {
+    SUPLA_LOG_ERROR("Config: failed to write read/write config storage file");
+    return false;
   }
-
-  rwConfigFile.close();
+  return true;
 }
 
 bool Supla::LinuxYamlConfig::setDeviceName(const char* name) {
@@ -508,6 +514,57 @@ bool Supla::LinuxYamlConfig::getMqttClientHost(char* result) const {
   return false;
 }
 
+bool Supla::LinuxYamlConfig::isValidMqttConfig() const {
+  const auto mqtt = config["mqtt"];
+  if (!mqtt || !mqtt.IsMap()) {
+    SUPLA_LOG_ERROR("Config: mqtt.use_ssl is required (true/false)");
+    return false;
+  }
+  bool useSsl = false;
+  for (const char* key : {"use_ssl", "verify_ca"}) {
+    const auto value = mqtt[key];
+    if (!value) {
+      if (std::string(key) == "use_ssl") {
+        SUPLA_LOG_ERROR("Config: mqtt.use_ssl is required (true/false)");
+        return false;
+      }
+      if (useSsl) {
+        SUPLA_LOG_ERROR(
+            "Config: mqtt.verify_ca is required when mqtt.use_ssl=true");
+        return false;
+      }
+      continue;
+    }
+    bool enabled = false;
+    // Quoted scalars and explicit string tags are strings, not YAML booleans.
+    const auto tag = value.Tag();
+    if (!value.IsScalar() ||
+        (!tag.empty() && tag != "?" && tag != "tag:yaml.org,2002:bool") ||
+        !YAML::convert<bool>::decode(value, enabled)) {
+      SUPLA_LOG_ERROR("Config: mqtt.%s must be a boolean (true/false)", key);
+      return false;
+    }
+    if (std::string(key) == "use_ssl") {
+      useSsl = enabled;
+    }
+  }
+  if (mqtt["port"]) {
+    int port = 0;
+    try {
+      port = mqtt["port"].as<int>();
+    } catch (const YAML::Exception&) {
+      SUPLA_LOG_ERROR("Config: mqtt.port must be an integer");
+      return false;
+    }
+    if (!useSsl && port == 8883) {
+      SUPLA_LOG_ERROR(
+          "Config: mqtt.use_ssl=false conflicts with mqtt.port=8883");
+      return false;
+    }
+  }
+  return true;
+}
+
 int32_t Supla::LinuxYamlConfig::getMqttClientPort() const {
   try {
     if (config["mqtt"] && config["mqtt"]["port"]) {
@@ -517,7 +574,7 @@ int32_t Supla::LinuxYamlConfig::getMqttClientPort() const {
   } catch (const YAML::Exception& ex) {
     logError(file, ex);
   }
-  return config["mqtt"] && config["mqtt"]["use_ssl"] ? 8883 : 1883;
+  return getMqttClientUseSSL() ? 8883 : 1883;
 }
 
 bool Supla::LinuxYamlConfig::getMqttClientUsername(char* result) const {
@@ -563,27 +620,14 @@ bool Supla::LinuxYamlConfig::getMqttClientName(char* result) const {
 }
 
 bool Supla::LinuxYamlConfig::getMqttClientUseSSL() const {
-  try {
-    if (config["mqtt"] && config["mqtt"]["use_ssl"]) {
-      auto mqtt_use_ssl = config["mqtt"]["use_ssl"].as<bool>();
-      return mqtt_use_ssl;
-    }
-  } catch (const YAML::Exception& ex) {
-    logError(file, ex);
-  }
-  return false;
+  return config["mqtt"]["use_ssl"].as<bool>();
 }
 
 bool Supla::LinuxYamlConfig::getMqttClientVerifyCA() const {
-  try {
-    if (config["mqtt"] && config["mqtt"]["verify_ca"]) {
-      auto mqtt_secure = config["mqtt"]["verify_ca"].as<bool>();
-      return mqtt_secure;
-    }
-  } catch (const YAML::Exception& ex) {
-    logError(file, ex);
+  if (!getMqttClientUseSSL() && !config["mqtt"]["verify_ca"]) {
+    return false;
   }
-  return false;
+  return config["mqtt"]["verify_ca"].as<bool>();
 }
 
 bool Supla::LinuxYamlConfig::getMqttClientFileCA(char* result) const {
@@ -1000,6 +1044,9 @@ bool Supla::LinuxYamlConfig::addVirtualRelay(const YAML::Node& ch,
       vr->setDefaultStateRestore();
     }
   }
+  if (!addRelayDefaultFunction(ch, vr)) {
+    return false;
+  }
   return addCommonParameters(ch, vr);
 }
 
@@ -1054,6 +1101,9 @@ bool Supla::LinuxYamlConfig::addCmdRelay(const YAML::Node& ch,
     return false;
   }
 
+  if (!addRelayDefaultFunction(ch, cr)) {
+    return false;
+  }
   return addCommonParametersParsed(ch, cr, parser);
 }
 
@@ -1226,6 +1276,9 @@ bool Supla::LinuxYamlConfig::addCustomRelay(const YAML::Node& ch,
     return false;
   }
 
+  if (!addRelayDefaultFunction(ch, cr)) {
+    return false;
+  }
   return addCommonParametersParsed(ch, cr, parser);
 }
 
@@ -1348,12 +1401,10 @@ bool Supla::LinuxYamlConfig::addAfore(const YAML::Node& ch, int channelNumber) {
   if (auto ipParameter = getAndMarkChannelParameter(ch, "ip")) {
     std::string ip = ipParameter.as<std::string>();
     SUPLA_LOG_INFO(
-        "Channel[%d] config: adding Afore with IP %s, port: %d,"
-        " login_and_password: %s",
+        "Channel[%d] config: adding Afore with IP %s, port: %d",
         channelNumber,
         ip.c_str(),
-        port,
-        loginAndPassword.c_str());
+        port);
 
     IPAddress ipAddr(ip);
     auto afore = new Supla::PV::Afore(ipAddr, port, loginAndPassword.c_str());
@@ -1848,12 +1899,6 @@ bool Supla::LinuxYamlConfig::addImpulseCounterParsed(
       return false;
     }
   }
-  if (auto defaultFunctionNumberParameter =
-          getAndMarkChannelParameter(ch, Supla::DefaultFunctionNumber)) {
-    int32_t functionNumber = defaultFunctionNumberParameter.as<int32_t>();
-    ic->getChannel()->setDefaultFunction(functionNumber);
-  }
-
   return addCommonParametersParsed(ch, ic, parser);
 }
 
@@ -2234,6 +2279,9 @@ Supla::Source::Source* Supla::LinuxYamlConfig::addSource(
       std::string cmd = source["command"].as<std::string>();
       src = new Supla::Source::Cmd(cmd.c_str());
     } else if (type == "MQTT") {
+      if (!isValidMqttConfig()) {
+        return nullptr;
+      }
       auto base_state_topic = source["state_topic"].as<std::string>();
       std::vector<std::string> allSubTopics;
       if (source["sub_topics"] && source["sub_topics"].size() > 0) {
@@ -2393,6 +2441,9 @@ Supla::Output::Output* Supla::LinuxYamlConfig::addOutput(
       std::string fileName = output["file"].as<std::string>();
       out = new Supla::Output::File(fileName.c_str());
     } else if (type == "MQTT") {
+      if (!isValidMqttConfig()) {
+        return nullptr;
+      }
       std::string controlTopic = output["control_topic"].as<std::string>();
       int qos = output["qos"].as<int>(0);
       if (qos < 0 || qos > 2) {
@@ -2829,13 +2880,14 @@ bool Supla::LinuxYamlConfig::addActionTriggerParsed(const YAML::Node& ch,
   SUPLA_LOG_INFO("Channel[%d] config: adding ActionTriggerParsed",
                  channelNumber);
   if (auto nameParameter = getAndMarkChannelParameter(ch, "name")) {
-    new Supla::Control::ActionTriggerParsed(nameParameter.as<std::string>());
+    auto name = nameParameter.as<std::string>();
+    auto at = new Supla::Control::ActionTriggerParsed(name);
+    return addCommonParameters(ch, at);
   } else {
     SUPLA_LOG_ERROR("Channel[%d] config: mandatory \"name\" parameter missing",
                     channelNumber);
     return false;
   }
-  return true;
 }
 
 bool Supla::LinuxYamlConfig::addWeightParsed(const YAML::Node& ch,
@@ -2909,12 +2961,6 @@ bool Supla::LinuxYamlConfig::addCustomChannel(const YAML::Node& ch,
 
   if (auto valueParameter = getAndMarkChannelParameter(ch, Supla::Value)) {
     custom->setValue(valueParameter.as<std::string>());
-  }
-
-  if (auto defaultFunctionNumberParameter =
-          getAndMarkChannelParameter(ch, Supla::DefaultFunctionNumber)) {
-    int32_t functionNumber = defaultFunctionNumberParameter.as<int32_t>();
-    custom->getChannel()->setDefaultFunction(functionNumber);
   }
 
   return addCommonParametersParsed(ch, custom, parser);
@@ -3067,11 +3113,18 @@ bool Supla::LinuxYamlConfig::addCommonParametersParsed(
   if (batteryAdded) {
     sensor->updateBatteryInfoFlags();
   }
-  return true;
+  if (!addWeeklyScheduleParameter(ch, dynamic_cast<Supla::Element*>(sensor))) {
+    return false;
+  }
+  return addDefaultFunctionNumber(
+      ch, dynamic_cast<Supla::Element*>(sensor));
 }
 
 bool Supla::LinuxYamlConfig::addCommonParameters(const YAML::Node& ch,
                                                  Supla::Element* element) {
+  if (!addWeeklyScheduleParameter(ch, element)) {
+    return false;
+  }
   if (auto initialCaptionParameter =
           getAndMarkChannelParameter(ch, Supla::InitialCaption)) {
     element->setInitialCaption(
@@ -3113,7 +3166,81 @@ bool Supla::LinuxYamlConfig::addCommonParameters(const YAML::Node& ch,
       ch->setDefaultIcon(static_cast<uint8_t>(iconId));
     }
   }
+  return addDefaultFunctionNumber(ch, element);
+}
+
+bool Supla::LinuxYamlConfig::addWeeklyScheduleParameter(
+    const YAML::Node& ch, Supla::Element* element) {
+  auto parameter = getAndMarkChannelParameter(ch, "weekly_schedule");
+  if (!parameter) {
+    return true;
+  }
+
+  const bool available = parameter.as<bool>();
+  if (auto relay = dynamic_cast<Supla::Control::Relay*>(element)) {
+    relay->setWeeklyScheduleAvailable(available);
+    return true;
+  }
+  if (auto actionTrigger =
+          dynamic_cast<Supla::Control::ActionTrigger*>(element)) {
+    actionTrigger->setWeeklyScheduleAvailable(available);
+    return true;
+  }
+
+  SUPLA_LOG_ERROR(
+      "Channel config: weekly_schedule is supported only for Relay and "
+      "ActionTrigger channels");
+  return false;
+}
+
+bool Supla::LinuxYamlConfig::addDefaultFunctionNumber(
+    const YAML::Node& ch, Supla::Element* element) {
+  if (auto parameter =
+          getAndMarkChannelParameter(ch, Supla::DefaultFunctionNumber)) {
+    if (element == nullptr || element->getChannel() == nullptr) {
+      SUPLA_LOG_ERROR(
+          "Channel config: default_function_number requires a channel");
+      return false;
+    }
+    int32_t functionNumber = parameter.as<int32_t>();
+    element->setRuntimeFunction(functionNumber);
+  }
   return true;
+}
+
+bool Supla::LinuxYamlConfig::addRelayDefaultFunction(
+    const YAML::Node& ch, Supla::Control::Relay* relay) {
+  auto parameter = getAndMarkChannelParameter(ch, Supla::DefaultFunction);
+  if (!parameter) {
+    return true;
+  }
+
+  struct RelayFunction {
+    const char* name;
+    uint32_t function;
+  };
+  static constexpr RelayFunction relayFunctions[] = {
+      {"gateway_lock", SUPLA_CHANNELFNC_CONTROLLINGTHEGATEWAYLOCK},
+      {"gate", SUPLA_CHANNELFNC_CONTROLLINGTHEGATE},
+      {"garage_door", SUPLA_CHANNELFNC_CONTROLLINGTHEGARAGEDOOR},
+      {"door_lock", SUPLA_CHANNELFNC_CONTROLLINGTHEDOORLOCK},
+      {"power_switch", SUPLA_CHANNELFNC_POWERSWITCH},
+      {"light_switch", SUPLA_CHANNELFNC_LIGHTSWITCH},
+      {"staircase_timer", SUPLA_CHANNELFNC_STAIRCASETIMER},
+  };
+
+  std::string function = parameter.as<std::string>();
+  for (const auto& item : relayFunctions) {
+    if (function == item.name) {
+      relay->setRuntimeFunction(item.function);
+      return true;
+    }
+  }
+
+  SUPLA_LOG_ERROR("Channel[%d] config: unknown relay default function \"%s\"",
+                  relay->getChannelNumber(),
+                  function.c_str());
+  return false;
 }
 
 std::variant<int, bool, std::string> Supla::LinuxYamlConfig::parseStateValue(

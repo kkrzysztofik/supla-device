@@ -603,11 +603,21 @@ TEST_F(HtmlCaptureTest, ButtonActionTriggerConfigRendersSelectedOption) {
   char key[SUPLA_CONFIG_MAX_KEY_SIZE] = {};
   Supla::Config::generateKey(
       key, 3, Supla::ConfigTag::BtnActionTriggerCfgTagPrefix);
+  char localUnlockKey[SUPLA_CONFIG_MAX_KEY_SIZE] = {};
+  Supla::Config::generateKey(
+      localUnlockKey,
+      3,
+      Supla::ConfigTag::BtnActionTriggerLocalUnlockTagPrefix);
 
   EXPECT_CALL(cfg, getInt32(StrEq(key), _))
       .WillOnce([](const char*, int32_t* value) {
         *value = 1;
         return true;
+      });
+  EXPECT_CALL(cfg, getInt32(StrEq(localUnlockKey), _))
+      .WillOnce([](const char*, int32_t* value) {
+        *value = 0;
+        return false;
       });
   EXPECT_CALL(cfg, init()).WillOnce(Return(false));
   EXPECT_CALL(sender, send(_, _))
@@ -627,6 +637,13 @@ TEST_F(HtmlCaptureTest, ButtonActionTriggerConfigRendersSelectedOption) {
       "local function</option>"
       "<option value=\"2\">Publish all triggers, disable local "
       "function</option>"
+      "</select>"
+      "</div>"
+      "<div class=\"form-field\">"
+      "<label for=\"3_at_unlock\">IN2 local unlock while locked</label>"
+      "<select name=\"3_at_unlock\" id=\"3_at_unlock\">"
+      "<option value=\"0\" selected>Disabled</option>"
+      "<option value=\"1\">Enabled</option>"
       "</select>"
       "</div>");
 }
@@ -2461,6 +2478,33 @@ TEST_F(HtmlCaptureTest, DeviceInfoRendersRegisterDeviceAndMainMac) {
             "</span><span>"
             "<br>Uptime: 0 s"
             "</span>");
+}
+
+TEST_F(HtmlCaptureTest, LoginPageShowsPasswordErrorOnlyAfterFailure) {
+  SenderMock sender;
+  expectAllSendCalls(sender);
+  Supla::HtmlGenerator generator;
+
+  generator.sendLoginPage(&sender);
+  EXPECT_THAT(sendHtml, Not(HasSubstr("Entered password is incorrect")));
+  EXPECT_THAT(sendHtml, Not(HasSubstr("Too many failed login attempts")));
+
+  sendHtml.clear();
+  generator.sendLoginPage(&sender, true);
+  EXPECT_THAT(sendHtml, HasSubstr("Entered password is incorrect"));
+  EXPECT_THAT(sendHtml, Not(HasSubstr("Too many failed login attempts")));
+}
+
+TEST_F(HtmlCaptureTest, BlockedLoginPageExplainsTemporaryBlock) {
+  SenderMock sender;
+  expectAllSendCalls(sender);
+  Supla::HtmlGenerator generator;
+
+  generator.sendLoginBlockedPage(&sender);
+  EXPECT_THAT(sendHtml, HasSubstr(
+      "Too many failed login attempts. Please try again later."));
+  EXPECT_THAT(sendHtml, Not(HasSubstr("Entered password is incorrect")));
+  EXPECT_THAT(sendHtml, HasSubstr("<form method=\"post\">"));
 }
 
 TEST_F(HtmlCaptureTest, HtmlGeneratorIncludesPrivacyToggleAssets) {

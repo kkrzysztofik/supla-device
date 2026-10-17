@@ -4,6 +4,7 @@
 #ifndef ARDUINO_ARCH_AVR
 #include <supla/network/html/roller_shutter_parameters.h>
 
+
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>

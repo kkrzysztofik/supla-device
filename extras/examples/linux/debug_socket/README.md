@@ -39,6 +39,145 @@ Results are returned as JSON lines on the same socket. CALCFG commands are
 injected locally with `SuplaDevice.handleCalcfgFromServer()` and do not send a
 reply to the SUPLA server.
 
+## Channel Value Commands
+
+The `channelValue` operation injects the same `TSD_SuplaChannelNewValue` that a
+device normally receives from the server. It finds the element owning the
+selected channel and calls its regular `handleNewValueFromServer()` method.
+
+Switch Relay channel 0 to weekly schedule mode:
+
+```sh
+printf '%s\n' '{"op":"channelValue","channelNumber":0,"relayMode":6}' | nc -U /tmp/sd4linux-debug.sock
+```
+
+Switch it back to manual mode, or select a persistent forced/automatic mode:
+
+```sh
+printf '%s\n' '{"op":"channelValue","channelNumber":0,"relayMode":7}' | nc -U /tmp/sd4linux-debug.sock
+printf '%s\n' '{"op":"channelValue","channelNumber":0,"relayMode":3}' | nc -U /tmp/sd4linux-debug.sock
+printf '%s\n' '{"op":"channelValue","channelNumber":0,"relayMode":4}' | nc -U /tmp/sd4linux-debug.sock
+printf '%s\n' '{"op":"channelValue","channelNumber":0,"relayMode":5}' | nc -U /tmp/sd4linux-debug.sock
+```
+
+Relay modes are: `0` not set, `1` start on, `2` start off, `3` forced on, `4`
+forced off, `5` automatic, `6` switch to weekly schedule, and `7` switch to
+manual. For a synthesized server value, modes `1` and `3` carry the ON state,
+while modes `2` and `4` carry the OFF state. Selecting forced on/off exits an
+active weekly schedule and blocks ordinary relay commands and actions that
+try to control the relay. Select either forced mode, automatic, weekly
+schedule, or manual mode to leave or replace the current forced state.
+
+Switch Action Trigger channel 1 to weekly schedule, manual, locked, or unlocked:
+
+```sh
+printf '%s\n' '{"op":"channelValue","channelNumber":1,"buttonMode":4}' | nc -U /tmp/sd4linux-debug.sock
+printf '%s\n' '{"op":"channelValue","channelNumber":1,"buttonMode":5}' | nc -U /tmp/sd4linux-debug.sock
+printf '%s\n' '{"op":"channelValue","channelNumber":1,"buttonMode":1}' | nc -U /tmp/sd4linux-debug.sock
+printf '%s\n' '{"op":"channelValue","channelNumber":1,"buttonMode":0}' | nc -U /tmp/sd4linux-debug.sock
+```
+
+Action Trigger modes are: `0` not set/unlocked, `1` locked, `4` switch to
+weekly schedule, and `5` switch to manual.
+
+For arbitrary channel commands, pass the complete 8-byte protocol value as 16
+hexadecimal digits. Optional `senderId` and `durationMs` fields populate the
+corresponding protocol fields:
+
+```sh
+printf '%s\n' '{"op":"channelValue","channelNumber":0,"senderId":123,"durationMs":5000,"valueHex":"0100000000000000"}' | nc -U /tmp/sd4linux-debug.sock
+```
+
+Exactly one of `valueHex`, `relayMode`, or `buttonMode` is required. The result
+contains the exact return value from `handleNewValueFromServer()`; `ok` is true
+when the handler returns success (`1`).
+
+## Weekly Schedule Configuration
+
+The `weeklySchedule` operation builds a native SUPLA weekly schedule and passes
+it to the channel's regular `handleChannelConfig(..., local=true)` handler. This
+uses the normal validation and storage lifecycle. Saving a schedule does not
+enable weekly schedule mode; use a separate `channelValue` command for that.
+
+Configure Relay channel 0 to be forced off from 08:00 to 19:00, forced on from
+19:00 to 21:00, and unconstrained outside those hours on weekdays:
+
+```sh
+printf '%s\n' '{"op":"weeklySchedule","channelNumber":0,"programs":[{"mode":"forced_on"},{"mode":"forced_off"}],"entries":[{"days":["mon","tue","wed","thu","fri"],"from":"08:00","to":"19:00","program":2},{"days":["mon","tue","wed","thu","fri"],"from":"19:00","to":"21:00","program":1}]}' | nc -U /tmp/sd4linux-debug.sock
+```
+
+Then enable weekly schedule mode:
+
+```sh
+printf '%s\n' '{"op":"channelValue","channelNumber":0,"relayMode":6}' | nc -U /tmp/sd4linux-debug.sock
+```
+
+For an Action Trigger, program modes are `locked` and `unlocked`:
+
+```sh
+printf '%s\n' '{"op":"weeklySchedule","channelNumber":1,"programs":[{"mode":"locked"},{"mode":"unlocked"}],"entries":[{"days":["mon","tue","wed","thu","fri"],"from":"22:00","to":"07:00","program":1},{"days":["mon","tue","wed","thu","fri"],"from":"07:00","to":"22:00","program":2}]}' | nc -U /tmp/sd4linux-debug.sock
+printf '%s\n' '{"op":"channelValue","channelNumber":1,"buttonMode":4}' | nc -U /tmp/sd4linux-debug.sock
+```
+
+Schedule rules:
+
+- Days are `sun`, `mon`, `tue`, `wed`, `thu`, `fri`, and `sat`.
+- Times must use 15-minute boundaries. `24:00` is accepted only as an interval
+  end.
+- An interval whose end is earlier than its start continues into the next day.
+- Later entries overwrite earlier entries where they overlap.
+- Program numbers start at `1` and refer to the `programs` array. Up to four
+  programs can be defined.
+- Relay program modes are `not_set`, `start_on`, `start_off`, `forced_on`,
+  `forced_off`, and `automatic`. The target Relay must advertise support for a
+  selected mode; in particular, `automatic` requires
+  `setAutomaticModeSupported()`. Numeric protocol mode values are also accepted.
+  `start_on` / `start_off` select the initial state when entering a program
+  block; they do not force that state continuously.
+  `not_set` requires `SUPLA_CHANNEL_FLAG_RELAY_MODE_NOT_SET_SUPPORTED`.
+  A custom Relay can restrict programs by overriding
+  `isWeeklyScheduleProgramModeSupported()`; if no-op is unsupported, it should
+  also provide a supported default via `fillDefaultWeeklySchedule()`.
+- Optional signed 16-bit `value1` and `value2` fields can be added to a program.
+  These remain raw protocol aliases; do not combine an alias with its named
+  duration field in the same program.
+- Relay `start_on` and `start_off` accept `relayModeDurationS` and
+  `relayOppositeModeDurationS` (integer seconds, 0..65535). The first duration
+  applies to the state selected by `mode`, the second to the opposite state.
+  Both zero preserve the untimed behavior. A positive first duration with a zero
+  second duration switches to the opposite state once at the deadline. Two
+  positive durations repeat both phases. A second duration alone is invalid.
+- Cycles are supported only for power/light switches. Staircase and impulse
+  functions support the single duration, which temporarily replaces their normal
+  timer. Other program modes require both durations zero.
+- The phase follows local wall time from the start of the contiguous interval
+  using that program ID, including across midnight and the week boundary. A
+  uniform whole-week program starts at Sunday midnight. Activation/reboot resumes
+  the current phase; no clock means no weekly output changes, even after the
+  startup timeout. Clock corrections immediately select the corresponding phase.
+- Accepted manual ON/OFF suspends the timed program until its next occurrence;
+  weekly stays enabled. Explicit weekly activation or a changed configuration
+  resumes execution. A no-op interval leaves the output unchanged. Weekly phases
+  are not reported as countdown timers and never clear an overcurrent cutoff.
+
+Example program objects (insert into the `programs` array):
+
+```json
+{"mode":"start_on","relayModeDurationS":120}
+```
+
+ON for two minutes from the beginning of the interval, then OFF.
+
+```json
+{"mode":"start_on","relayModeDurationS":60,"relayOppositeModeDurationS":240}
+```
+
+ON for one minute, OFF for four minutes, repeated until the interval ends.
+Use `start_off` to start with the OFF phase instead.
+
+Both `programs` and `entries` are required. Empty arrays save a no-op schedule
+without enabling weekly schedule mode.
+
 ## Stream SUPLA Logs Over TCP
 
 The same insecure debug build can stream live SUPLA logs to a TCP client. This

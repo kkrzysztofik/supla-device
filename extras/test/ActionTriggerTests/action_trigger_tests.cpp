@@ -13,11 +13,13 @@
 #include <supla/channel_element.h>
 #include <supla/control/action_trigger.h>
 #include <supla/control/button.h>
+#include <supla/control/weekly_schedule_buffer.h>
 #include <supla/control/virtual_relay.h>
 #include <supla/protocol/supla_srpc.h>
 #include <supla/device/register_device.h>
 #include <storage_mock.h>
 #include <vector>
+#include "clock_stub.h"
 #include "supla/actions.h"
 #include "supla/events.h"
 
@@ -61,6 +63,23 @@ class ActionHandlerMock : public Supla::ActionHandler {
   MOCK_METHOD(void, handleAction, (int, int), (override));
 };
 
+class InspectableButton : public Supla::Control::Button {
+ public:
+  using Supla::Control::Button::Button;
+
+  bool isActionTriggerModeLocked() const {
+    return runtimeFlags.actionTriggerModeLocked;
+  }
+
+  bool isLocalUnlockAllowed() const {
+    return runtimeFlags.actionTriggerLocalUnlockAllowed;
+  }
+
+  bool keepsConfigButtonTriggerAlwaysAvailable() const {
+    return runtimeFlags.keepConfigButtonTriggerAlwaysAvailable;
+  }
+};
+
 class TimeInterfaceStub : public TimeInterface {
  public:
   uint32_t millis() override {
@@ -70,20 +89,91 @@ class TimeInterfaceStub : public TimeInterface {
   }
 };
 
+class ActionTriggerWeeklyConfigHandlerForTests
+    : public Supla::Control::WeeklyScheduleConfigHandler {
+ public:
+  void onLoadConfig() override {
+    loadCount++;
+  }
+
+  bool supportsConfigType(uint8_t configType) const override {
+    return configType == SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+  }
+
+  Supla::ApplyConfigResult applyChannelConfig(
+      TSD_ChannelConfig *config, bool local) override {
+    appliedConfig = config;
+    appliedLocally = local;
+    applyCount++;
+    return Supla::ApplyConfigResult::Success;
+  }
+
+  void fillChannelConfig(void *config,
+                         int *size,
+                         uint8_t configType) override {
+    if (size == nullptr) {
+      return;
+    }
+    *size = 0;
+    if (config == nullptr ||
+        configType != SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE) {
+      return;
+    }
+    auto *schedule = reinterpret_cast<TChannelConfig_WeeklySchedule *>(config);
+    memset(schedule, 0, sizeof(*schedule));
+    schedule->Program[0].Mode = SUPLA_BUTTON_MODE_LOCKED;
+    *size = sizeof(*schedule);
+    fillCount++;
+  }
+
+  void purgeConfig() override {
+    purgeCount++;
+  }
+
+  TSD_ChannelConfig *appliedConfig = nullptr;
+  int loadCount = 0;
+  int applyCount = 0;
+  int fillCount = 0;
+  int purgeCount = 0;
+  bool appliedLocally = false;
+};
+
 void ignoreAtValueUpdates(SrpcMock *srpc) {
   EXPECT_CALL(*srpc, valueChanged(_, _, _, _, _)).Times(AnyNumber());
+}
+
+void expectActionTriggerConfigStorage(ConfigMock *cfg,
+                                      int weeklyScheduleBlobSize = -1,
+                                      bool expectLegacyWeeklyChangeFlag =
+                                          false) {
+  if (weeklyScheduleBlobSize >= 0) {
+    EXPECT_CALL(*cfg, getBlobSize(testing::StrEq("0_at_weekly")))
+        .WillOnce(Return(weeklyScheduleBlobSize));
+  }
+  EXPECT_CALL(*cfg, getUInt32(testing::StrEq("0_cfg_chng_t"), _))
+      .WillOnce(Return(false));
+  EXPECT_CALL(*cfg, getUInt8(testing::StrEq("0_cfg_chng"), _))
+      .WillOnce(Return(false));
+  if (expectLegacyWeeklyChangeFlag) {
+    EXPECT_CALL(*cfg, getUInt8(testing::StrEq("0_weekly_chng"), _))
+        .WillOnce(Return(false));
+  }
 }
 
 void loadMqttActionTriggerMode(Supla::Control::ActionTrigger *at,
                                int32_t mode) {
   ConfigMock cfg;
   EXPECT_CALL(cfg, init());
-  EXPECT_CALL(cfg, getInt32(_, _)).WillOnce([mode](const char *key,
-                                                   int32_t *value) {
-    EXPECT_STREQ(key, "0_mqtt_at");
-    *value = mode;
-    return true;
+  EXPECT_CALL(cfg, getInt32(_, _)).WillRepeatedly([mode](const char *key,
+                                                         int32_t *value) {
+    if (strcmp(key, "0_mqtt_at") == 0) {
+      *value = mode;
+      return true;
+    }
+    EXPECT_STREQ(key, "0_at_unlock");
+    return false;
   });
+  expectActionTriggerConfigStorage(&cfg);
   at->onLoadConfig(nullptr);
 }
 
@@ -96,6 +186,552 @@ void applyActionTriggerServerConfig(Supla::Control::ActionTrigger *at,
   config.ActiveActions = activeActions;
   memcpy(result.Config, &config, sizeof(config));
   at->handleChannelConfig(&result);
+}
+
+TSD_ChannelConfig makeActionTriggerWeeklySchedule(uint8_t mode) {
+  TSD_ChannelConfig result = {};
+  result.ConfigType = SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+  result.ConfigSize = sizeof(TChannelConfig_WeeklySchedule);
+  auto *schedule =
+      reinterpret_cast<TChannelConfig_WeeklySchedule *>(result.Config);
+  schedule->Program[0].Mode = mode;
+  Supla::Control::WeeklyScheduleBuffer buffer;
+  for (int index = 0; index < SUPLA_WEEKLY_SCHEDULE_VALUES_SIZE; index++) {
+    buffer.setWeeklySchedule(schedule, index, 1);
+  }
+  return result;
+}
+
+const TActionTriggerProperties *actionTriggerValue(
+    const Supla::Control::ActionTrigger &at) {
+  return reinterpret_cast<const TActionTriggerProperties *>(
+      Supla::RegisterDevice::getChannelValuePtr(at.getChannelNumber()));
+}
+
+TEST_F(ActionTriggerTests, DefaultConfigIgnoresFunctionField) {
+  Supla::Control::ActionTrigger at;
+  TSD_ChannelConfig result = {};
+  result.ConfigType = SUPLA_CONFIG_TYPE_DEFAULT;
+  result.ConfigSize = sizeof(TChannelConfig_ActionTrigger);
+  auto *config =
+      reinterpret_cast<TChannelConfig_ActionTrigger *>(result.Config);
+  config->ActiveActions = SUPLA_ACTION_CAP_HOLD;
+
+  EXPECT_EQ(at.handleChannelConfig(&result), SUPLA_CONFIG_RESULT_TRUE);
+  EXPECT_TRUE(at.isAnyActionEnabledOnServer());
+  EXPECT_EQ(at.getChannel()->getDefaultFunction(),
+            SUPLA_CHANNELFNC_ACTIONTRIGGER);
+}
+
+TEST_F(ActionTriggerTests, DeprecatedIterateConnectedOverloadRemainsCallable) {
+  Supla::Control::ActionTrigger at;
+  EXPECT_TRUE(at.iterateConnected(nullptr));
+}
+
+TEST_F(ActionTriggerTests, InvalidDefaultConfigDoesNotChangeActiveActions) {
+  Supla::Control::ActionTrigger at;
+  applyActionTriggerServerConfig(&at, SUPLA_ACTION_CAP_HOLD);
+  TSD_ChannelConfig result = {};
+  result.ConfigType = SUPLA_CONFIG_TYPE_DEFAULT;
+  result.ConfigSize = sizeof(TChannelConfig_ActionTrigger) - 1;
+
+  EXPECT_EQ(at.handleChannelConfig(&result), SUPLA_CONFIG_RESULT_DATA_ERROR);
+  EXPECT_TRUE(at.isAnyActionEnabledOnServer());
+}
+
+TEST_F(ActionTriggerTests, EmptyDefaultConfigPreservesActiveActions) {
+  Supla::Control::ActionTrigger at;
+  applyActionTriggerServerConfig(&at, SUPLA_ACTION_CAP_HOLD);
+  TSD_ChannelConfig result = {};
+  result.ConfigType = SUPLA_CONFIG_TYPE_DEFAULT;
+
+  EXPECT_EQ(at.handleChannelConfig(&result), SUPLA_CONFIG_RESULT_TRUE);
+  EXPECT_TRUE(at.isAnyActionEnabledOnServer());
+}
+
+TEST_F(ActionTriggerTests, WeeklyScheduleIsOptInAndLoadedLazily) {
+  Supla::Control::ActionTrigger at;
+
+  EXPECT_TRUE(at.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_BUTTON_MODE_SUPPORTED);
+  EXPECT_FALSE(at.getChannel()->getFlags() &
+               SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+
+  TSD_ChannelConfig emptyConfig = {};
+  emptyConfig.ConfigType = SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+  EXPECT_EQ(at.handleWeeklySchedule(&emptyConfig, false, false),
+            SUPLA_CONFIG_RESULT_TYPE_NOT_SUPPORTED);
+
+  at.setWeeklyScheduleAvailable();
+  EXPECT_TRUE(at.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+  EXPECT_EQ(at.handleWeeklySchedule(&emptyConfig, false, false),
+            SUPLA_CONFIG_RESULT_TRUE);
+
+  TChannelConfig_WeeklySchedule schedule;
+  memset(&schedule, 0xFF, sizeof(schedule));
+  int size = 0;
+  at.fillChannelConfig(
+      &schedule, &size, SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE);
+  EXPECT_EQ(size, sizeof(TChannelConfig_WeeklySchedule));
+  EXPECT_EQ(schedule.Program[0].Mode, SUPLA_BUTTON_MODE_NOT_SET);
+  EXPECT_EQ(schedule.Program[1].Mode, SUPLA_BUTTON_MODE_LOCKED);
+  for (auto quarter : schedule.Quarters) {
+    EXPECT_EQ(quarter, 0);
+  }
+  EXPECT_FALSE(actionTriggerValue(at)->Flags &
+               SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+}
+
+TEST_F(ActionTriggerTests,
+       ExplicitOptInCanBeDisabledWithoutDisablingButtonMode) {
+  Supla::Control::ActionTrigger at;
+  at.setWeeklyScheduleAvailable();
+  EXPECT_TRUE(at.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+
+  at.setWeeklyScheduleAvailable(false);
+  EXPECT_FALSE(at.getChannel()->getFlags() &
+               SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+  EXPECT_TRUE(at.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_BUTTON_MODE_SUPPORTED);
+}
+
+TEST_F(ActionTriggerTests, WeeklyScheduleCanBeDisabledWithoutDisablingLock) {
+  Supla::Control::ActionTrigger at;
+  at.setWeeklyScheduleAvailable(false);
+
+  EXPECT_FALSE(at.getChannel()->getFlags() &
+               SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+  EXPECT_TRUE(at.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_BUTTON_MODE_SUPPORTED);
+  auto config = makeActionTriggerWeeklySchedule(SUPLA_BUTTON_MODE_LOCKED);
+  EXPECT_EQ(at.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_TYPE_NOT_SUPPORTED);
+
+  TSD_SuplaChannelNewValue command = {};
+  reinterpret_cast<TActionTriggerProperties *>(command.value)->ButtonMode =
+      SUPLA_BUTTON_MODE_LOCKED;
+  EXPECT_EQ(at.handleNewValueFromServer(&command), 1);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_LOCKED);
+}
+
+TEST_F(ActionTriggerTests,
+       ExternalWeeklyScheduleWithoutConfigControlsOnlyOperatingMode) {
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.attach(button);
+  ASSERT_TRUE(at.setWeeklyScheduleController(
+      new Supla::Control::ExternalManagedWeeklySchedule()));
+  at.onLoadConfig(nullptr);
+
+  EXPECT_FALSE(at.getChannel()->getFlags() &
+               SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+  EXPECT_TRUE(at.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_BUTTON_MODE_SUPPORTED);
+
+  TSD_ChannelConfig weeklyConfig = {};
+  weeklyConfig.ConfigType = SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+  EXPECT_EQ(at.handleWeeklySchedule(&weeklyConfig, false, false),
+            SUPLA_CONFIG_RESULT_TYPE_NOT_SUPPORTED);
+
+  TSD_SuplaChannelNewValue command = {};
+  auto *properties =
+      reinterpret_cast<TActionTriggerProperties *>(command.value);
+  properties->ButtonMode = SUPLA_BUTTON_MODE_CMD_WEEKLY_SCHEDULE;
+  ASSERT_EQ(at.handleNewValueFromServer(&command), 1);
+  EXPECT_TRUE(actionTriggerValue(at)->Flags &
+              SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+  EXPECT_FALSE(button.isActionTriggerModeLocked());
+
+  properties->ButtonMode = SUPLA_BUTTON_MODE_CMD_SWITCH_TO_MANUAL;
+  ASSERT_EQ(at.handleNewValueFromServer(&command), 1);
+  EXPECT_FALSE(actionTriggerValue(at)->Flags &
+               SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+}
+
+TEST_F(ActionTriggerTests,
+       ExternallyExecutedWeeklyScheduleUsesIndependentConfigHandler) {
+  ActionTriggerWeeklyConfigHandlerForTests configHandler;
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.attach(button);
+  ASSERT_TRUE(at.setWeeklyScheduleController(
+      new Supla::Control::ExternalManagedWeeklySchedule(), &configHandler));
+
+  at.onLoadConfig(nullptr);
+  EXPECT_EQ(configHandler.loadCount, 1);
+  EXPECT_TRUE(at.getChannel()->getFlags() &
+              SUPLA_CHANNEL_FLAG_WEEKLY_SCHEDULE);
+
+  TSD_ChannelConfig weeklyConfig = {};
+  weeklyConfig.ConfigType = SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE;
+  weeklyConfig.ConfigSize = sizeof(TChannelConfig_WeeklySchedule);
+  EXPECT_EQ(at.handleWeeklySchedule(&weeklyConfig, false, true),
+            SUPLA_CONFIG_RESULT_TRUE);
+  EXPECT_EQ(configHandler.applyCount, 1);
+  EXPECT_EQ(configHandler.appliedConfig, &weeklyConfig);
+  EXPECT_TRUE(configHandler.appliedLocally);
+
+  TChannelConfig_WeeklySchedule filledConfig = {};
+  int size = 0;
+  at.fillChannelConfig(
+      &filledConfig, &size, SUPLA_CONFIG_TYPE_WEEKLY_SCHEDULE);
+  EXPECT_EQ(configHandler.fillCount, 1);
+  EXPECT_EQ(size, sizeof(filledConfig));
+  EXPECT_EQ(filledConfig.Program[0].Mode, SUPLA_BUTTON_MODE_LOCKED);
+
+  TSD_SuplaChannelNewValue command = {};
+  reinterpret_cast<TActionTriggerProperties *>(command.value)->ButtonMode =
+      SUPLA_BUTTON_MODE_CMD_WEEKLY_SCHEDULE;
+  ASSERT_EQ(at.handleNewValueFromServer(&command), 1);
+  EXPECT_TRUE(actionTriggerValue(at)->Flags &
+              SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+  EXPECT_FALSE(button.isActionTriggerModeLocked());
+
+  at.purgeConfig();
+  EXPECT_EQ(configHandler.purgeCount, 1);
+}
+
+TEST_F(ActionTriggerTests,
+       ExternalWeeklyScheduleModeIsRestoredFromStateStorage) {
+  StorageMock storage;
+  storage.defaultInitialization(sizeof(uint32_t));
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.attach(button);
+  at.enableStateStorage();
+  ASSERT_TRUE(at.setWeeklyScheduleController(
+      new Supla::Control::ExternalManagedWeeklySchedule()));
+  at.onLoadConfig(nullptr);
+
+  EXPECT_CALL(storage, readStorage(_, _, sizeof(uint32_t), _))
+      .WillOnce([](uint32_t, unsigned char *data, uint32_t, bool) {
+        const uint32_t state = static_cast<uint32_t>(1) << 30;
+        memcpy(data, &state, sizeof(state));
+        return sizeof(state);
+      });
+  at.onLoadState();
+
+  EXPECT_TRUE(actionTriggerValue(at)->Flags &
+              SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+  EXPECT_FALSE(button.isActionTriggerModeLocked());
+}
+
+TEST_F(ActionTriggerTests,
+       WeeklyScheduleControllerCannotChangeAfterActionTriggerConfigLoad) {
+  Supla::Control::ActionTrigger at;
+  ASSERT_TRUE(at.setWeeklyScheduleController(
+      new Supla::Control::ExternalManagedWeeklySchedule()));
+  at.onLoadConfig(nullptr);
+
+  auto *replacement = new Supla::Control::ExternalManagedWeeklySchedule();
+  EXPECT_FALSE(at.setWeeklyScheduleController(replacement));
+  delete replacement;
+
+  TSD_SuplaChannelNewValue command = {};
+  reinterpret_cast<TActionTriggerProperties *>(command.value)->ButtonMode =
+      SUPLA_BUTTON_MODE_CMD_WEEKLY_SCHEDULE;
+  EXPECT_EQ(at.handleNewValueFromServer(&command), 1);
+  EXPECT_TRUE(actionTriggerValue(at)->Flags &
+              SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+}
+
+TEST_F(ActionTriggerTests, WeeklyScheduleConfigDoesNotEnableSchedule) {
+  TimeInterfaceStub time;
+  Supla::Control::ActionTrigger at;
+  at.setWeeklyScheduleAvailable();
+  auto config = makeActionTriggerWeeklySchedule(SUPLA_BUTTON_MODE_LOCKED);
+
+  EXPECT_EQ(at.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_TRUE);
+  EXPECT_FALSE(actionTriggerValue(at)->Flags &
+               SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+}
+
+TEST_F(ActionTriggerTests, WeeklyScheduleAndManualCommandsControlButtonMode) {
+  TimeInterfaceStub time;
+  ClockStub clock;
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.setWeeklyScheduleAvailable();
+  at.attach(button);
+  at.activateAction(SUPLA_ACTION_CAP_TOGGLE_x1);
+  applyActionTriggerServerConfig(&at, SUPLA_ACTION_CAP_TOGGLE_x1);
+  auto config = makeActionTriggerWeeklySchedule(SUPLA_BUTTON_MODE_LOCKED);
+  ASSERT_EQ(at.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_TRUE);
+
+  TSD_SuplaChannelNewValue command = {};
+  auto *properties =
+      reinterpret_cast<TActionTriggerProperties *>(command.value);
+  properties->ButtonMode = SUPLA_BUTTON_MODE_CMD_WEEKLY_SCHEDULE;
+  EXPECT_EQ(at.handleNewValueFromServer(&command), 1);
+  EXPECT_TRUE(actionTriggerValue(at)->Flags &
+              SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_LOCKED);
+  EXPECT_TRUE(button.isActionTriggerModeLocked());
+
+  at.handleAction(0, Supla::SEND_AT_TOGGLE_x1);
+  EXPECT_EQ(static_cast<Supla::AtChannel *>(at.getChannel())->popAction(), 0);
+
+  properties->ButtonMode = SUPLA_BUTTON_MODE_NOT_SET;
+  EXPECT_EQ(at.handleNewValueFromServer(&command), 1);
+  EXPECT_FALSE(actionTriggerValue(at)->Flags &
+               SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+  EXPECT_FALSE(button.isActionTriggerModeLocked());
+
+  at.handleAction(0, Supla::SEND_AT_TOGGLE_x1);
+  EXPECT_EQ(static_cast<Supla::AtChannel *>(at.getChannel())->popAction(),
+            SUPLA_ACTION_CAP_TOGGLE_x1);
+}
+
+TEST_F(ActionTriggerTests, ManualLockIsReportedAsChannelValue) {
+  SrpcMock srpc;
+  EXPECT_CALL(srpc, getChannelConfig(_, _)).Times(AnyNumber());
+  TimeInterfaceStub time;
+  Supla::Control::ActionTrigger at;
+  at.onRegistered(suplaSrpc);
+  at.iterateConnected();
+  testing::Mock::VerifyAndClearExpectations(&srpc);
+
+  TSD_SuplaChannelNewValue command = {};
+  reinterpret_cast<TActionTriggerProperties *>(command.value)->ButtonMode =
+      SUPLA_BUTTON_MODE_LOCKED;
+  ASSERT_EQ(at.handleNewValueFromServer(&command), 1);
+
+  TActionTriggerProperties expected = {};
+  expected.ButtonMode = SUPLA_BUTTON_MODE_LOCKED;
+  std::vector<char> expectedValue(SUPLA_CHANNELVALUE_SIZE, 0);
+  memcpy(expectedValue.data(), &expected, sizeof(expected));
+  EXPECT_CALL(srpc,
+              valueChanged(nullptr,
+                           at.getChannelNumber(),
+                           ElementsAreArray(expectedValue),
+                           0,
+                           0));
+  at.iterateConnected();
+}
+
+TEST_F(ActionTriggerTests, LockActionsShareButtonModeAndAttachLifecycle) {
+  TimeInterfaceStub time;
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+
+  at.setLocalUnlockAllowed(true)
+      .setKeepConfigButtonTriggerAlwaysAvailable(true);
+  at.attach(button);
+  EXPECT_FALSE(button.isActionTriggerModeLocked());
+  EXPECT_TRUE(button.isLocalUnlockAllowed());
+  EXPECT_TRUE(button.keepsConfigButtonTriggerAlwaysAvailable());
+
+  at.handleAction(Supla::ON_HOLD, Supla::LOCK);
+  EXPECT_TRUE(button.isActionTriggerModeLocked());
+  EXPECT_EQ(static_cast<Supla::AtChannel *>(at.getChannel())->getButtonMode(),
+            SUPLA_BUTTON_MODE_LOCKED);
+
+  at.handleAction(Supla::ON_HOLD, Supla::UNLOCK);
+  EXPECT_FALSE(button.isActionTriggerModeLocked());
+  EXPECT_EQ(static_cast<Supla::AtChannel *>(at.getChannel())->getButtonMode(),
+            SUPLA_BUTTON_MODE_NOT_SET);
+
+  at.setLocalUnlockAllowed(false);
+  at.handleAction(Supla::ON_HOLD, Supla::LOCK);
+  at.handleAction(Supla::ON_HOLD, Supla::TOGGLE_LOCK);
+  EXPECT_EQ(static_cast<Supla::AtChannel *>(at.getChannel())->getButtonMode(),
+            SUPLA_BUTTON_MODE_LOCKED);
+
+  at.attach(nullptr);
+  EXPECT_FALSE(button.isActionTriggerModeLocked());
+  EXPECT_FALSE(button.isLocalUnlockAllowed());
+  EXPECT_FALSE(button.keepsConfigButtonTriggerAlwaysAvailable());
+}
+
+TEST_F(ActionTriggerTests, RebuildPreservesUserLockActionBindings) {
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.attach(button);
+
+  button.addAction(Supla::TOGGLE_LOCK, at, Supla::ON_HOLD);
+  ASSERT_TRUE(button.hasEnabledAction(Supla::ON_HOLD, Supla::TOGGLE_LOCK));
+
+  at.onInit();
+  EXPECT_TRUE(button.hasEnabledAction(Supla::ON_HOLD, Supla::TOGGLE_LOCK));
+
+  TSD_ChannelConfig config = {};
+  config.ConfigType = SUPLA_CONFIG_TYPE_DEFAULT;
+  config.ConfigSize = sizeof(TChannelConfig_ActionTrigger);
+  auto *actionTriggerConfig =
+      reinterpret_cast<TChannelConfig_ActionTrigger *>(config.Config);
+  actionTriggerConfig->ActiveActions = SUPLA_ACTION_CAP_HOLD;
+  EXPECT_EQ(at.handleChannelConfig(&config), SUPLA_CONFIG_RESULT_TRUE);
+  EXPECT_TRUE(button.hasEnabledAction(Supla::ON_HOLD, Supla::TOGGLE_LOCK));
+}
+
+TEST_F(ActionTriggerTests, LocalUnlockPolicyIsLoadedAndPropagatedToButton) {
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.attach(button);
+  ConfigMock cfg;
+
+  EXPECT_CALL(cfg, init());
+  EXPECT_CALL(cfg, getInt32(_, _)).WillRepeatedly(
+      [](const char *key, int32_t *value) {
+        if (strcmp(key, "0_at_unlock") == 0) {
+          *value = 1;
+          return true;
+        }
+        EXPECT_STREQ(key, "0_mqtt_at");
+        *value = 0;
+        return true;
+      });
+  expectActionTriggerConfigStorage(&cfg);
+  at.onLoadConfig(nullptr);
+
+  EXPECT_TRUE(at.isLocalUnlockAllowed());
+  EXPECT_TRUE(button.isLocalUnlockAllowed());
+}
+
+TEST_F(ActionTriggerTests, LocalLockActionLeavesWeeklyScheduleForManualMode) {
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.attach(button);
+  auto *schedule = new Supla::Control::ExternalManagedWeeklySchedule();
+  ASSERT_TRUE(at.setWeeklyScheduleController(schedule));
+
+  TSD_SuplaChannelNewValue command = {};
+  auto *properties =
+      reinterpret_cast<TActionTriggerProperties *>(command.value);
+  properties->ButtonMode = SUPLA_BUTTON_MODE_CMD_WEEKLY_SCHEDULE;
+  ASSERT_EQ(at.handleNewValueFromServer(&command), 1);
+  ASSERT_TRUE(schedule->isActive());
+
+  at.handleAction(Supla::ON_HOLD, Supla::UNLOCK);
+  EXPECT_FALSE(schedule->isActive());
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+}
+
+TEST_F(ActionTriggerTests, RestoredLockedStateIsPropagatedToAttachedButton) {
+  TimeInterfaceStub time;
+  StorageMock storage;
+  storage.defaultInitialization(4);
+  InspectableButton button(10);
+  Supla::Control::ActionTrigger at;
+  at.attach(button);
+  at.enableStateStorage();
+
+  EXPECT_CALL(storage, readStorage(_, _, sizeof(uint32_t), _))
+      .WillOnce([](uint32_t, unsigned char *data, uint32_t, bool) {
+        uint32_t state = static_cast<uint32_t>(1) << 31;
+        memcpy(data, &state, sizeof(state));
+        return sizeof(uint32_t);
+      });
+  at.onLoadState();
+
+  EXPECT_TRUE(button.isActionTriggerModeLocked());
+}
+
+TEST_F(ActionTriggerTests, InvalidWeeklyScheduleModeIsRejected) {
+  TimeInterfaceStub time;
+  Supla::Control::ActionTrigger at;
+  at.setWeeklyScheduleAvailable();
+  auto config = makeActionTriggerWeeklySchedule(0xFF);
+
+  EXPECT_EQ(at.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_DATA_ERROR);
+  EXPECT_FALSE(actionTriggerValue(at)->Flags &
+               SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+}
+
+TEST_F(ActionTriggerTests, WeeklyScheduleModeIsRestoredFromStateStorage) {
+  TimeInterfaceStub time;
+  ConfigMock cfg;
+  EXPECT_CALL(cfg, init());
+  EXPECT_CALL(cfg, getInt32(_, _)).WillRepeatedly([](const char *key,
+                                                       int32_t *) {
+    EXPECT_TRUE(strcmp(key, "0_mqtt_at") == 0 ||
+                strcmp(key, "0_at_unlock") == 0);
+    return false;
+  });
+  expectActionTriggerConfigStorage(&cfg,
+                                   sizeof(TChannelConfig_WeeklySchedule), true);
+  StorageMock storage;
+  storage.defaultInitialization(4);
+  Supla::Control::ActionTrigger at;
+  at.setWeeklyScheduleAvailable();
+  at.enableStateStorage();
+  at.onLoadConfig(nullptr);
+
+  EXPECT_CALL(storage, readStorage(_, _, sizeof(uint32_t), _))
+      .WillOnce([](uint32_t, unsigned char *data, uint32_t, bool) {
+        uint32_t state = static_cast<uint32_t>(1) << 30;
+        memcpy(data, &state, sizeof(state));
+        return sizeof(uint32_t);
+      });
+  at.onLoadState();
+
+  EXPECT_TRUE(actionTriggerValue(at)->Flags &
+              SUPLA_ACTION_TRIGGER_FLAG_WEEKLY_SCHEDULE_ENABLED);
+  EXPECT_EQ(actionTriggerValue(at)->ButtonMode, SUPLA_BUTTON_MODE_NOT_SET);
+}
+
+TEST_F(ActionTriggerTests, WeeklyScheduleModeIsSavedInStateStorage) {
+  TimeInterfaceStub time;
+  ClockStub clock;
+  StorageMock storage;
+  storage.defaultInitialization(4);
+  EXPECT_CALL(storage, readStorage(_, _, sizeof(uint32_t), _))
+      .WillRepeatedly([](uint32_t, unsigned char *data, uint32_t, bool) {
+        memset(data, 0, sizeof(uint32_t));
+        return sizeof(uint32_t);
+      });
+  Supla::Control::ActionTrigger at;
+  at.enableStateStorage();
+  at.setWeeklyScheduleAvailable();
+  auto config = makeActionTriggerWeeklySchedule(SUPLA_BUTTON_MODE_LOCKED);
+  ASSERT_EQ(at.handleWeeklySchedule(&config, false, false),
+            SUPLA_CONFIG_RESULT_TRUE);
+
+  EXPECT_CALL(storage, scheduleSave(5000, 2000));
+  TSD_SuplaChannelNewValue command = {};
+  reinterpret_cast<TActionTriggerProperties *>(command.value)->ButtonMode =
+      SUPLA_BUTTON_MODE_CMD_WEEKLY_SCHEDULE;
+  ASSERT_EQ(at.handleNewValueFromServer(&command), 1);
+
+  EXPECT_CALL(storage, writeStorage(_, _, sizeof(uint32_t)))
+      .WillOnce([](uint32_t, const unsigned char *data, uint32_t) {
+        uint32_t state = 0;
+        memcpy(&state, data, sizeof(state));
+        EXPECT_EQ(state & (static_cast<uint32_t>(3) << 30),
+                  static_cast<uint32_t>(1) << 30);
+        EXPECT_EQ(state & ~(static_cast<uint32_t>(3) << 30), 0u);
+        return sizeof(uint32_t);
+      });
+  at.onSaveState();
+}
+
+TEST_F(ActionTriggerTests, StateStorageDisabledDoesNotReadOrWriteMode) {
+  StorageMock storage;
+  storage.defaultInitialization(1);
+  Supla::Control::ActionTrigger at;
+
+  EXPECT_CALL(storage, readStorage(_, _, _, _)).Times(0);
+  EXPECT_CALL(storage, writeStorage(_, _, _)).Times(0);
+  EXPECT_CALL(storage, scheduleSave(_, _)).Times(0);
+
+  at.onLoadState();
+  at.onSaveState();
+
+  TSD_SuplaChannelNewValue command = {};
+  reinterpret_cast<TActionTriggerProperties *>(command.value)->ButtonMode =
+      SUPLA_BUTTON_MODE_LOCKED;
+  EXPECT_EQ(at.handleNewValueFromServer(&command), 1);
 }
 
 TEST_F(ActionTriggerTests, FirstEmptyServerConfigStillBuildsButtonHandlers) {
@@ -200,7 +836,7 @@ TEST_F(ActionTriggerTests, AttachToMonostableButton) {
 
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
   b1.runAction(Supla::ON_PRESS);
   b1.runAction(Supla::ON_CLICK_1);
   b1.runAction(Supla::ON_HOLD);
@@ -226,7 +862,7 @@ TEST_F(ActionTriggerTests, AttachToMonostableButton) {
                          SUPLA_ACTION_CAP_SHORT_PRESS_x2 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   // it should be executed on ah mock
   b1.runAction(Supla::ON_CLICK_1);
@@ -285,7 +921,7 @@ TEST_F(ActionTriggerTests, AttachToBistableButton) {
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
   EXPECT_EQ(b1.getMaxMulticlickValue(), 1);
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
   EXPECT_EQ(b1.getMaxMulticlickValue(), 5);
   b1.runAction(Supla::ON_PRESS);
   b1.runAction(Supla::ON_CLICK_1);
@@ -362,7 +998,7 @@ TEST_F(ActionTriggerTests, AttachToMotionSensorButton) {
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
   EXPECT_EQ(b1.getMaxMulticlickValue(), 0);
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
   // actions toggle x1, x2, x3, x4, x5 are not supported for Motion sensor
   // button type, so they won't be enabled even if such data was send by server
   EXPECT_EQ(b1.getMaxMulticlickValue(), 0);
@@ -400,12 +1036,12 @@ TEST_F(ActionTriggerTests, SendActionOnce) {
   config.ActiveActions = SUPLA_ACTION_CAP_TURN_ON;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   config.ActiveActions = SUPLA_ACTION_CAP_SHORT_PRESS_x1;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
-  at2.handleChannelConfig(&result);
+  at2.handleChannelConfig(&result, false);
 
   at.iterateConnected();
 
@@ -439,7 +1075,7 @@ TEST_F(ActionTriggerTests, SendFewActions) {
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
   at.iterateConnected();
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_CALL(srpc, actionTrigger(0, SUPLA_ACTION_CAP_TURN_ON));
 
@@ -709,7 +1345,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnPress) {
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
   EXPECT_EQ(b1.getMaxMulticlickValue(), 5);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
@@ -738,7 +1374,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnPress) {
                          SUPLA_ACTION_CAP_SHORT_PRESS_x1 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -754,7 +1390,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnPress) {
   config.ActiveActions =
       SUPLA_ACTION_CAP_HOLD | SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -769,7 +1405,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnPress) {
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -847,7 +1483,7 @@ TEST_F(ActionTriggerTests,
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_PRESS)->isEnabled());
@@ -877,7 +1513,7 @@ TEST_F(ActionTriggerTests,
                          SUPLA_ACTION_CAP_SHORT_PRESS_x1 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_PRESS)->isEnabled());
@@ -894,7 +1530,7 @@ TEST_F(ActionTriggerTests,
   config.ActiveActions =
       SUPLA_ACTION_CAP_HOLD | SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_PRESS)->isEnabled());
@@ -910,7 +1546,7 @@ TEST_F(ActionTriggerTests,
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_PRESS)->isEnabled());
@@ -985,7 +1621,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnRelease) {
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1013,7 +1649,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnRelease) {
                          SUPLA_ACTION_CAP_SHORT_PRESS_x1 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1029,7 +1665,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnRelease) {
   config.ActiveActions =
       SUPLA_ACTION_CAP_HOLD | SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1044,7 +1680,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonOnRelease) {
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1122,7 +1758,7 @@ TEST_F(ActionTriggerTests,
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
@@ -1152,7 +1788,7 @@ TEST_F(ActionTriggerTests,
                          SUPLA_ACTION_CAP_SHORT_PRESS_x1 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
@@ -1169,7 +1805,7 @@ TEST_F(ActionTriggerTests,
   config.ActiveActions =
       SUPLA_ACTION_CAP_HOLD | SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
@@ -1186,7 +1822,7 @@ TEST_F(ActionTriggerTests,
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
@@ -1264,7 +1900,7 @@ TEST_F(ActionTriggerTests,
 
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
@@ -1292,7 +1928,7 @@ TEST_F(ActionTriggerTests,
                          SUPLA_ACTION_CAP_SHORT_PRESS_x1 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
@@ -1309,7 +1945,7 @@ TEST_F(ActionTriggerTests,
   config.ActiveActions =
       SUPLA_ACTION_CAP_HOLD | SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
@@ -1325,7 +1961,7 @@ TEST_F(ActionTriggerTests,
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_RELEASE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
@@ -1397,7 +2033,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForBistableButton) {
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CHANGE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1423,7 +2059,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForBistableButton) {
   config.ActiveActions =
       SUPLA_ACTION_CAP_TOGGLE_x1 | SUPLA_ACTION_CAP_TOGGLE_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CHANGE)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1438,7 +2074,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForBistableButton) {
   // another config from server which disables some actions
   config.ActiveActions = SUPLA_ACTION_CAP_TOGGLE_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CHANGE)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1453,7 +2089,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForBistableButton) {
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CHANGE)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1527,7 +2163,7 @@ TEST_F(ActionTriggerTests,
   memcpy(result.Config, &config, sizeof(config));
   actionTrigger.handleChannelConfig(&result);
 
-  EXPECT_FALSE(button.getHandlerForClient(
+  EXPECT_TRUE(button.getHandlerForClient(
       &localHandler, Supla::CONDITIONAL_ON_PRESS)->isEnabled());
   EXPECT_TRUE(button.getHandlerForClient(
       &localHandler, Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
@@ -1538,7 +2174,7 @@ TEST_F(ActionTriggerTests,
 
   EXPECT_TRUE(button.getHandlerForClient(
       &localHandler, Supla::CONDITIONAL_ON_PRESS)->isEnabled());
-  EXPECT_FALSE(button.getHandlerForClient(
+  EXPECT_TRUE(button.getHandlerForClient(
       &localHandler, Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
 
   config.ActiveActions = 0;
@@ -1563,6 +2199,51 @@ TEST_F(ActionTriggerTests,
                            Supla::INTERNAL_BUTTON_UP_STOP));
   button.runAction(Supla::CONDITIONAL_ON_PRESS);
   button.runAction(Supla::CONDITIONAL_ON_RELEASE);
+}
+
+TEST_F(ActionTriggerTests, OrdinaryBistableEdgesKeepTurnMasks) {
+  Supla::Control::Button button(10);
+  button.setMulticlickTime(300, true);
+  ActionHandlerMock handler;
+  Supla::Control::ActionTrigger at;
+  button.addAction(Supla::TURN_ON, handler, Supla::CONDITIONAL_ON_PRESS);
+  button.addAction(Supla::TURN_OFF, handler, Supla::CONDITIONAL_ON_RELEASE);
+  at.attach(button);
+  at.onInit();
+  applyActionTriggerServerConfig(&at, SUPLA_ACTION_CAP_TURN_ON);
+  EXPECT_FALSE(button.getHandlerForClient(
+      &handler, Supla::CONDITIONAL_ON_PRESS)->isEnabled());
+  EXPECT_TRUE(button.getHandlerForClient(
+      &handler, Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
+  applyActionTriggerServerConfig(&at, SUPLA_ACTION_CAP_TURN_OFF);
+  EXPECT_TRUE(button.getHandlerForClient(
+      &handler, Supla::CONDITIONAL_ON_PRESS)->isEnabled());
+  EXPECT_FALSE(button.getHandlerForClient(
+      &handler, Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
+}
+
+TEST_F(ActionTriggerTests, DirectionalPairDoesNotExemptOtherEdgeHandlers) {
+  Supla::Control::Button button(10);
+  button.setMulticlickTime(300, true);
+  ActionHandlerMock motor;
+  ActionHandlerMock other;
+  Supla::Control::ActionTrigger at;
+  button.addAction(Supla::MOVE_DOWN, motor, Supla::CONDITIONAL_ON_PRESS);
+  button.addAction(Supla::DOWN_STOP, motor, Supla::CONDITIONAL_ON_RELEASE);
+  button.addAction(Supla::TURN_ON, other, Supla::CONDITIONAL_ON_PRESS);
+  button.addAction(Supla::TURN_OFF, other, Supla::CONDITIONAL_ON_RELEASE);
+  at.attach(button);
+  at.onInit();
+  applyActionTriggerServerConfig(
+      &at, SUPLA_ACTION_CAP_TURN_ON | SUPLA_ACTION_CAP_TURN_OFF);
+  EXPECT_TRUE(button.getHandlerForClient(
+      &motor, Supla::CONDITIONAL_ON_PRESS)->isEnabled());
+  EXPECT_TRUE(button.getHandlerForClient(
+      &motor, Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
+  EXPECT_FALSE(button.getHandlerForClient(
+      &other, Supla::CONDITIONAL_ON_PRESS)->isEnabled());
+  EXPECT_FALSE(button.getHandlerForClient(
+      &other, Supla::CONDITIONAL_ON_RELEASE)->isEnabled());
 }
 
 TEST_F(ActionTriggerTests,
@@ -1626,7 +2307,7 @@ TEST_F(ActionTriggerTests,
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_CHANGE)->isEnabled());
@@ -1653,7 +2334,7 @@ TEST_F(ActionTriggerTests,
   config.ActiveActions =
       SUPLA_ACTION_CAP_TOGGLE_x1 | SUPLA_ACTION_CAP_TOGGLE_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_CHANGE)->isEnabled());
@@ -1670,7 +2351,7 @@ TEST_F(ActionTriggerTests,
   // another config from server which disables some actions
   config.ActiveActions = SUPLA_ACTION_CAP_TOGGLE_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_CHANGE)->isEnabled());
@@ -1686,7 +2367,7 @@ TEST_F(ActionTriggerTests,
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(
       b1.getHandlerForFirstClient(Supla::CONDITIONAL_ON_CHANGE)->isEnabled());
@@ -1760,7 +2441,7 @@ TEST_F(ActionTriggerTests, AlwaysEnabledLocalAction) {
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1871,7 +2552,7 @@ TEST_F(ActionTriggerTests, RemoveSomeActionsFromATAttachWithStorage) {
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1967,7 +2648,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonWithCfg) {
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -1995,7 +2676,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonWithCfg) {
                          SUPLA_ACTION_CAP_SHORT_PRESS_x1 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForClient(&ah, Supla::ON_PRESS)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForClient(&ah, Supla::ON_CLICK_1)->isEnabled());
@@ -2011,7 +2692,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonWithCfg) {
   config.ActiveActions =
       SUPLA_ACTION_CAP_HOLD | SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForClient(&ah, Supla::ON_PRESS)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForClient(&ah, Supla::ON_CLICK_1)->isEnabled());
@@ -2026,7 +2707,7 @@ TEST_F(ActionTriggerTests, ManageLocalActionsForMonostableButtonWithCfg) {
   // another config from server which disables all actions
   config.ActiveActions = 0;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_TRUE(b1.getHandlerForClient(&ah, Supla::ON_PRESS)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForClient(&ah, Supla::ON_CLICK_1)->isEnabled());
@@ -2050,14 +2731,16 @@ TEST_F(ActionTriggerTests, ActionHandlingType_PublishAllDisableAllTest) {
   ActionHandlerMock ah;
 
   EXPECT_CALL(cfg, init());
-  EXPECT_CALL(cfg, getInt32(_, _)).WillOnce([](const char *key, int32_t *buf) {
+  EXPECT_CALL(cfg, getInt32(_, _)).WillRepeatedly([](const char *key,
+                                                      int32_t *buf) {
     if (strcmp(key, "0_mqtt_at") == 0) {
       *buf = 2;
       return true;
     }
-    EXPECT_TRUE(false);
+    EXPECT_STREQ(key, "0_at_unlock");
     return false;
   });
+  expectActionTriggerConfigStorage(&cfg);
 
   // initial configuration
   b1.addAction(Supla::TOGGLE, ah, Supla::ON_PRESS);
@@ -2135,7 +2818,7 @@ TEST_F(ActionTriggerTests, ActionHandlingType_PublishAllDisableAllTest) {
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
   // however actionHandlerType is set to disable all local actions
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -2176,14 +2859,16 @@ TEST_F(ActionTriggerTests, ActionHandlingType_PublishAllDisableNoneTest) {
   ActionHandlerMock ah;
 
   EXPECT_CALL(cfg, init());
-  EXPECT_CALL(cfg, getInt32(_, _)).WillOnce([](const char *key, int32_t *buf) {
+  EXPECT_CALL(cfg, getInt32(_, _)).WillRepeatedly([](const char *key,
+                                                      int32_t *buf) {
     if (strcmp(key, "0_mqtt_at") == 0) {
       *buf = 1;
       return true;
     }
-    EXPECT_TRUE(false);
+    EXPECT_STREQ(key, "0_at_unlock");
     return false;
   });
+  expectActionTriggerConfigStorage(&cfg);
 
   // initial configuration
   b1.addAction(Supla::TOGGLE, ah, Supla::ON_PRESS);
@@ -2249,7 +2934,7 @@ TEST_F(ActionTriggerTests, ActionHandlingType_PublishAllDisableNoneTest) {
   b1.runAction(Supla::ON_CLICK_5);  // published
 
   for (int i = 0; i < 10; i++) {
-    at.iterateConnected(nullptr);
+    at.iterateConnected();
   }
 
   TSD_ChannelConfig result = {};
@@ -2266,7 +2951,7 @@ TEST_F(ActionTriggerTests, ActionHandlingType_PublishAllDisableNoneTest) {
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
   // however actionHandlerType is set to disable all local actions
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -2295,7 +2980,7 @@ TEST_F(ActionTriggerTests, ActionHandlingType_PublishAllDisableNoneTest) {
 
   // we received channel config with SHORT_PRESS_x1 used, so
   // ON_CLICK_1 is disabled locally and published to servers
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   b1.runAction(Supla::ON_PRESS);    // this one should be disabled
   b1.runAction(Supla::ON_CLICK_1);  // published, local action disabled
@@ -2335,14 +3020,16 @@ TEST_F(ActionTriggerTests, ActionHandlingType_RelayOnSuplaServerTest) {
   ActionHandlerMock ah;
 
   EXPECT_CALL(cfg, init());
-  EXPECT_CALL(cfg, getInt32(_, _)).WillOnce([](const char *key, int32_t *buf) {
+  EXPECT_CALL(cfg, getInt32(_, _)).WillRepeatedly([](const char *key,
+                                                      int32_t *buf) {
     if (strcmp(key, "0_mqtt_at") == 0) {
       *buf = 0;
       return true;
     }
-    EXPECT_TRUE(false);
+    EXPECT_STREQ(key, "0_at_unlock");
     return false;
   });
+  expectActionTriggerConfigStorage(&cfg);
 
   // initial configuration
   b1.addAction(Supla::TOGGLE, ah, Supla::ON_PRESS);
@@ -2417,7 +3104,7 @@ TEST_F(ActionTriggerTests, ActionHandlingType_RelayOnSuplaServerTest) {
 
   // we received channel config with no SHORT_PRESS_x1 used, so
   // ON_CLICK_1 should be executed on local ah element
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_FALSE(b1.getHandlerForFirstClient(Supla::ON_PRESS)->isEnabled());
   EXPECT_TRUE(b1.getHandlerForFirstClient(Supla::ON_CLICK_1)->isEnabled());
@@ -2446,7 +3133,7 @@ TEST_F(ActionTriggerTests, ActionHandlingType_RelayOnSuplaServerTest) {
 
   // we received channel config with SHORT_PRESS_x1 used, so
   // ON_CLICK_1 is disabled locally and published to servers
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   b1.runAction(Supla::ON_PRESS);    // this one should be disabled
   b1.runAction(Supla::ON_CLICK_1);  // published, local action disabled
@@ -2531,7 +3218,7 @@ TEST_F(ActionTriggerTests, MqttSendAtTest) {
 
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
 
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
   b1.runAction(Supla::ON_PRESS);
   b1.runAction(Supla::ON_CLICK_1);
   b1.runAction(Supla::ON_HOLD);
@@ -2559,7 +3246,7 @@ TEST_F(ActionTriggerTests, MqttSendAtTest) {
                          SUPLA_ACTION_CAP_SHORT_PRESS_x2 |
                          SUPLA_ACTION_CAP_SHORT_PRESS_x5;
   memcpy(result.Config, &config, sizeof(TChannelConfig_ActionTrigger));
-  at.handleChannelConfig(&result);
+  at.handleChannelConfig(&result, false);
 
   EXPECT_CALL(ah, handleAction(Supla::ON_CLICK_1, Supla::TURN_ON));
   EXPECT_CALL(srpc, actionTrigger(_, _)).Times(0);

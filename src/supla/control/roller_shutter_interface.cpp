@@ -806,7 +806,7 @@ void RollerShutterInterface::onLoadState() {
       currentPosition = data.currentPosition * 100;
       currentTilt = data.tiltPosition * 100;
       if (getCurrentPosition() == UNKNOWN_POSITION) {
-        setCalibrationNeeded();
+        setNotCalibrated();
       } else {
         setCalibrate(false);
       }
@@ -830,7 +830,7 @@ void RollerShutterInterface::onLoadState() {
           data.openingTimeMs, "opening time", channel.getChannelNumber());
       currentPosition = data.currentPosition * 100;
       if (getCurrentPosition() == UNKNOWN_POSITION) {
-        setCalibrationNeeded();
+        setNotCalibrated();
       } else {
         setCalibrate(false);
       }
@@ -1161,8 +1161,7 @@ Supla::ApplyConfigResult RollerShutterInterface::applyChannelConfig(
 
     default: {
       SUPLA_LOG_WARNING("RS[%d] Ignoring unsupported channel function %d",
-                        getChannelNumber(),
-                        result->Func);
+                        getChannelNumber(), result->Func);
       break;
     }
   }
@@ -1356,9 +1355,10 @@ void RollerShutterInterface::fillChannelConfig(void *channelConfig,
       break;
     }
     default:
-      SUPLA_LOG_WARNING("RS[%d] fill channel config for unknown function %d",
-                        channel.getChannelNumber(),
-                        channel.getDefaultFunction());
+      SUPLA_LOG_WARNING(
+          "RS[%d] fill channel config for unknown function %d",
+          channel.getChannelNumber(),
+          channel.getDefaultFunction());
       return;
   }
 }

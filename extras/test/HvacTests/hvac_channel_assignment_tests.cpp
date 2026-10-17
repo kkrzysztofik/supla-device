@@ -77,6 +77,8 @@ TEST_F(HvacChannelAssignmentTests, binarySensorAsChannelZero) {
   EXPECT_CALL(cfg, getInt32(StrEq("1_fnc"), _))
       .Times(1)
       .WillOnce(Return(false));
+  EXPECT_CALL(cfg, getUInt32(StrEq("1_cfg_chng_t"), _))
+      .WillOnce(Return(false));
   EXPECT_CALL(cfg, getUInt8(StrEq("1_cfg_chng"), _))
       .Times(1)
       .WillOnce(Return(false));
@@ -89,8 +91,7 @@ TEST_F(HvacChannelAssignmentTests, binarySensorAsChannelZero) {
   EXPECT_CALL(
       cfg,
       getBlob(StrEq("1_hvac_weekly"), _, sizeof(TChannelConfig_WeeklySchedule)))
-      .Times(1)
-      .WillOnce(Return(false));
+      .Times(0);
   EXPECT_CALL(cfg, setInt32(StrEq("1_fnc"), SUPLA_CHANNELFNC_HVAC_THERMOSTAT))
       .Times(1)
       .WillOnce(Return(true));

@@ -531,8 +531,7 @@ void Supla::Sensor::ElectricityMeter::onLoadConfig(SuplaDeviceClass *) {
     }
 
     if (configChange) {
-      channelConfigState = Supla::ChannelConfigState::LocalChangePending;
-      saveConfigChangeFlag();
+      setAndSaveConfigChangeFlag(true);
     }
 
     SUPLA_LOG_INFO(
@@ -559,7 +558,9 @@ Supla::ApplyConfigResult Supla::Sensor::ElectricityMeter::applyChannelConfig(
 
   if (config->Func != SUPLA_CHANNELFNC_ELECTRICITY_METER) {
     SUPLA_LOG_DEBUG(
-        "EM[%d]: wrong function %d", getChannelNumber(), config->Func);
+        "EM[%d]: wrong function %d",
+        getChannelNumber(),
+        config->Func);
     return Supla::ApplyConfigResult::Success;
   }
 

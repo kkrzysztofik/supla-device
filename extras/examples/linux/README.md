@@ -270,6 +270,22 @@ The application creates these persistent files with owner-only permissions
 (`0600`): `guid_auth.yaml`, `config_storage.bin`, `state.bin`, and
 `last_state.txt`.
 
+When rewriting these files, the application also restricts existing file
+permissions to `0600`.
+
+`config_storage.bin` stores runtime configuration in binary form, separately
+from the input YAML configuration file. It is rewritten when configuration
+changes are committed.
+
+Failed delayed configuration saves are retried every five seconds. SIGINT,
+SIGTERM, SIGHUP and SIGQUIT request termination even when delivered to a worker
+thread. Shutdown uses the SDK's shared reset/stop preparation: element reset
+callbacks, state storage, configuration commit and network teardown. A normal
+stop exits with status 0; a failed final configuration commit exits with status 1.
+Software reset retains its existing status 1 exit. Legacy configuration backends
+can keep overriding `commit()`; backends that report write errors override
+`commitWithResult()`.
+
 Adjust "supla_user" to your user name.
 
 `last_state.txt` contains the last runtime "last state" log (similar to
@@ -409,8 +425,9 @@ Mandatory.
 Defines MQTT broker port to which device should connect to. This application
 can use SSL/TLS encrypted connection. Parameter is optional. The default is
 `1883` when `use_ssl` is `false` and `8883` when `use_ssl` is `true`. An
-explicit `port` value overrides these defaults. Using port `8883` also enables
-TLS when `use_ssl` is omitted or set to `false`.
+explicit `port` value overrides these defaults, including custom TLS ports.
+Port `8883` requires `use_ssl: true`; `use_ssl: false` with this port is rejected.
+The port never enables TLS implicitly.
 
 #### Parameter `username`
 
@@ -430,12 +447,21 @@ Parameter is optional - default value: hostname.
 #### Parameter `use_ssl`
 
 Defines whether an encrypted SSL/TLS connection is to be used.
-Parameter is optional - default value: false.
+Mandatory boolean whenever an MQTT source or output is used, including named
+sources and references through `use`. Set explicitly to `true` or `false`.
 
 #### Parameter `verify_ca`
 
-Defines whether the MQTT broker certificate is to be verified.
-Parameter is optional - default value: false.
+Defines whether the MQTT broker certificate and host name are to be verified.
+Mandatory boolean when `use_ssl: true`; there is no implicit choice.
+With `use_ssl: false`, this parameter is not required. Explicit `false` keeps
+TLS encryption without verifying the broker identity and logs an INSECURE
+warning. Explicit `true` enables verification using system CAs or `ca_file`.
+
+Incomplete configurations and invalid boolean types are rejected at startup,
+before the MQTT client is created or connects. Existing MQTT configurations
+must add `use_ssl`, and TLS configurations must also add `verify_ca`.
+Configurations that do not use MQTT are unaffected.
 
 #### Parameter `ca_file`
 
@@ -449,8 +475,9 @@ Example (no SSL/TLS, anonymous):
       host: mqtt.example.org
       port: 1883
       client_name: sl4d_client_001
+      use_ssl: false
 
-Example (with SSL/TLS with login):
+Example (TLS with CA and host-name verification):
 
     mqtt:
       host: mqtt-ssl.example.org
@@ -459,10 +486,6 @@ Example (with SSL/TLS with login):
       password: my_s3cr3t-PSWD
       client_name: sl4d_client_001
       use_ssl: true
-
-It is recommended to verify the server certificate with an encrypted connection,
-so we should set `verify_ca` to `true`
-
       verify_ca: true
 
 If the server is trusted but its certificate is self-signed or its CA is not in
@@ -470,6 +493,16 @@ the system's trusted certificate store, we can use a PEM file with the certifica
 path and specify the file location as `ca_file`.
 
       ca_file: ca_chain.pem
+
+Example (TLS without certificate verification, explicitly chosen by the operator):
+
+    mqtt:
+      host: mqtt-ssl.example.org
+      use_ssl: true
+      verify_ca: false
+
+This encrypts traffic but does not authenticate the broker. It is vulnerable to
+an attacker impersonating the broker; use verification whenever possible.
 
 # Supla channels configuration
 
@@ -488,6 +521,22 @@ It is ok to add channels later at the end of the list.
 
 Currently only limited number of channels are supported. Please let us know
 if you need something more.
+
+Relay channels and `ActionTriggerParsed` can opt in to the native weekly
+schedule with `weekly_schedule: true`. It defaults to `false`. For relays, use
+a function that supports schedules, such as `light_switch` or `power_switch`.
+After enabling it, the channel advertises weekly schedule support to Supla
+Cloud, where you can configure the schedule.
+The default ActionTrigger programs are unlocked and locked, with no time slots
+assigned.
+
+    - type: VirtualRelay
+      default_function: light_switch
+      weekly_schedule: true
+
+    - type: ActionTriggerParsed
+      name: scheduled_actions
+      weekly_schedule: true
 
 Supported channel types:
 * `VirtualRelay` - related class `Supla::Control::VirtualRelay`
@@ -864,6 +913,8 @@ More examples can be found in subfolders of `extras/examples/linux`.
 
 All channels accept the following parameters:
 `initial_caption` - allows to define initial caption for channel.
+`default_function_number` - numeric `SUPLA_CHANNELFNC_*` value used as the
+initial channel function.
 `channel_number` - optional channel number override. Allowed values are from
 `0` to `127`; explicitly configured channel numbers must be unique. Duplicate
 channel numbers cause a configuration error.
@@ -878,7 +929,7 @@ and off from Supla App, etc.
 It is virtual, because it doesn't control anything - it just keeps state that
 was set on it.
 
-There are two optional parameters:
+There are three optional parameters:
 `name` - name of channel in YAML file - it doesn't have any functional meaning
 so far.
 `initial_state` - allows to define what state should be set on relay when
@@ -886,6 +937,16 @@ supla-device application is started. Following values are allowed:
 on, off, restore.
 "off" is default value.
 "restore" will use state storage file to keep and restore relay state.
+`default_function` - initial relay function. Accepted values are
+`gateway_lock`, `gate`, `garage_door`, `door_lock`, `power_switch`,
+`light_switch`, and `staircase_timer`. `default_function_number` can be used
+instead when a numeric function identifier is more convenient.
+
+For example, a virtual light switch exposes native weekly schedule support:
+
+    channels:
+      - type: VirtualRelay
+        default_function: light_switch
 
 ### CmdRelay
 

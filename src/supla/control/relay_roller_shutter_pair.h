@@ -29,6 +29,8 @@ class ManagedRelay : public Relay {
   // be loaded by the owner before this method is called.
   void loadEngineConfigOnly();
   void purgeEngineConfigOnly();
+  void refreshWeeklyScheduleCapabilities();
+  bool isWeeklyScheduleConfigUsed() const;
   void setupButtonActions(Button *button);
 
   void turnOn(_supla_int_t duration = 0) override;
@@ -132,6 +134,7 @@ class RelayRollerShutterPair : public ElementWithChannelActions {
   RelayRollerShutterPair &setDefaultStateOff();
   RelayRollerShutterPair &setDefaultStateRestore();
   RelayRollerShutterPair &setPreloadStateOnSoftReset(bool enabled = true);
+  RelayRollerShutterPair &setWeeklyScheduleAvailable(bool available = true);
   bool setDefaultFunctions(uint32_t primaryFunction,
                            uint32_t secondaryFunction);
   bool setRuntimeFunctions(uint32_t primaryFunction,
@@ -148,6 +151,9 @@ class RelayRollerShutterPair : public ElementWithChannelActions {
   bool getRemainingCountdownTimerSec(uint32_t *remainingSec) const override;
   uint8_t handleChannelConfig(TSD_ChannelConfig *config,
                               bool local = false) override;
+  uint8_t handleWeeklySchedule(TSD_ChannelConfig *config,
+                               bool altSchedule,
+                               bool local) override;
   void handleSetChannelConfigResult(
       TSDS_SetChannelConfigResult *result) override;
   void handleChannelConfigFinished() override;
@@ -201,6 +207,7 @@ class RelayRollerShutterPair : public ElementWithChannelActions {
   void switchToRelayMode();
   void switchToRollerMode();
   void applyRuntimeMode();
+  void syncPrimaryWeeklyScheduleConfigType();
   ElementWithChannelActions *primaryActiveEngine();
   const ElementWithChannelActions *primaryActiveEngine() const;
   void rebuildButtonActions();
