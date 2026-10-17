@@ -1,5 +1,10 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
 */
 
 #include "byd_cloud_client.h"
@@ -57,11 +62,60 @@ std::string jsonCompact(const nlohmann::json& value) {
   return value.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
+// The cloud returns the same field as a number, a numeric string or a "--"
+// placeholder. nlohmann::json::value() throws on any type mismatch, so reads
+// of untrusted payloads go through these tolerant helpers instead.
+double jsonNumberOr(const nlohmann::json& obj,
+                    const char* key,
+                    double fallback) {
+  if (!obj.is_object() || !obj.contains(key)) {
+    return fallback;
+  }
+  const auto& value = obj.at(key);
+  if (value.is_number()) {
+    return value.get<double>();
+  }
+  if (value.is_string()) {
+    const std::string text = value.get<std::string>();
+    if (text.empty() || text == "--") {
+      return fallback;
+    }
+    try {
+      return std::stod(text);
+    } catch (const std::exception&) {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+std::string jsonStringOr(const nlohmann::json& obj,
+                         const char* key,
+                         const std::string& fallback) {
+  if (!obj.is_object() || !obj.contains(key)) {
+    return fallback;
+  }
+  const auto& value = obj.at(key);
+  if (value.is_string()) {
+    return value.get<std::string>();
+  }
+  if (value.is_number_integer()) {
+    return std::to_string(value.get<int64_t>());
+  }
+  if (value.is_number()) {
+    return value.dump();
+  }
+  if (value.is_boolean()) {
+    return value.get<bool>() ? "true" : "false";
+  }
+  return fallback;
+}
+
 bool isRealtimeReady(const nlohmann::json& payload) {
   if (payload.is_null() || !payload.is_object() || payload.empty()) {
     return false;
   }
-  if (payload.value("onlineState", -1) == 2) {
+  if (jsonNumberOr(payload, "onlineState", -1) == 2) {
     return false;
   }
   static const char* kTireFields[] = {
@@ -71,14 +125,14 @@ bool isRealtimeReady(const nlohmann::json& payload) {
       "rightRearTirepressure",
   };
   for (const char* field : kTireFields) {
-    if (payload.value(field, 0.0) > 0.0) {
+    if (jsonNumberOr(payload, field, 0.0) > 0.0) {
       return true;
     }
   }
-  if (payload.value("time", 0) > 0) {
+  if (jsonNumberOr(payload, "time", 0) > 0) {
     return true;
   }
-  return payload.value("enduranceMileage", 0.0) > 0.0;
+  return jsonNumberOr(payload, "enduranceMileage", 0.0) > 0.0;
 }
 
 bool isGpsReady(const nlohmann::json& payload) {
@@ -275,12 +329,6 @@ bool BydCloudClient::login(std::string* error) {
       {"serviceTime", serviceTime},
   };
 
-  std::map<std::string, std::string> checkFields;
-  for (auto it = outer.begin(); it != outer.end(); ++it) {
-    checkFields[it.key()] = it.value().is_string()
-                                ? it.value().get<std::string>()
-                                : jsonCompact(it.value());
-  }
   outer["checkcode"] = computeCheckcodeJson(jsonCompact(outer));
 
   nlohmann::json response;
@@ -288,10 +336,10 @@ bool BydCloudClient::login(std::string* error) {
     return false;
   }
 
-  if (response.value("code", "") != "0") {
+  if (jsonStringOr(response, "code", "") != "0") {
     if (error) {
-      *error = "login failed code=" + response.value("code", "") +
-               " msg=" + response.value("message", "");
+      *error = "login failed code=" + jsonStringOr(response, "code", "") +
+               " msg=" + jsonStringOr(response, "message", "");
     }
     return false;
   }
@@ -317,9 +365,18 @@ bool BydCloudClient::login(std::string* error) {
     return false;
   }
 
+  if (!tokenJson.is_object() || !tokenJson.contains("token") ||
+      !tokenJson["token"].is_object()) {
+    if (error) {
+      *error = "login token JSON missing token object";
+    }
+    return false;
+  }
+
   const auto& token = tokenJson["token"];
   if (!token.contains("userId") || !token.contains("signToken") ||
-      !token.contains("encryToken")) {
+      !token.contains("encryToken") || !token["userId"].is_string() ||
+      !token["signToken"].is_string() || !token["encryToken"].is_string()) {
     if (error) {
       *error = "login missing token fields";
     }
@@ -336,6 +393,10 @@ bool BydCloudClient::login(std::string* error) {
 
 bool BydCloudClient::ensureLoggedIn(std::string* error) {
   std::lock_guard<std::mutex> lock(mutex_);
+  return ensureLoggedInLocked(error);
+}
+
+bool BydCloudClient::ensureLoggedInLocked(std::string* error) {
   if (hasSession_ && !session_.isExpired()) {
     return true;
   }
@@ -346,8 +407,9 @@ bool BydCloudClient::postTokenJson(const std::string& endpoint,
                                    nlohmann::json inner,
                                    nlohmann::json* decoded,
                                    const std::string& vin,
-                                   std::string* error) {
-  if (!ensureLoggedIn(error)) {
+                                   std::string* error,
+                                   bool allowRetry) {
+  if (!ensureLoggedInLocked(error)) {
     return false;
   }
 
@@ -406,17 +468,18 @@ bool BydCloudClient::postTokenJson(const std::string& endpoint,
     return false;
   }
 
-  const std::string code = response.value("code", "");
+  const std::string code = jsonStringOr(response, "code", "");
   if (code != "0") {
-    if (isSessionExpiredCode(code)) {
+    if (allowRetry && isSessionExpiredCode(code)) {
       hasSession_ = false;
-      if (ensureLoggedIn(error)) {
-        return postTokenJson(endpoint, std::move(inner), decoded, vin, error);
+      if (ensureLoggedInLocked(error)) {
+        return postTokenJson(
+            endpoint, std::move(inner), decoded, vin, error, false);
       }
     }
     if (error) {
       *error = endpoint + " failed code=" + code +
-               " msg=" + response.value("message", "");
+               " msg=" + jsonStringOr(response, "message", "");
     }
     return false;
   }

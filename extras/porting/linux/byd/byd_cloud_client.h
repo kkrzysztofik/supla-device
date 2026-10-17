@@ -1,5 +1,10 @@
 /*
  Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
 */
 
 #ifndef EXTRAS_PORTING_LINUX_BYD_BYD_CLOUD_CLIENT_H_
@@ -49,6 +54,10 @@ class BydCloudClient {
 #endif
 
  private:
+  // Callers of postTokenJson()/triggerAndPoll() already hold mutex_, so the
+  // session must be validated through the unlocked helper to avoid
+  // re-locking the non-recursive mutex on the same thread.
+  bool ensureLoggedInLocked(std::string* error);
   std::string randomHex16() const;
   bool postSecure(const std::string& endpoint,
                   const nlohmann::json& outerPayload,
@@ -59,7 +68,8 @@ class BydCloudClient {
                      nlohmann::json inner,
                      nlohmann::json* decoded,
                      const std::string& vin,
-                     std::string* error);
+                     std::string* error,
+                     bool allowRetry = true);
   bool triggerAndPoll(const std::string& triggerEndpoint,
                       const std::string& pollEndpoint,
                       const std::string& vin,
