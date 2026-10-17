@@ -11,6 +11,7 @@
 #define EXTRAS_PORTING_LINUX_INGECON_INGECON_TYPES_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace Supla {
@@ -51,6 +52,7 @@ struct Readings {
   std::string serialNumber;
   std::string firmwareCode;
   uint32_t totalEnergyKwh = 0;
+  bool totalEnergyValid = false;
   uint32_t hoursRunning = 0;
   uint32_t gridConnections = 0;
   uint32_t status1 = 0;
@@ -87,6 +89,10 @@ struct Readings {
 // ~2 billion kWh spike into cloud history. A jump outside
 // [accepted, accepted + kMaxEnergyStepKwh] is held back until a following
 // poll confirms it (handles counter resets / inverter replacement).
+//
+// The first reading is never trusted on its own: it only becomes a candidate,
+// and a second reading consistent with it is required before anything is
+// published. Returns nullopt while no value may be published yet.
 constexpr uint32_t kMaxEnergyStepKwh = 1000;
 
 struct EnergyFilter {
@@ -96,7 +102,8 @@ struct EnergyFilter {
   uint32_t candidate = 0;
 };
 
-uint32_t filterTotalEnergyKwh(EnergyFilter* filter, uint32_t kwh);
+std::optional<uint32_t> filterTotalEnergyKwh(EnergyFilter* filter,
+                                             uint32_t kwh);
 
 int normalizePollIntervalSec(int pollIntervalSec);
 int normalizeTimeoutMs(int timeoutMs);

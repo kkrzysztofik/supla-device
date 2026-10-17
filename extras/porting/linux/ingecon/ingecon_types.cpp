@@ -23,10 +23,28 @@ bool isPlausibleEnergyStep(uint32_t from, uint32_t to) {
 
 }  // namespace
 
-uint32_t filterTotalEnergyKwh(EnergyFilter* filter, uint32_t kwh) {
-  if (!filter->hasAccepted || isPlausibleEnergyStep(filter->accepted, kwh) ||
+std::optional<uint32_t> filterTotalEnergyKwh(EnergyFilter* filter,
+                                             uint32_t kwh) {
+  if (!filter->hasAccepted) {
+    // No baseline yet. The first reading is only a candidate; a second reading
+    // consistent with it is required before anything is published, so a
+    // garbage first frame can never reach cloud history.
+    if (filter->hasCandidate && isPlausibleEnergyStep(filter->candidate, kwh)) {
+      filter->hasAccepted = true;
+      filter->accepted = kwh;
+      filter->hasCandidate = false;
+      return kwh;
+    }
+    SUPLA_LOG_WARNING(
+        "Ingecon: total energy %u kWh not published yet (waiting for a "
+        "second consistent reading)",
+        kwh);
+    filter->hasCandidate = true;
+    filter->candidate = kwh;
+    return std::nullopt;
+  }
+  if (isPlausibleEnergyStep(filter->accepted, kwh) ||
       (filter->hasCandidate && isPlausibleEnergyStep(filter->candidate, kwh))) {
-    filter->hasAccepted = true;
     filter->accepted = kwh;
     filter->hasCandidate = false;
     return kwh;

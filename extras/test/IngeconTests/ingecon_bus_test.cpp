@@ -64,23 +64,62 @@ TEST(IngeconBusTest, InvalidateCachedReadingsMarksCacheInvalidButKeepsValues) {
   EXPECT_EQ(state->readings.alarms, 99u);
 }
 
+TEST(IngeconBusTest, EnergyFilterConfirmsFirstReadingBeforePublish) {
+  using Supla::Linux::Ingecon::EnergyFilter;
+  using Supla::Linux::Ingecon::filterTotalEnergyKwh;
+
+  EnergyFilter filter;
+  // The first reading alone is never published.
+  EXPECT_FALSE(filterTotalEnergyKwh(&filter, 58480u).has_value());
+  // The second, consistent reading confirms it.
+  const auto confirmed = filterTotalEnergyKwh(&filter, 58481u);
+  ASSERT_TRUE(confirmed.has_value());
+  EXPECT_EQ(*confirmed, 58481u);
+  // Steady state keeps publishing.
+  const auto next = filterTotalEnergyKwh(&filter, 58482u);
+  ASSERT_TRUE(next.has_value());
+  EXPECT_EQ(*next, 58482u);
+}
+
+TEST(IngeconBusTest, EnergyFilterGarbageFirstReadingIsNeverPublished) {
+  using Supla::Linux::Ingecon::EnergyFilter;
+  using Supla::Linux::Ingecon::filterTotalEnergyKwh;
+
+  EnergyFilter filter;
+  // Garbage as the very first reading (0x8080E470 seen on AAS1340_U) is held
+  // back and never reaches cloud history.
+  EXPECT_FALSE(filterTotalEnergyKwh(&filter, 0x8080E470u).has_value());
+  // A real reading disagrees with it, so it becomes the new candidate and is
+  // still not published.
+  EXPECT_FALSE(filterTotalEnergyKwh(&filter, 58480u).has_value());
+  // A second real reading confirms the real value.
+  const auto published = filterTotalEnergyKwh(&filter, 58480u);
+  ASSERT_TRUE(published.has_value());
+  EXPECT_EQ(*published, 58480u);
+}
+
 TEST(IngeconBusTest, EnergyFilterRejectsSpikeAndConfirmsReset) {
   using Supla::Linux::Ingecon::EnergyFilter;
   using Supla::Linux::Ingecon::filterTotalEnergyKwh;
 
   EnergyFilter filter;
-  EXPECT_EQ(filterTotalEnergyKwh(&filter, 58480u), 58480u);
-  EXPECT_EQ(filterTotalEnergyKwh(&filter, 58481u), 58481u);
-  // Garbage high word observed on AAS1340_U: one-off spike is held back.
-  EXPECT_EQ(filterTotalEnergyKwh(&filter, 0x8080E470u), 58481u);
-  EXPECT_EQ(filterTotalEnergyKwh(&filter, 58481u), 58481u);
-  // Genuine counter reset is accepted once a second poll confirms it.
-  EXPECT_EQ(filterTotalEnergyKwh(&filter, 10u), 58481u);
-  EXPECT_EQ(filterTotalEnergyKwh(&filter, 10u), 10u);
+  // Establish a baseline (two consistent readings).
+  EXPECT_FALSE(filterTotalEnergyKwh(&filter, 58480u).has_value());
+  ASSERT_TRUE(filterTotalEnergyKwh(&filter, 58481u).has_value());
 
-  // Garbage as the very first reading recovers after one confirmation.
-  EnergyFilter fresh;
-  EXPECT_EQ(filterTotalEnergyKwh(&fresh, 0x8080E470u), 0x8080E470u);
-  EXPECT_EQ(filterTotalEnergyKwh(&fresh, 58480u), 0x8080E470u);
-  EXPECT_EQ(filterTotalEnergyKwh(&fresh, 58480u), 58480u);
+  // Garbage high word observed on AAS1340_U: one-off spike is held back.
+  const auto held = filterTotalEnergyKwh(&filter, 0x8080E470u);
+  ASSERT_TRUE(held.has_value());
+  EXPECT_EQ(*held, 58481u);
+  const auto again = filterTotalEnergyKwh(&filter, 58481u);
+  ASSERT_TRUE(again.has_value());
+  EXPECT_EQ(*again, 58481u);
+
+  // Genuine counter reset is accepted once a second poll confirms it.
+  const auto resetPending = filterTotalEnergyKwh(&filter, 10u);
+  ASSERT_TRUE(resetPending.has_value());
+  EXPECT_EQ(*resetPending, 58481u);
+  const auto resetConfirmed = filterTotalEnergyKwh(&filter, 10u);
+  ASSERT_TRUE(resetConfirmed.has_value());
+  EXPECT_EQ(*resetConfirmed, 10u);
 }
