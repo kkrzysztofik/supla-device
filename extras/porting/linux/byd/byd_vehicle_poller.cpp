@@ -71,6 +71,11 @@ void BydVehiclePoller::subscribe(Subscriber subscriber) {
 void BydVehiclePoller::unsubscribe(void* owner) {
   {
     std::lock_guard<std::mutex> lock(subscribersMutex_);
+#ifdef SUPLA_TEST
+    if (subscribersLockHook_) {
+      subscribersLockHook_();
+    }
+#endif
     subscribers_.erase(
         std::remove_if(subscribers_.begin(),
                        subscribers_.end(),

@@ -17,6 +17,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef SUPLA_TEST
+#include <functional>
+#endif
+
 #include "byd_cloud_client.h"
 #include "byd_readings.h"
 #include "byd_types.h"
@@ -47,6 +51,14 @@ class BydVehiclePoller : public std::enable_shared_from_this<BydVehiclePoller> {
   void subscribe(Subscriber subscriber);
   void unsubscribe(void* owner);
 
+#ifdef SUPLA_TEST
+  // Invoked while subscribersMutex_ is held in unsubscribe(), so a test can
+  // order the worker join against the lock acquisition deterministically.
+  void setSubscribersLockHookForTest(std::function<void()> hook) {
+    subscribersLockHook_ = std::move(hook);
+  }
+#endif
+
  private:
   BydVehiclePoller(BydAccountConfig account,
                    BydVehicleConfig vehicle,
@@ -67,6 +79,10 @@ class BydVehiclePoller : public std::enable_shared_from_this<BydVehiclePoller> {
   std::atomic<bool> stopWorker_{false};
   std::atomic<bool> workerRunning_{false};
   int cycleCounter_ = 0;
+
+#ifdef SUPLA_TEST
+  std::function<void()> subscribersLockHook_;
+#endif
 };
 
 void shutdownAllBydPollers();
