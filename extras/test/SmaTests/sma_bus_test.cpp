@@ -11,6 +11,9 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
+#include <vector>
+
 using Supla::Linux::Sma::SerialMedia;
 using Supla::Linux::Sma::SmaBus;
 using Supla::Linux::Sma::SmaBusConfig;
@@ -45,4 +48,22 @@ TEST(SmaBusTest, AcquireSeparatesBusesByNetAddress) {
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
   EXPECT_NE(first, second);
+}
+
+TEST(SmaBusTest, InvalidateCachedReadingsMarksCacheInvalidButKeepsValues) {
+  auto state = std::make_shared<SmaBus::Subscriber::State>();
+  state->cacheValid = true;
+  state->valuesByKey["Pac"] = 1234.5;
+  state->valuesByKey["E-Total"] = 6789.0;
+
+  SmaBus::Subscriber subscriber;
+  subscriber.state = state;
+  std::vector<SmaBus::Subscriber> subscribers{subscriber};
+
+  SmaBus::invalidateCachedReadingsForTest(subscribers);
+
+  EXPECT_FALSE(state->cacheValid);
+  ASSERT_EQ(state->valuesByKey.size(), 2);
+  EXPECT_DOUBLE_EQ(state->valuesByKey["Pac"], 1234.5);
+  EXPECT_DOUBLE_EQ(state->valuesByKey["E-Total"], 6789.0);
 }

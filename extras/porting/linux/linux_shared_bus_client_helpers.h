@@ -37,6 +37,20 @@ class SharedBusClientRegistry {
     return clients_;
   }
 
+  // Calls f(client) for every registered client with the registry mutex
+  // held, so operations that invalidate other clients' state (e.g. detach
+  // during shutdown) cannot race with concurrent add()/remove().
+  // f must not call back into the registry.
+  template <typename F>
+  void forEachLocked(F&& f) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (ClientT* client : clients_) {
+      if (client != nullptr) {
+        f(client);
+      }
+    }
+  }
+
  private:
   mutable std::mutex mutex_;
   std::vector<ClientT*> clients_;
@@ -71,12 +85,10 @@ void detachSharedBusClient(const std::shared_ptr<StateT>& state,
 template <typename ClientT>
 void shutdownSharedBusClients(
     const SharedBusClientRegistry<ClientT>& registry) {
-  std::vector<ClientT*> clients = registry.snapshot();
-  for (auto* client : clients) {
-    if (client != nullptr) {
-      client->detach();
-    }
-  }
+  // Detach under the registry lock: detaching a client can make other
+  // registered clients observe invalid bus state, so the list must not
+  // change (and no client may be destroyed) while the loop runs.
+  registry.forEachLocked([](ClientT* client) { client->detach(); });
 }
 
 }  // namespace Linux
