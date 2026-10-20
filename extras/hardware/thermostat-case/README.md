@@ -15,6 +15,8 @@ A wall-mounted, two-part printed box for a SUPLA thermostat built from:
 /usr/bin/python3 check.py              # layout checks, stdlib only
 uv run parts.py --part all --check     # solid checks + interference against board envelopes
 uv run parts.py --part all             # -> out/*.stl, out/*.step, out/assembly_preview.step
+uv run view.py                         # -> out/viewer.html, interactive 3D (orbit, explode lid, toggle parts)
+uv run view.py --serve 8080            # same, served on the LAN, rebuilt when params.py/parts.py change
 ```
 
 About 75 × 72 × 41 mm closed, plus a 10 mm antenna socket on top.
@@ -25,7 +27,7 @@ About 75 × 72 × 41 mm closed, plus a 10 mm antenna socket on top.
 |---|---|
 | `out/thermostat_base.stl` | back on the bed, as exported |
 | `out/thermostat_lid.stl` | face on the bed, as exported |
-| `out/thermostat_tab_x3.stl` | print 3, flat |
+| `out/thermostat_tab_x2.stl` | print 2, flat |
 
 Holes through the walls are teardrops, so they print without supports. PETG is the safer
 choice for the two shield snap hooks, which strain about 1.8% when flexed.
@@ -36,7 +38,8 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
 
 - 4 × M3 heat-set inserts (M3 × 5.7, OD ~4.6, e.g. Ruthex) pressed into the corner columns (Ø4.0 holes)
 - 4 × M3×8 countersunk machine screws (DIN 7991), lid into the inserts
-- 3 × M2×6 machine screws, one per locking tab. They thread straight into Ø1.6 plastic posts.
+- 5 × M2×6 machine screws: 3 for the relay (into its standoffs), 1 per locking tab for the OLED and
+  button. They thread straight into Ø1.6 plastic holes.
   If the thread feels loose in your filament, lower `M2_PILOT`; if it's too stiff, raise it.
 - 2 × 4 mm countersunk wood screws + wall plugs, box to the wall
 - 2 small zip ties, probe and relay cables to the anchors above their holes
@@ -47,11 +50,13 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
 1. Press the four inserts into the columns with a soldering iron (before anything else goes in).
 2. Screw the base to the wall through the two countersunk holes in the middle strip.
 3. Snap the shield in between its hooks, XIAO end down, then plug in the USB-C from below.
-4. **Relay, button, OLED** all mount the same way: tilt the board, slide its Grove-connector end
+4. **Relay:** three M2×6 through its holes into the standoffs. Two of the holes are edge notches;
+   the screw head still clamps them.
+5. **Button, OLED** mount the same way: tilt the board, slide its Grove-connector end
    under the two lips, lower the other end onto its supports, put a tab on the post so it overlaps
    the board edge, and screw it down with an M2×6. The post stops the board sliding out of the lips
    even before the tab goes on.
-5. Wire the Grove cables, close the lid with the four M3×8 screws.
+6. Wire the Grove cables, close the lid with the four M3×8 screws.
 
 DS18B20: cut one end off a Grove cable and join it to the probe's bare wires
 (red → VCC, black → GND, yellow/white → SIG). Add 4.7 kΩ between SIG and VCC.

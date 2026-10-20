@@ -109,7 +109,7 @@ for n, xs in (("A", P.OLED_PAD_A), ("B", P.OLED_PAD_B)):
 
 # Slide-in mounts: lips clear the connector end's parts, the tab clears the far end's parts,
 # the board can't slide out of the lips before the tab is on, posts stay in the cavity.
-conn = {"relay": max(P.RELAY_GROVE[1][1], 6.35 + 0.6), "oled": P.OLED_GROVE[1][1], "button": max(P.BTN_GROVE[1][1], 6.35 + 0.6)}
+conn = {"oled": P.OLED_GROVE[1][1], "button": max(P.BTN_GROVE[1][1], 6.35 + 0.6)}
 for n, (f, xs, ys, lip_y) in P.MODULES.items():
     ok(lip_y >= conn[n] + 0.3 and min(ys[1], -ys[0]) - lip_y >= 2.0, f"{n} lips |y| {lip_y}..edge clear of parts up to |y| {conn[n]:.2f}")
     ok(xs[1] - P.TAB_OVER - P.TAB_CLEAR_OF[n] >= 0.3, f"{n} tab overlap clears T-side parts by {xs[1] - P.TAB_OVER - P.TAB_CLEAR_OF[n]:.2f}")
@@ -132,6 +132,9 @@ ok(P.OLED_POST >= P.OLED_PANEL_H + 0.1, "glass not pressed by the lid")
 # Screws: enough thread in plastic, and the pilot doesn't break through the outside.
 ok(P.BOSS_D - P.INSERT_D >= 2 * 1.6, f"insert column wall {(P.BOSS_D - P.INSERT_D) / 2:.1f} >= 1.6")
 ok(P.LID_SCREW - P.LID_T <= P.INSERT_HOLE - P.SCREW_SPARE, "lid screw tip stays inside the insert hole")
+for h in P.RELAY_HOLES:   # notch holes: the M2 head (3.8) must still land on the board
+    inside = min(h[0] - P.RELAY_X[0], P.RELAY_X[1] - h[0], h[1] - P.RELAY_Y[0], P.RELAY_Y[1] - h[1])
+    ok(inside + 1.9 >= 1.0, f"relay screw head at {h} overlaps the board by {inside + 1.9:.1f}")
 for n, (lo, hi, eng, skin) in P.pilots().items():
     need = 5.0 if n == "lid" else 3.0
     ok(eng >= need, f"{n} screw engages {eng:.1f} mm (>= {need})")

@@ -193,8 +193,8 @@ INSERT_D = 4.0          # hole for the insert (maker's figure for M3 x 5.7)
 INSERT_L = 5.7
 INSERT_HOLE = INSERT_L + 1.3   # melt room below the insert
 LID_SCREW = 8.0
-# Modules: slide the connector end under two lips, lock the far end with a printed tab
-# and one M2x6 machine screw threaded straight into a plastic post.
+# Lid modules: slide the connector end under two lips, lock the far end with a printed tab
+# and one M2x6 machine screw threaded straight into a plastic post. All M2 are M2x6.
 TAB_SCREW = 6.0
 TAB_T = 2.0
 TAB_W = 6.0
@@ -203,14 +203,13 @@ TAB_POST_D = 5.0
 TAB_HOLE = 2.2 + HOLE_COMP
 SCREW_SPARE = 0.5
 
-# name -> mapping, board x/y ranges, lip start |y|. The connector end (-x) goes under the lips.
+RELAY_SCREW = 6.0       # M2x6 machine screws through the relay's holes/notches into the standoffs
+# Lid modules: name -> mapping, board x/y ranges, lip start |y|. The connector end (-x) goes under the lips.
 MODULES = {
-    "relay": (relay_xy, RELAY_X, RELAY_Y, 7.3),    # Grove socket |y| <= 5, test pads |y| <= 6.95
     "oled": (oled_xy, OLED_X, OLED_Y, OLED_LIP_Y),
     "button": (btn_xy, BTN_X, BTN_Y, 7.3),         # Grove socket |y| <= 6.1, test pads |y| <= 6.95
 }
 TAB_CLEAR_OF = {  # nearest T-side part to the tab overlap, board x of its +x edge
-    "relay": RELAY_BODY[0][1],                     # relay body
     "oled": 16.32 + 0.5,                           # P1 marker pad
     "button": 17.78 + 0.6,                         # TP5..TP8
 }
@@ -218,8 +217,6 @@ TAB_CLEAR_OF = {  # nearest T-side part to the tab overlap, board x of its +x ed
 
 def module_z(name):
     """(z_mount, z_b, d): mounting surface, PCB face on the supports, direction to the T side."""
-    if name == "relay":
-        return BACK_T, BACK_T + LEDGE_H, 1
     return Z_RIM, Z_RIM - (OLED_POST if name == "oled" else BTN_POST), -1
 
 
@@ -233,6 +230,9 @@ def pilots():
     out = {}
     tip = Z_RIM + LID_T - LID_SCREW                          # head flush in the lid
     out["lid"] = (Z_RIM - INSERT_HOLE, Z_RIM + 1, min(Z_RIM - tip, INSERT_L), Z_RIM - INSERT_HOLE - BACK_T)
+    z_pcb = BACK_T + LEDGE_H
+    tip = z_pcb + GROVE_PCB_T - RELAY_SCREW                  # head on the relay, pointing -z
+    out["relay"] = (tip - SCREW_SPARE, z_pcb + 0.1, RELAY_SCREW - GROVE_PCB_T, tip - SCREW_SPARE)
     for n in MODULES:
         zm, zb, d = module_z(n)
         zt = zb + d * GROVE_PCB_T                            # T face = post top, tab sits on it

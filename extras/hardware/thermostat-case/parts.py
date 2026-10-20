@@ -83,11 +83,11 @@ def base():
         b += wbox(beam, hy, (z_floor - 2, z_top + 0.1 + 1.2))
         b += wbox(lip, hy, (z_top + 0.1, z_top + 0.1 + 1.2))
 
-    # Relay: supports under its three holes/notches, lips + tab post.
+    # Relay: standoffs under its three holes/notches, M2x6 machine screws.
     for h in P.RELAY_HOLES:
-        b += zcyl(*P.relay_xy(*h), z_floor, z_pcb, P.POST_D)
-    add, cut = slide_mount("relay")
-    b = b + add - cut
+        x, y = P.relay_xy(*h)
+        b += zcyl(x, y, z_floor, z_pcb, P.POST_D)
+        b -= zcyl(x, y, *P.pilots()["relay"][:2], P.M2_PILOT)
 
     # Bottom wall: USB-C opening, cable teardrops, tie anchors.
     ux, uz = P.usb_center()
@@ -292,7 +292,7 @@ def main():
 
     os.makedirs(OUT, exist_ok=True)
     for n, s in shapes.items():
-        fn = "thermostat_tab_x3" if n == "tab" else f"thermostat_{n}"
+        fn = "thermostat_tab_x2" if n == "tab" else f"thermostat_{n}"
         export_stl(to_print(s, flip=(n == "lid")), os.path.join(OUT, fn + ".stl"), tolerance=0.01)
         export_step(s, os.path.join(OUT, f"thermostat_{n}.step"))
     if a.part == "all":
