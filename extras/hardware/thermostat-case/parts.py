@@ -90,8 +90,15 @@ def base():
 
     # Bottom wall: USB-C opening, cable teardrops, tie anchors.
     ux, uz = P.usb_center()
-    w, h = P.USB_OVERMOLD[0] + 1.0, P.USB_OVERMOLD[1] + 1.0
-    b -= wbox((ux - w / 2, ux + w / 2), (-P.WALL - 1, 1), (uz - h / 2, uz + h / 2))
+    face, pocket, bezel = P.usb_port()
+    rw, rh = P.USB_RECEPT[0] + 0.6, P.USB_RECEPT[1] + 0.6
+    b -= wbox((ux - rw / 2, ux + rw / 2), (pocket, 1), (uz - rh / 2, uz + rh / 2))
+    sw, sh = P.USB_SHELL[0] + 0.4 + P.HOLE_COMP, P.USB_SHELL[1] + 0.4 + P.HOLE_COMP   # stadium slot
+    b -= wbox((ux - (sw - sh) / 2, ux + (sw - sh) / 2), (-P.WALL - 1, pocket + 0.01), (uz - sh / 2, uz + sh / 2))
+    for dx in (-(sw - sh) / 2, (sw - sh) / 2):
+        b -= ycyl(ux + dx, uz, sh / 2, -P.WALL - 1, pocket + 0.01)
+    ow, oh = P.USB_OVERMOLD[0] + 1.0, P.USB_OVERMOLD[1] + 1.0
+    b -= wbox((ux - ow / 2, ux + ow / 2), (-P.WALL - 1, bezel), (uz - oh / 2, uz + oh / 2))
     for n, x, d in P.CABLE_HOLES:
         b -= teardrop_y(x, P.CABLE_Z, d, -P.WALL - 1, 1)
         if n == "probe":
@@ -231,7 +238,7 @@ def envelopes():
     xx, xy = P.rect(P.shield_xy, *P.XIAO_B)
     e["xiao"] = wbox(xx, xy, (zt, zt + P.HDR_H + P.XIAO_PCB_T))
     ux, uz = P.usb_center()
-    e["usb"] = wbox((ux - 4.5, ux + 4.5), (P.SH_Y0 - P.XIAO_USB_PROTRUDE, P.SH_Y0 + 7.3), (uz - P.USB_H / 2, uz + P.USB_H / 2))
+    e["usb"] = wbox((ux - P.USB_RECEPT[0] / 2, ux + P.USB_RECEPT[0] / 2), (P.usb_port()[0], P.SH_Y0 + 7.3), (uz - P.USB_RECEPT[1] / 2, uz + P.USB_RECEPT[1] / 2))
     for i, (bx, by) in enumerate(P.GROVE_SH_B):
         gx, gy = P.rect(P.shield_xy, (bx - P.GROVE_SOCKET[0] / 2, bx + P.GROVE_SOCKET[0] / 2),
                         (by - P.GROVE_SOCKET[1] / 2, by + P.GROVE_SOCKET[1] / 2))

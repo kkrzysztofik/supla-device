@@ -19,7 +19,7 @@ uv run view.py                         # -> out/viewer.html, interactive 3D (orb
 uv run view.py --serve 8080            # same, served on the LAN, rebuilt when params.py/parts.py change
 ```
 
-About 76 × 76 × 41 mm closed, plus a 10 mm antenna socket on top.
+About 76 × 69 × 41 mm closed, plus a 10 mm antenna socket on top.
 
 ## Print (FDM, no supports)
 
@@ -73,7 +73,10 @@ These values in `params.py` aren't in any Seeed file, so they are estimates. Upd
 
 - `BTN_SW_H`, `BTN_CAP_D`: button cap height above the PCB and its diameter. Together these set the lid post length and the cap hole.
 - `OLED_PANEL_H`, `OLED_AA_TOP`: glass height above the PCB, and the gap from the glass top edge to the lit area. These set the pad height and where the window sits.
-- `USB_OVERMOLD`: the plug body of your USB-C cable.
+- `XIAO_USB_PROTRUDE`, `USB_RECEPT`: how far the XIAO's USB-C receptacle sticks out past the shield's
+  edge, and its size. The receptacle sits in a pocket right behind a 0.8 mm bezel with a shell-shaped
+  slot, so this sets whether the plug seats fully.
+- `USB_OVERMOLD`: the plug body of your USB-C cable; it nests in a shallow recess outside the slot.
 - `PROBE_CABLE_D`, `RELAY_CABLE_D`, `ANT_BASE_D`: the cable holes and the antenna socket bore.
 - `RELAY_BODY_H`, `GROVE_PLUG_UP`, `GROVE_CONN_H`: these set the box depth (worst case, `IN_D` in `params.py`).
 

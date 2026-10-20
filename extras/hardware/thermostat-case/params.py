@@ -87,17 +87,22 @@ GROVE_PLUG_UP = 15.0    # vertical socket + plug + cable bend above the PCB. MEA
 # --- Layout in the cavity ---------------------------------------------------
 # Shield: vertical, XIAO/USB end down. bx -> -y, by -> +x. The parts on it are near
 # symmetric about by = 12.5, so mirror vs rotation is not checked (unlike din-pi-case).
-USB_PLUG_METAL = 6.5    # USB-C plug shell length. Overmold must start inside the cavity
+# USB-C port: receptacle right at the wall, shell-shaped slot through a thin bezel, the plug
+# body nests in a shallow recess outside so the plug still seats.
+USB_SHELL = (8.4, 2.6)  # plug shell, USB-C spec max 8.34 x 2.56
+USB_RECEPT = (9.0, 3.2) # the XIAO's receptacle. MEASURE
 USB_OVERMOLD = (12.5, 7.0)  # MEASURE your cable
+PORT_WALL = 0.8         # bezel around the slot (2 perimeters)
+USB_MATE_GAP_MAX = 1.2  # plug body may stop this far short of the receptacle (assumption)
 SH_X0 = 7.0             # clear of the corner columns
-SH_Y0 = USB_PLUG_METAL - 0.5 + XIAO_USB_PROTRUDE   # receptacle face 0.5 below plug overmold
+SH_Y0 = CLR             # board end on the bottom wall; the receptacle sits in a pocket in it
 LEDGE_H = 3.0           # rails under the shield; > PIN_STUB
 GAP_SCREW = 12.0        # strip between shield and relay for the wall screws
 RL_X0 = SH_X0 + SH[1] + GAP_SCREW
 RL_TOP = SH_Y0 + SH[0]  # relay top aligned with shield top
 IN_W = RL_X0 + (RELAY_Y[1] - RELAY_Y[0]) + 7.0
 IN_H = max(RL_TOP + 2.0, SH_Y0 + SH[0] + 2 * CLR + TAB_POST_D + 0.5)  # room for the shield's end tab post
-WALL_SCREWS = [(SH_X0 + SH[1] + GAP_SCREW / 2, y) for y in (16.0, 50.0)]
+WALL_SCREWS = [(SH_X0 + SH[1] + GAP_SCREW / 2, y) for y in (28.0, 54.0)]
 
 # Front modules on the lid, seen from outside: B side faces out, so x mirrors.
 WIN_CX = IN_W / 2
@@ -185,6 +190,13 @@ def oled_window():
     cx = (OLED_PANEL[0][0] + OLED_PANEL[0][1]) / 2
     m = WINDOW_MARGIN
     return rect(oled_xy, (cx - OLED_AA[0] / 2 - m, cx + OLED_AA[0] / 2 + m), (top - OLED_AA[1] - m, top + m))
+
+
+def usb_port():
+    """Y planes of the port, outside is -y: (receptacle face, pocket floor, bezel outer face)."""
+    face = SH_Y0 - XIAO_USB_PROTRUDE
+    pocket = face - 0.2
+    return face, pocket, pocket - PORT_WALL
 
 
 def usb_center():

@@ -79,11 +79,13 @@ for i, ((post, edge), site) in enumerate(zip(P.shield_tab_sites(), P.SHIELD_TABS
 ok(P.LEDGE_H >= P.PIN_STUB + 0.3, f"rails {P.LEDGE_H} > pin stubs {P.PIN_STUB}")
 ok(min(P.XIAO_B[1][0], P.SH[1] - P.XIAO_B[1][1]) >= 1.5 + 0.5, "rails (1.5 wide) clear of XIAO header rows")
 
-# USB-C through the bottom wall: overmold in the opening, clear of columns.
+# USB-C port in the bottom wall: shell slot, plug body recess, clear of columns.
 ux, uz = P.usb_center()
-face_y = P.SH_Y0 - P.XIAO_USB_PROTRUDE
-ok(face_y - P.USB_PLUG_METAL < 0 <= face_y - P.USB_PLUG_METAL + 1.0,
-   f"plug overmold starts {face_y - P.USB_PLUG_METAL:.2f} from inner wall (just inside)")
+face, pocket, bezel = P.usb_port()
+ok(face - bezel <= P.USB_MATE_GAP_MAX, f"plug body stops {face - bezel:.1f} short of the receptacle (<= {P.USB_MATE_GAP_MAX})")
+ok(bezel - (-P.WALL) >= 0.4, f"outside recess for the plug body {bezel + P.WALL:.1f} deep")
+ok(pocket < 0 and P.PORT_WALL >= 0.8, f"receptacle in a {-pocket:.1f} pocket behind a {P.PORT_WALL} bezel")
+ok(P.USB_RECEPT[1] + 0.6 <= P.USB_OVERMOLD[1], "bezel shows round the shell slot")
 uo = ((ux - P.USB_OVERMOLD[0] / 2 - 0.5, ux + P.USB_OVERMOLD[0] / 2 + 0.5),
       (uz - P.USB_OVERMOLD[1] / 2 - 0.5, uz + P.USB_OVERMOLD[1] / 2 + 0.5))
 ok(uo[1][0] >= P.BACK_T + 1.0 and uo[1][1] <= P.Z_RIM - 1.0, f"USB opening z {uo[1][0]:.1f}..{uo[1][1]:.1f} inside the wall")
