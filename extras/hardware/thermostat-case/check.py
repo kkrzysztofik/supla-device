@@ -53,18 +53,27 @@ for n, r in boards.items():
 ok(gap(shield, relay) >= 2 * P.WOOD_HEAD_D / 2 + 1, f"shield-relay strip {gap(shield, relay):.1f} fits wall screw heads")
 ok(gap(oled, btn) >= 1.0, f"oled-button gap {gap(oled, btn):.1f}")
 
-# Wall screws: heads clear of the shield (incl. its locating posts/hooks) and the relay.
+# Wall screws: heads clear of the shield (incl. its locating posts) and the relay.
 for s in P.WALL_SCREWS:
     for n, r in (("shield", shield), ("relay", relay)):
         g = circle_gap(s, P.WOOD_HEAD_D / 2, r)
-        ok(g >= 1.2 + P.CLR + 0.5, f"wall screw {s} head clears {n} by {g:.2f} (hooks/posts need {1.2 + P.CLR:.1f})")
+        ok(g >= 1.2 + P.CLR + 0.5, f"wall screw {s} head clears {n} by {g:.2f} (posts need {1.2 + P.CLR:.1f})")
 
-# Snap hooks (6 long) beside the XIAO, not beside the Grove sockets, and off the wall screws.
 xiao = P.rect(P.shield_xy, *P.XIAO_B)
-grove_lo = min(P.shield_xy(bx + P.GROVE_SOCKET[0] / 2, 0)[1] for bx, _ in P.GROVE_SH_B)
-ok(xiao[1][0] <= P.HOOK_Y - 3 and P.HOOK_Y + 3 <= min(xiao[1][1], grove_lo - 0.5), f"hooks y {P.HOOK_Y - 3}..{P.HOOK_Y + 3} beside the XIAO")
-for s in P.WALL_SCREWS:
-    ok(abs(s[1] - P.HOOK_Y) >= 3 + P.WOOD_HEAD_D / 2 + 0.5, f"wall screw {s} clear of hook pocket")
+
+# Shield tabs: overlap only bare board, posts inside the cavity and off the wall screws/columns,
+# screws reachable (outside the XIAO footprint).
+for i, ((post, edge), site) in enumerate(zip(P.shield_tab_sites(), P.SHIELD_TABS)):
+    ov = P.shield_tab_overlap(i)
+    hit = [k for k in P.SHIELD_KEEPOUT if gap(ov, k) < 0.3]
+    ok(not hit, f"shield tab {site[0]} overlap {fmt(ov)} clear of parts {hit}")
+    r = P.TAB_POST_D / 2
+    ok(r + P.CLR <= post[0] <= P.IN_W - r - P.CLR and r + P.CLR <= post[1] <= P.IN_H - r - P.CLR, f"shield tab post {post} inside cavity")
+    for s in P.WALL_SCREWS:
+        ok(math.dist(s, post) - r - P.WOOD_HEAD_D / 2 >= 0.5, f"shield tab post {post} clears wall screw {s}")
+    for c in P.BOSSES:
+        ok(math.dist(c, post) - r - P.BOSS_D / 2 >= 0.5, f"shield tab post {post} clears column {c}")
+    ok(circle_gap(post, r, xiao) > 0, f"shield tab screw {post} reachable beside the XIAO")
 
 # Shield rails leave the THT pin stubs free, and are tall enough.
 ok(P.LEDGE_H >= P.PIN_STUB + 0.3, f"rails {P.LEDGE_H} > pin stubs {P.PIN_STUB}")

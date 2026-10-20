@@ -68,7 +68,8 @@ def base():
         b -= Pos(x, y, z_floor - h) * Cone(P.WOOD_CLEAR / 2, P.WOOD_HEAD_D / 2, h, align=CC_MIN)
         b -= zcyl(x, y, z_floor, z_floor + 1, P.WOOD_HEAD_D)
 
-    # Shield: rails under the long edges, corner posts at the ends, two snap hooks.
+    # Shield (no mounting holes): rails under the long edges, corner posts at the ends,
+    # three tab posts; the tabs clamp its edges down with M2x6.
     sx0, sx1 = P.SH_X0, P.SH_X0 + P.SH[1]
     sy0, sy1 = P.SH_Y0, P.SH_Y0 + P.SH[0]
     z_top = z_pcb + P.SH_PCB_T
@@ -77,15 +78,9 @@ def base():
     for x in ((sx0, sx0 + 2), (sx1 - 2, sx1)):
         for y in ((sy0 - P.CLR - 2, sy0 - P.CLR), (sy1 + P.CLR, sy1 + P.CLR + 2)):
             b += wbox(x, y, (z_floor, z_top + 1.0))
-    # ponytail: 0.9 deflection on a ~9 mm PLA beam is ~1.8 % strain; print PETG if they crack.
-    hy = (P.HOOK_Y - 3, P.HOOK_Y + 3)
-    for side in (-1, 1):
-        e = sx0 - P.CLR if side < 0 else sx1 + P.CLR      # beam face towards the board
-        beam = tuple(sorted((e, e + side * 1.2)))
-        lip = tuple(sorted((e, e - side * (0.6 + P.CLR))))
-        b -= wbox(tuple(sorted((e - side * 0.6, e + side * 1.8))), hy, (z_floor - 2, z_floor + 0.01))
-        b += wbox(beam, hy, (z_floor - 2, z_top + 0.1 + 1.2))
-        b += wbox(lip, hy, (z_top + 0.1, z_top + 0.1 + 1.2))
+    for (px, py), _ in P.shield_tab_sites():
+        b += zcyl(px, py, z_floor - 0.01, z_top, P.TAB_POST_D)
+        b -= zcyl(px, py, *P.pilots()["tab_shield"][:2], P.M2_PILOT)
 
     # Relay: standoffs under its three holes/notches, M2x6 machine screws.
     for h in P.RELAY_HOLES:
@@ -209,18 +204,20 @@ def clamp_placed():
 
 
 def tabs_placed():
-    """Tabs in the assembly: on the T face, overlap pointing at the board."""
-    out = {}
+    """Tabs in the assembly: on the T face, overlap pointing at the board edge."""
+    sites = []   # (name, post xy, edge xy, T-face z, direction to the T side)
     for n, (f, xs, _, _) in P.MODULES.items():
         zm, zb, d = P.module_z(n)
-        zt = zb + d * P.GROVE_PCB_T
-        px, py = P.tab_post(n)
-        bx, by = f(xs[1], 0.0)                     # board +x edge mid, world
-        ang = math.degrees(math.atan2(by - py, bx - px)) + 180   # local -x -> towards the board
+        sites.append(("tab_" + n, P.tab_post(n), f(xs[1], 0.0), zb + d * P.GROVE_PCB_T, d))
+    zt = P.BACK_T + P.LEDGE_H + P.SH_PCB_T
+    sites += [(f"tab_shield{i}", post, edge, zt, 1) for i, (post, edge) in enumerate(P.shield_tab_sites())]
+    out = {}
+    for name, (px, py), (ex, ey), zt, d in sites:
+        ang = math.degrees(math.atan2(ey - py, ex - px)) + 180   # local -x -> towards the board
         s = Rot(0, 0, ang) * tab()
         if d < 0:
             s = Pos(0, 0, -P.TAB_T) * s
-        out["tab_" + n] = Pos(px, py, zt) * s
+        out[name] = Pos(px, py, zt) * s
     return out
 
 
@@ -329,7 +326,7 @@ def main():
 
     os.makedirs(OUT, exist_ok=True)
     for n, s in shapes.items():
-        fn = "thermostat_tab_x2" if n == "tab" else f"thermostat_{n}"
+        fn = "thermostat_tab_x5" if n == "tab" else f"thermostat_{n}"
         export_stl(to_print(s, flip=(n in ("lid", "clamp"))), os.path.join(OUT, fn + ".stl"), tolerance=0.01)
         export_step(s, os.path.join(OUT, f"thermostat_{n}.step"))
     if a.part == "all":

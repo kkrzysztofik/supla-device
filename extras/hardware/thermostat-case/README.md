@@ -19,7 +19,7 @@ uv run view.py                         # -> out/viewer.html, interactive 3D (orb
 uv run view.py --serve 8080            # same, served on the LAN, rebuilt when params.py/parts.py change
 ```
 
-About 75 × 72 × 41 mm closed, plus a 10 mm antenna socket on top.
+About 76 × 76 × 41 mm closed, plus a 10 mm antenna socket on top.
 
 ## Print (FDM, no supports)
 
@@ -27,11 +27,10 @@ About 75 × 72 × 41 mm closed, plus a 10 mm antenna socket on top.
 |---|---|
 | `out/thermostat_base.stl` | back on the bed, as exported |
 | `out/thermostat_lid.stl` | face on the bed, as exported |
-| `out/thermostat_tab_x2.stl` | print 2, flat |
+| `out/thermostat_tab_x5.stl` | print 5, flat (2 lid modules, 3 shield) |
 | `out/thermostat_clamp.stl` | probe cable clamp bar, groove up |
 
-Holes through the walls are teardrops, so they print without supports. PETG is the safer
-choice for the two shield snap hooks, which strain about 1.8% when flexed.
+Holes through the walls are teardrops, so they print without supports. PLA or PETG both work.
 
 ## Hardware
 
@@ -39,8 +38,8 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
 
 - 4 × M3 heat-set inserts (M3 × 5.7, OD ~4.6, e.g. Ruthex) pressed into the corner columns (Ø4.0 holes)
 - 4 × M3×8 countersunk machine screws (DIN 7991), lid into the inserts
-- 7 × M2×6 machine screws: 3 for the relay (into its standoffs), 1 per locking tab for the OLED and
-  button, 2 for the probe cable clamp. They thread straight into Ø1.6 plastic holes.
+- 10 × M2×6 machine screws: 3 for the relay (into its standoffs), 5 for the locking tabs (OLED,
+  button, 3 on the shield), 2 for the probe cable clamp. They thread straight into Ø1.6 plastic holes.
   If the thread feels loose in your filament, lower `M2_PILOT`; if it's too stiff, raise it.
 - 2 × 4 mm countersunk wood screws + wall plugs, box to the wall
 - 1 small zip tie, relay cable to the anchor above its hole
@@ -50,7 +49,9 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
 
 1. Press the four inserts into the columns with a soldering iron (before anything else goes in).
 2. Screw the base to the wall through the two countersunk holes in the middle strip.
-3. Snap the shield in between its hooks, XIAO end down, then plug in the USB-C from below.
+3. **Shield:** it has no mounting holes, so lay it on its rails between the corner posts, XIAO end
+   down, and clamp its edges with three tabs (one at the far end, two beside the XIAO), each with an
+   M2×6. Then plug in the USB-C from below.
 4. **Relay:** three M2×6 through its holes into the standoffs. Two of the holes are edge notches;
    the screw head still clamps them.
 5. **Button, OLED** mount the same way, in a channel with side rails along their long edges: tilt the board, slide its Grove-connector end

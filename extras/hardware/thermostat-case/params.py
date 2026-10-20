@@ -18,6 +18,7 @@ WALL_MIN = 1.2          # 3 perimeters at 0.4
 HOLE_COMP = 0.2         # FDM holes print undersize; added to clearance holes
 CLR = 0.3               # per side, board in a pocket
 BED = (220, 220, 250)   # assumption: Prusa MK-class bed
+TAB_POST_D = 5.0        # posts for the M2x6 locking-tab screws
 M2_PILOT = 1.6          # M2 machine screw threading into plastic, no HOLE_COMP. Calibration knob.
 M3_CLEAR = 3.4 + HOLE_COMP
 M3_CSK_D = 6.5          # countersunk head
@@ -95,9 +96,8 @@ GAP_SCREW = 12.0        # strip between shield and relay for the wall screws
 RL_X0 = SH_X0 + SH[1] + GAP_SCREW
 RL_TOP = SH_Y0 + SH[0]  # relay top aligned with shield top
 IN_W = RL_X0 + (RELAY_Y[1] - RELAY_Y[0]) + 7.0
-IN_H = RL_TOP + 2.0
+IN_H = max(RL_TOP + 2.0, SH_Y0 + SH[0] + 2 * CLR + TAB_POST_D + 0.5)  # room for the shield's end tab post
 WALL_SCREWS = [(SH_X0 + SH[1] + GAP_SCREW / 2, y) for y in (16.0, 50.0)]
-HOOK_Y = 24.0           # shield snap hooks: along the XIAO, the Grove sockets reach the board edge
 
 # Front modules on the lid, seen from outside: B side faces out, so x mirrors.
 WIN_CX = IN_W / 2
@@ -209,8 +209,20 @@ TAB_SCREW = 6.0
 TAB_T = 2.0
 TAB_W = 6.0
 TAB_OVER = 1.5          # tab overlap onto the board's T face
-TAB_POST_D = 5.0
 TAB_HOLE = 2.2 + HOLE_COMP
+# Shield (no mounting holes in Seeed's KiCad): clamped by 3 tabs on its edges, in board frame
+# (edge point, outward direction). Edge strips there are clear on the component side.
+SHIELD_TABS = [
+    ((0.0, 12.5), (-1, 0)),    # far end, between J4 and J8 (sockets start at bx 3.8)
+    ((40.0, 0.0), (0, -1)),    # long edge beside the XIAO (J11 pads from bx 43.4)
+    ((40.0, 25.0), (0, 1)),    # long edge beside the XIAO (J10 pads from bx 43.4)
+]
+SHIELD_KEEPOUT = [  # component-side parts near the tabs, board frame ((bx0, bx1), (by0, by1))
+    *[((bx - GROVE_SOCKET[0] / 2, bx + GROVE_SOCKET[0] / 2), (by - GROVE_SOCKET[1] / 2, by + GROVE_SOCKET[1] / 2)) for bx, by in GROVE_SH_B],
+    ((43.4, 51.1), (0.1, 2.7)), ((43.4, 51.1), (22.4, 25.0)),   # J11, J10 header pads
+    ((35.1, 36.3), (19.3, 21.9)),                               # R18, R20, R21
+    ((56.6, 57.6), (22.3, 23.3)), ((56.0, 57.9), (6.3, 9.0)),   # D16 charge LED, J9 battery pads
+]
 RAIL_T = 1.2            # side guide rails along the lid modules' long edges
 RAIL_PROUD = 0.5        # rail top past the PCB T face
 SCREW_SPARE = 0.5
@@ -239,6 +251,24 @@ def rails(name):
     return [rect(f, x, (ys[1] + CLR, ys[1] + CLR + RAIL_T)), rect(f, x, (ys[0] - CLR - RAIL_T, ys[0] - CLR))]
 
 
+def shield_tab_sites():
+    """[(post xy, board-edge xy)] in world coords."""
+    out = []
+    for (bx, by), (ox, oy) in SHIELD_TABS:
+        k = CLR + TAB_POST_D / 2
+        out.append((shield_xy(bx + ox * k, by + oy * k), shield_xy(bx, by)))
+    return out
+
+
+def shield_tab_overlap(i):
+    """Board-frame rect the tab covers."""
+    (bx, by), (ox, oy) = SHIELD_TABS[i]
+    w = TAB_W / 2
+    if ox:
+        return (bx, bx + TAB_OVER) if ox < 0 else (bx - TAB_OVER, bx), (by - w, by + w)
+    return (bx - w, bx + w), ((by, by + TAB_OVER) if oy < 0 else (by - TAB_OVER, by))
+
+
 def tab_post(name):
     f, xs, _, _ = MODULES[name]
     return f(xs[1] + CLR + TAB_POST_D / 2, 0.0)
@@ -249,6 +279,9 @@ def pilots():
     out = {}
     tip = Z_RIM + LID_T - LID_SCREW                          # head flush in the lid
     out["lid"] = (Z_RIM - INSERT_HOLE, Z_RIM + 1, min(Z_RIM - tip, INSERT_L), Z_RIM - INSERT_HOLE - BACK_T)
+    zt = BACK_T + LEDGE_H + SH_PCB_T                         # shield T face = post top
+    tip = zt + TAB_T - TAB_SCREW
+    out["tab_shield"] = (tip - SCREW_SPARE, zt + 0.1, TAB_SCREW - TAB_T, tip - SCREW_SPARE)
     zs, _ = clamp_z()
     top = zs + CLAMP_GAP + CLAMP_BAR_T
     tip = top - CLAMP_SCREW                                  # head on the bar, pointing -z
