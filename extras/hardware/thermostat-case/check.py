@@ -130,6 +130,13 @@ for n, (f, xs, ys, lip_y) in P.MODULES.items():
     ok(lip_y >= conn[n] + 0.3 and min(ys[1], -ys[0]) - lip_y >= 2.0, f"{n} lips |y| {lip_y}..edge clear of parts up to |y| {conn[n]:.2f}")
     ok(xs[1] - P.TAB_OVER - P.TAB_CLEAR_OF[n] >= 0.3, f"{n} tab overlap clears T-side parts by {xs[1] - P.TAB_OVER - P.TAB_CLEAR_OF[n]:.2f}")
     ok(P.CLR < P.LIP, f"{n} can slide {P.CLR} toward the post: less than the {P.LIP} lip overlap")
+    for rr in P.rails(n):
+        ok(rr[0][0] >= P.CLR and rr[0][1] <= P.IN_W - P.CLR and rr[1][0] >= P.CLR and rr[1][1] <= P.IN_H - P.CLR,
+           f"{n} rail {fmt(rr)} inside cavity")
+        for c in P.BOSSES:
+            ok(circle_gap(c, P.BOSS_D / 2, rr) >= 0.5, f"{n} rail clears column {c}")
+        for m, other in (("oled", oled), ("button", btn)):
+            ok(m == n or gap(rr, other) >= 1.0, f"{n} rail clears {m} board") if m != n else None
     px, py = P.tab_post(n)
     r = P.TAB_POST_D / 2
     ok(r + P.CLR <= px <= P.IN_W - r - P.CLR and r + P.CLR <= py <= P.IN_H - r - P.CLR, f"{n} tab post ({px:.1f}, {py:.1f}) inside cavity")

@@ -211,6 +211,8 @@ TAB_W = 6.0
 TAB_OVER = 1.5          # tab overlap onto the board's T face
 TAB_POST_D = 5.0
 TAB_HOLE = 2.2 + HOLE_COMP
+RAIL_T = 1.2            # side guide rails along the lid modules' long edges
+RAIL_PROUD = 0.5        # rail top past the PCB T face
 SCREW_SPARE = 0.5
 
 RELAY_SCREW = 6.0       # M2x6 machine screws through the relay's holes/notches into the standoffs
@@ -228,6 +230,13 @@ TAB_CLEAR_OF = {  # nearest T-side part to the tab overlap, board x of its +x ed
 def module_z(name):
     """(z_mount, z_b, d): mounting surface, PCB face on the supports, direction to the T side."""
     return Z_RIM, Z_RIM - (OLED_POST if name == "oled" else BTN_POST), -1
+
+
+def rails(name):
+    """World rects of the two side rails of a lid module (full length, CLR off the long edges)."""
+    f, xs, ys, _ = MODULES[name]
+    x = (xs[0] - CLR - LIP_T, xs[1] + CLR)
+    return [rect(f, x, (ys[1] + CLR, ys[1] + CLR + RAIL_T)), rect(f, x, (ys[0] - CLR - RAIL_T, ys[0] - CLR))]
 
 
 def tab_post(name):

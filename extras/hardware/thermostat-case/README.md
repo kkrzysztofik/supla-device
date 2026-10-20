@@ -53,7 +53,7 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
 3. Snap the shield in between its hooks, XIAO end down, then plug in the USB-C from below.
 4. **Relay:** three M2×6 through its holes into the standoffs. Two of the holes are edge notches;
    the screw head still clamps them.
-5. **Button, OLED** mount the same way: tilt the board, slide its Grove-connector end
+5. **Button, OLED** mount the same way, in a channel with side rails along their long edges: tilt the board, slide its Grove-connector end
    under the two lips, lower the other end onto its supports, put a tab on the post so it overlaps
    the board edge, and screw it down with an M2×6. The post stops the board sliding out of the lips
    even before the tab goes on.

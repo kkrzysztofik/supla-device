@@ -159,7 +159,8 @@ def lid():
 
 
 def slide_mount(name):
-    """Two lips over the T face at the board's -x (connector) end, a post for the tab at +x.
+    """Two lips over the T face at the board's -x (connector) end, side rails along the long
+    edges, a post for the tab at +x.
     Returns (material to add, M2 hole to cut)."""
     f, xs, ys, lip_y = P.MODULES[name]
     zm, zb, d = P.module_z(name)
@@ -171,6 +172,8 @@ def slide_mount(name):
     for yr in ((lip_y, ys[1]), (ys[0], -lip_y)):
         add.append(wbox(*P.rect(f, (x0 - P.CLR - P.LIP_T, x0 - P.CLR), yr), zw))
         add.append(wbox(*P.rect(f, (x0 - P.CLR - P.LIP_T, x0 + P.LIP), yr), (za, zl)))
+    for r in P.rails(name):                                         # side guides: no sideways play
+        add.append(wbox(*r, sorted((zm - d * 0.01, zt + d * P.RAIL_PROUD))))
     px, py = P.tab_post(name)
     add.append(zcyl(px, py, *sorted((zm - d * 0.01, zt)), P.TAB_POST_D))
     out = add[0]
