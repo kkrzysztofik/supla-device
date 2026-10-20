@@ -34,6 +34,10 @@ def zcyl(x, y, z0, z1, d):
     return Pos(x, y, z0) * Cylinder(d / 2, z1 - z0, align=CC_MIN)
 
 
+def ycyl(x, z, r, y0, y1):
+    return Pos(x, (y0 + y1) / 2, z) * Rot(90, 0, 0) * Cylinder(r, y1 - y0)
+
+
 def teardrop_y(x, z, d, y0, y1):
     """Hole along Y, point up (+Z): prints without support with Z as the build axis."""
     r = d / 2
@@ -93,12 +97,23 @@ def base():
     ux, uz = P.usb_center()
     w, h = P.USB_OVERMOLD[0] + 1.0, P.USB_OVERMOLD[1] + 1.0
     b -= wbox((ux - w / 2, ux + w / 2), (-P.WALL - 1, 1), (uz - h / 2, uz + h / 2))
-    for _, x, d in P.CABLE_HOLES:
+    for n, x, d in P.CABLE_HOLES:
         b -= teardrop_y(x, P.CABLE_Z, d, -P.WALL - 1, 1)
+        if n == "probe":
+            continue
         tx, ty, tz = P.TIE
         b += wbox((x - tx / 2, x + tx / 2), (P.TIE_Y - ty / 2, P.TIE_Y + ty / 2), (z_floor, z_floor + tz))
         sw, sh = P.TIE_SLOT
         b -= wbox((x - tx, x + tx), (P.TIE_Y - sw / 2, P.TIE_Y + sw / 2), (z_floor + 1.0, z_floor + 1.0 + sh))
+
+    # Probe strain relief: saddle with a round groove, two pilots for the clamp bar.
+    x = P.clamp_x()
+    zs, zc = P.clamp_z()
+    r = P.PROBE_CABLE_D / 2
+    b += wbox((x - P.CLAMP_W / 2, x + P.CLAMP_W / 2), P.CLAMP_Y, (z_floor - 0.01, zs))
+    b -= ycyl(x, zc, r, P.CLAMP_Y[0] - 1, P.CLAMP_Y[1] + 1)
+    for dx in (-P.CLAMP_DX, P.CLAMP_DX):
+        b -= zcyl(x + dx, sum(P.CLAMP_Y) / 2, *P.pilots()["clamp"][:2], P.M2_PILOT)
 
     # Antenna socket on the top wall, sitting on the bed.
     r = P.ANT_BASE_D / 2 + 0.2
@@ -171,6 +186,23 @@ def tab():
     L = r + P.CLR + P.TAB_POST_D / 2 + P.TAB_OVER
     t = Pos(r, 0, 0) * Box(L, P.TAB_W, P.TAB_T, align=(Align.MAX, Align.CENTER, Align.MIN))
     return t - Cylinder(P.TAB_HOLE / 2, 3 * P.TAB_T)
+
+
+def clamp_bar():
+    """Local frame: bottom face on z=0 (groove side), centred on the cable."""
+    zs, zc = P.clamp_z()
+    zb = zs + P.CLAMP_GAP
+    L = P.CLAMP_Y[1] - P.CLAMP_Y[0]
+    bar = Box(P.CLAMP_W, L, P.CLAMP_BAR_T, align=CC_MIN)
+    bar -= ycyl(0, zc - P.CLAMP_SQUEEZE - zb, P.PROBE_CABLE_D / 2, -L, L)
+    for dx in (-P.CLAMP_DX, P.CLAMP_DX):
+        bar -= Pos(dx, 0, -1) * Cylinder(P.TAB_HOLE / 2, P.CLAMP_BAR_T + 2, align=CC_MIN)
+    return bar
+
+
+def clamp_placed():
+    zs, _ = P.clamp_z()
+    return Pos(P.clamp_x(), sum(P.CLAMP_Y) / 2, zs + P.CLAMP_GAP) * clamp_bar()
 
 
 def tabs_placed():
@@ -270,7 +302,7 @@ def check_assembly(parts):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--part", default="all", choices=["all", "base", "lid", "tab"])
+    ap.add_argument("--part", default="all", choices=["all", "base", "lid", "tab", "clamp"])
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
 
@@ -281,23 +313,25 @@ def main():
         shapes["lid"] = lid()
     if a.part in ("all", "tab"):
         shapes["tab"] = tab()
+    if a.part in ("all", "clamp"):
+        shapes["clamp"] = clamp_bar()
 
     if a.check:
         ok = all([check_part(n, s) for n, s in shapes.items()])
         if a.part == "all":
-            placed = {k: v for k, v in shapes.items() if k != "tab"}
-            ok &= check_assembly({**placed, **tabs_placed(), **envelopes()})
+            placed = {k: v for k, v in shapes.items() if k not in ("tab", "clamp")}
+            ok &= check_assembly({**placed, **tabs_placed(), "clampbar": clamp_placed(), **envelopes()})
         print("\nall green" if ok else "\nFAILED")
         sys.exit(0 if ok else 1)
 
     os.makedirs(OUT, exist_ok=True)
     for n, s in shapes.items():
         fn = "thermostat_tab_x2" if n == "tab" else f"thermostat_{n}"
-        export_stl(to_print(s, flip=(n == "lid")), os.path.join(OUT, fn + ".stl"), tolerance=0.01)
+        export_stl(to_print(s, flip=(n in ("lid", "clamp"))), os.path.join(OUT, fn + ".stl"), tolerance=0.01)
         export_step(s, os.path.join(OUT, f"thermostat_{n}.step"))
     if a.part == "all":
-        placed = [v for k, v in shapes.items() if k != "tab"]
-        export_step(Compound([*placed, *tabs_placed().values(), *envelopes().values()]), os.path.join(OUT, "assembly_preview.step"))
+        placed = [v for k, v in shapes.items() if k not in ("tab", "clamp")]
+        export_step(Compound([*placed, *tabs_placed().values(), clamp_placed(), *envelopes().values()]), os.path.join(OUT, "assembly_preview.step"))
     print("wrote", sorted(os.listdir(OUT)))
 
 

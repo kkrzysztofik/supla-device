@@ -28,6 +28,7 @@ About 75 × 72 × 41 mm closed, plus a 10 mm antenna socket on top.
 | `out/thermostat_base.stl` | back on the bed, as exported |
 | `out/thermostat_lid.stl` | face on the bed, as exported |
 | `out/thermostat_tab_x2.stl` | print 2, flat |
+| `out/thermostat_clamp.stl` | probe cable clamp bar, groove up |
 
 Holes through the walls are teardrops, so they print without supports. PETG is the safer
 choice for the two shield snap hooks, which strain about 1.8% when flexed.
@@ -38,11 +39,11 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
 
 - 4 × M3 heat-set inserts (M3 × 5.7, OD ~4.6, e.g. Ruthex) pressed into the corner columns (Ø4.0 holes)
 - 4 × M3×8 countersunk machine screws (DIN 7991), lid into the inserts
-- 5 × M2×6 machine screws: 3 for the relay (into its standoffs), 1 per locking tab for the OLED and
-  button. They thread straight into Ø1.6 plastic holes.
+- 7 × M2×6 machine screws: 3 for the relay (into its standoffs), 1 per locking tab for the OLED and
+  button, 2 for the probe cable clamp. They thread straight into Ø1.6 plastic holes.
   If the thread feels loose in your filament, lower `M2_PILOT`; if it's too stiff, raise it.
 - 2 × 4 mm countersunk wood screws + wall plugs, box to the wall
-- 2 small zip ties, probe and relay cables to the anchors above their holes
+- 1 small zip tie, relay cable to the anchor above its hole
 - 4 Grove cables: 10 cm for the relay, 20 cm for the OLED and the button (they ride on the lid)
 
 ## Assembly
@@ -56,7 +57,11 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
    under the two lips, lower the other end onto its supports, put a tab on the post so it overlaps
    the board edge, and screw it down with an M2×6. The post stops the board sliding out of the lips
    even before the tab goes on.
-6. Wire the Grove cables, close the lid with the four M3×8 screws.
+6. **Probe cable:** pass it through its hole, lay it in the saddle groove behind the wall, put the
+   clamp bar on (groove down) and tighten both M2×6 until the bar stops ~0.4 mm off the saddle.
+   A pull on the probe now ends at the clamp, not at the solder joint. If the cable still slips,
+   lower `PROBE_CABLE_D` (or raise `CLAMP_SQUEEZE`) and reprint the bar.
+7. Wire the Grove cables, close the lid with the four M3×8 screws.
 
 DS18B20: cut one end off a Grove cable and join it to the probe's bare wires
 (red → VCC, black → GND, yellow/white → SIG). Add 4.7 kΩ between SIG and VCC.

@@ -32,7 +32,7 @@ def build():
     import parts
     importlib.reload(params)
     importlib.reload(parts)
-    shapes = {"base": parts.base(), "lid": parts.lid(), **parts.tabs_placed(), **parts.envelopes()}
+    shapes = {"base": parts.base(), "lid": parts.lid(), **parts.tabs_placed(), "tab_clamp": parts.clamp_placed(), **parts.envelopes()}
     tmp = tempfile.mkdtemp()
     scene = trimesh.Scene()
     for n, s in shapes.items():

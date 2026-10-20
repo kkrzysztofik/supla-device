@@ -96,7 +96,7 @@ RL_X0 = SH_X0 + SH[1] + GAP_SCREW
 RL_TOP = SH_Y0 + SH[0]  # relay top aligned with shield top
 IN_W = RL_X0 + (RELAY_Y[1] - RELAY_Y[0]) + 7.0
 IN_H = RL_TOP + 2.0
-WALL_SCREWS = [(SH_X0 + SH[1] + GAP_SCREW / 2, y) for y in (12.0, 50.0)]
+WALL_SCREWS = [(SH_X0 + SH[1] + GAP_SCREW / 2, y) for y in (16.0, 50.0)]
 HOOK_Y = 24.0           # shield snap hooks: along the XIAO, the Grove sockets reach the board edge
 
 # Front modules on the lid, seen from outside: B side faces out, so x mirrors.
@@ -109,12 +109,22 @@ PROBE_CABLE_D = 4.0     # DS18B20 SEN0002 cable. MEASURE
 RELAY_CABLE_D = 5.5     # your 2-core thermostat cable. MEASURE
 CABLE_HOLES = [  # (name, x, d)
     ("probe", RL_X0 + 4.0, PROBE_CABLE_D + 0.6 + HOLE_COMP),
-    ("relay", RL_X0 + 15.0, RELAY_CABLE_D + 0.6 + HOLE_COMP),
+    ("relay", RL_X0 + 16.0, RELAY_CABLE_D + 0.6 + HOLE_COMP),
 ]
 CABLE_Z = BACK_T + 6.0
-TIE = (8.0, 6.0, 5.0)   # zip-tie anchor block above each hole, x y z
+TIE = (8.0, 6.0, 5.0)   # zip-tie anchor block above the relay cable hole, x y z
 TIE_SLOT = (4.0, 2.0)   # tunnel across x, w x h (FDM bridge)
 TIE_Y = 8.0             # anchor centre above the inner bottom wall
+
+# Probe strain relief: saddle on the floor + screwed clamp bar, cable centre on the hole axis.
+CLAMP_Y = (2.0, 10.0)   # grip length along the cable
+CLAMP_DX = 4.0          # M2 screws either side of the cable centre
+CLAMP_W = 2 * (CLAMP_DX + 2.2)
+CLAMP_BAR_T = 2.5
+CLAMP_GROOVE = 1.5      # groove depth in the saddle and in the bar
+CLAMP_SQUEEZE = 0.6     # cable diameter lost when tight. Calibration knob (with PROBE_CABLE_D)
+CLAMP_GAP = PROBE_CABLE_D - 2 * CLAMP_GROOVE - CLAMP_SQUEEZE   # bar to saddle when tight
+CLAMP_SCREW = 6.0       # M2x6, same as everywhere
 
 # Antenna (DFRobot FIT0505, 170 mm, 15 cm U.FL pigtail) in a socket on the top wall.
 ANT_BASE_D = 12.0       # MEASURE (fits a 13 mm deep package)
@@ -230,6 +240,10 @@ def pilots():
     out = {}
     tip = Z_RIM + LID_T - LID_SCREW                          # head flush in the lid
     out["lid"] = (Z_RIM - INSERT_HOLE, Z_RIM + 1, min(Z_RIM - tip, INSERT_L), Z_RIM - INSERT_HOLE - BACK_T)
+    zs, _ = clamp_z()
+    top = zs + CLAMP_GAP + CLAMP_BAR_T
+    tip = top - CLAMP_SCREW                                  # head on the bar, pointing -z
+    out["clamp"] = (tip - SCREW_SPARE, zs + 0.1, zs - tip, tip - SCREW_SPARE)
     z_pcb = BACK_T + LEDGE_H
     tip = z_pcb + GROVE_PCB_T - RELAY_SCREW                  # head on the relay, pointing -z
     out["relay"] = (tip - SCREW_SPARE, z_pcb + 0.1, RELAY_SCREW - GROVE_PCB_T, tip - SCREW_SPARE)
@@ -241,3 +255,12 @@ def pilots():
         skin = lo if d > 0 else Z_RIM + LID_T - hi           # back face z=0, lid face z1
         out["tab_" + n] = (lo, hi, TAB_SCREW - TAB_T, skin)
     return out
+
+
+def clamp_x():
+    return next(x for n, x, _ in CABLE_HOLES if n == "probe")
+
+
+def clamp_z():
+    """(saddle top, cable centre). The cable centre sits on the hole axis."""
+    return CABLE_Z - (PROBE_CABLE_D / 2 - CLAMP_GROOVE), CABLE_Z

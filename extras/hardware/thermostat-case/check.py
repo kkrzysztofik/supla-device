@@ -87,8 +87,24 @@ for a, b in zip(xs, xs[1:]):
 ok(xs[-1][1] <= P.IN_W - P.BOSS_IN - P.BOSS_D / 2 - 1.0, f"{xs[-1][2]} hole clear of corner column")
 for n, x, d in P.CABLE_HOLES:
     ok(P.CABLE_Z - d / 2 >= P.BACK_T + 0.5, f"{n} hole above the floor")
-    t = ((x - P.TIE[0] / 2, x + P.TIE[0] / 2), (P.TIE_Y - P.TIE[1] / 2, P.TIE_Y + P.TIE[1] / 2))
-    ok(gap(t, relay) >= 0.5, f"{n} tie anchor clears relay by {gap(t, relay):.1f}")
+rx = next(x for n, x, _ in P.CABLE_HOLES if n == "relay")
+tie = ((rx - P.TIE[0] / 2, rx + P.TIE[0] / 2), (P.TIE_Y - P.TIE[1] / 2, P.TIE_Y + P.TIE[1] / 2))
+ok(gap(tie, relay) >= 0.5, f"relay-cable tie anchor clears relay by {gap(tie, relay):.1f}")
+
+# Probe clamp: really squeezes, room to tighten, clear of its neighbours on the floor.
+cx = P.clamp_x()
+clamp = ((cx - P.CLAMP_W / 2, cx + P.CLAMP_W / 2), P.CLAMP_Y)
+zs, zc = P.clamp_z()
+ok(P.CLAMP_GAP >= 0.2, f"clamp bar stands {P.CLAMP_GAP:.1f} off the saddle when tight (room to tighten)")
+ok(P.CLAMP_SQUEEZE > 0, f"clamp squeezes the cable by {P.CLAMP_SQUEEZE}")
+ok(zs - P.BACK_T >= 2.0, f"saddle {zs - P.BACK_T:.1f} tall")
+ok(P.CLAMP_DX - P.PROBE_CABLE_D / 2 - P.M2_PILOT / 2 >= 1.0, "clamp screws clear of the cable groove")
+ok(P.CLAMP_Y[0] >= 0, "clamp starts inside the cavity")
+for n, r in (("relay tie", tie), ("relay", relay), ("shield", shield)):
+    ok(gap(clamp, r) >= 1.0, f"clamp clears {n} by {gap(clamp, r):.1f}")
+for s in P.WALL_SCREWS:
+    g = circle_gap(s, P.WOOD_HEAD_D / 2, clamp)
+    ok(g >= 1.0, f"clamp clears wall screw {s} by {g:.1f}")
 
 # Antenna socket on the top wall; it also sits on the bed.
 ok(P.ANT_CABLE_HOLE < P.ANT_BASE_D - 2 * P.WALL_MIN, "antenna socket has a floor around the cable hole")
