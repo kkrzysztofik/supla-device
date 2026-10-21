@@ -13,6 +13,7 @@ It bolts to the stock rack with the collar's two M4x10 screws, into the rack's M
 /usr/bin/python3 check.py      # parameter invariants, stdlib only
 uv run parts.py --check        # 1 solid / 1 shell / bed fit; interference vs the real HeatSync rack mesh
 uv run parts.py                # out/dremel_mount.stl, .step, assembly_preview.step (with a Dremel envelope)
+uv run view.py                 # out/viewer.html: mount, rack, original collar, Dremel (--serve 8080 rebuilds on save)
 ```
 
 `--check` reads the rack straight from `A1_HeatSync.3mf` (HeatSync by Thinkable on MakerWorld).
