@@ -113,6 +113,7 @@ file(GLOB TEST_SRC CONFIGURE_DEPENDS
   ModbusTests/*.cpp
   SmaTests/*.cpp
   IngeconTests/*.cpp
+  SocomecTests/*.cpp
   MCP23008Tests/*.cpp
   SupletTests/*.cpp
   DebugTests/*.cpp
