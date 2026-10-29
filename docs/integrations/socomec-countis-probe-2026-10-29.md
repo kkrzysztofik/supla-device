@@ -211,3 +211,77 @@ tolerance would reject every cycle and the driver would never publish energy.
   residual × 10` in 0.00001 kWh units exactly as planned.
 * **E03 absent-register sentinels:** `0xFFFFFFFF` for V/I, `0x7FFFFFFF` for P/Q/S/PF on
   the phase-2/3 slots. Phase 1 is fully populated.
+
+## Hardware verification — 2026-10-29 ~22:10 (plan Task 11)
+
+Built the real `sd4linux` binary on `pi-szn` (aarch64) with
+`extras/examples/linux/build-socomec.sh`, using `cmake 3.31`,
+`libyaml-cpp-dev`, `libssl-dev`, `libcurl4-openssl-dev` and `git` (needed by
+`FetchContent`) installed from Debian trixie. Ran it in the foreground with
+`extras/examples/linux/supla-device-socomec.yaml --verbose`; the register
+conclusions from the probe above made it through the whole stack.
+
+**3-minute soak** (22:09:53 → 22:12:53): both channels added, the E03 logged
+the expected `no line-1 energy block, using totals` once, and the run produced
+
+| Event | Count |
+| --- | --- |
+| `implausible energy jump rejected` | 0 |
+| `energy registers inconsistent` | 0 |
+| `meter not answering, marked offline` | 0 |
+| `energy counter re-anchored` | 0 |
+| `exception reading register` | 0 |
+| `meter is not a COUNTIS …` | 0 |
+
+**Value cross-check.** A temporary build that logged the driver's published
+values (instrumentation not committed) was compared with independent
+`modbus_probe.py` reads taken ~40–60 s later. Voltage/current/power/frequency
+move with the load, so only the energy counters must match exactly at the same
+instant; everything below agreed at the meter's LSB:
+
+| Quantity | Driver published | Independent read | Verdict |
+| --- | --- | --- | --- |
+| E03 V1 / F | 238.45 V / 50.00 Hz | 238.53 V / 50.00 Hz | same LSB scale |
+| E03 I1 / P1 / Q1 / PF1 | 2.586 A / 490 W / −330 var / −0.807 | 2.568 A / 490 W / −330 var / −0.805 | ok (load drift) |
+| E03 Ea+ (totals) | 4 852.18 kWh | 50946 → 4 852.18 kWh | exact |
+| E03 Er− (totals) | 1 778.03 kWh | 50946 → 1 778.03 kWh | exact |
+| E23 V1/V2/V3 | 240.00 / 240.29 / 239.89 V | 239.98 / 240.10 / 239.78 V | same LSB scale |
+| E23 F | 50.04 Hz | 50.04 Hz | exact |
+| E23 I1/I2/I3 | 2.823 / 0.160 / 0.462 A | 2.824 / 0.160 / 0.462 A | exact |
+| E23 P1/P2/P3 | 490 / 10 / 60 W | 490 / 10 / 60 W | exact |
+| E23 Q1/Q2/Q3 | −440 / −20 / −80 var | −440 / −20 / −80 var | exact |
+| E23 Ea+ L1/L2/L3 | 5 909.7194 / 12 239.2870 / 2 599.9331 kWh | 5 909.7227 / 12 239.2870 / 2 599.9337 kWh | exact at L2, ≤0.6 Wh drift elsewhere |
+| E23 Er+ L1/L2/L3 | 176.6735 / 274.3766 / 55.6187 kWh | 176.6735 / 274.3766 / 55.6187 kWh | exact |
+| E23 totals Ea+/Er+/Er− | 20 751.93 / 394.37 / 5 452.46 kWh | 20 751.94 / 394.37 / 5 452.47 kWh | one 10 Wh count late |
+
+**Finding and fix: the E23 line-block counters jitter backwards.** The first
+3-minute run (before the fix below) logged one
+`implausible energy jump rejected (Ea+ L1 590966410)`. An instrumented run
+showed the cause: the per-line energy counters step *backwards* by a few
+0.1 Wh counts (`L2 Ea+ 12 239.28540 → 12 239.28460 kWh`, `L2 Er−
+296 487.320 → 296 487.280 Wh`), stable for many cycles. The residual is
+derived from a coarser internal accumulator, so its last digits move in both
+directions. The strict `0 ≤ Δ` guard rejected the counter and then held the
+energy for the full 12-cycle re-anchor window (~1 min), repeating as the jitter
+recurred.
+
+`EnergyGuard` now treats a backward step within `kSlack` (10 Wh, one 0.05 %%
+count of a lifetime counter, and the resolution of the `50946` fine totals) as
+noise; larger backward steps are still rejected. After that change the
+3-minute soak above was clean, and the value cross-check passed.
+
+**Not verified (needs the user / a production change):**
+
+* Comparison against the meters' own LCDs — there is nobody on site to read
+  them, so the cross-check above uses `modbus_probe.py` as the independent
+  client (same registers, separate implementation and code path).
+* Installing the binary as a systemd unit and the 24 h soak: the plan requires
+  asking before changing the production box, so the run was foreground-only
+  and bounded by `timeout`.
+* Fault injection (unplugging an adapter) — needs the user present; not done.
+* The ESP-IDF transport was not compile-verified: `idf.py` / `IDF_PATH` are not
+  installed on the development host.
+
+The phase-sequence register still returns `132` on the E23 during the run, so
+the SUPLA phase-sequence flag is cleared as designed. The `pi-szn` copy of the
+worktree was left with a clean (non-instrumented) source tree.
