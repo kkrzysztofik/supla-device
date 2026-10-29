@@ -212,6 +212,7 @@ set(SUPLA_DEVICE_SRCS
   ${SUPLA_DEVICE_SRC_DIR}/supla/sensor/binary.cpp
   ${SUPLA_DEVICE_SRC_DIR}/supla/sensor/binary_base.cpp
   ${SUPLA_DEVICE_SRC_DIR}/supla/sensor/electricity_meter.cpp
+  ${SUPLA_DEVICE_SRC_DIR}/supla/sensor/socomec_countis.cpp
   ${SUPLA_DEVICE_SRC_DIR}/supla/sensor/hygro_meter.cpp
   ${SUPLA_DEVICE_SRC_DIR}/supla/sensor/impulse_counter.cpp
   ${SUPLA_DEVICE_SRC_DIR}/supla/sensor/virtual_impulse_counter.cpp

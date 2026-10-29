@@ -113,6 +113,7 @@ file(GLOB TEST_SRC CONFIGURE_DEPENDS
   ModbusTests/*.cpp
   SmaTests/*.cpp
   IngeconTests/*.cpp
+  SocomecTests/*.cpp
   MCP23008Tests/*.cpp
   SupletTests/*.cpp
   DebugTests/*.cpp
@@ -287,6 +288,7 @@ add_executable(sd4linuxtests
   ../porting/linux/extensions/sma/sma_extension.cpp
   ../porting/linux/extensions/ingecon/ingecon_extension.cpp
   ../porting/linux/extensions/byd/byd_extension.cpp
+  ../porting/linux/extensions/socomec/socomec_extension.cpp
   )
 
 add_executable(arduinoesp8266_tls_lifetime_tests

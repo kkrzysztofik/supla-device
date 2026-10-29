@@ -21,3 +21,4 @@ prvtkey.pem
 aes_key_devdata.bin
 .clangd
 .superpowers/
+.worktrees/

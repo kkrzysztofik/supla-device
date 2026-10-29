@@ -15,6 +15,7 @@ set(SUPLA_DEVICE_PORTING_SRCS
   ../../porting/esp-idf/esp_idf_sector_wl_storage.cpp
   ../../porting/esp-idf/esp_idf_watchdog.cpp
   ../../porting/esp-idf/esp_idf_security_logger.cpp
+  ../../porting/esp-idf/esp_idf_socomec_transport.cpp
 )
 
 
@@ -30,6 +31,7 @@ idf_component_register(SRCS
     esp_http_client
     esp_wifi
     esp_driver_gpio
+    esp_driver_uart
     mqtt
     esp_timer
     esp_partition
