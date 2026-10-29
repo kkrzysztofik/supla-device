@@ -56,6 +56,21 @@ Absent registers are skipped, never published as `655.35 V` or similar. Not publ
 because SUPLA has no field for them: phase-to-phase voltages, neutral current, sum
 powers, system averages, tariffs.
 
+**Why the energies do not equal the meter's summed totals.** Per-phase energy comes from
+the meter's `Line #1/#2/#3` blocks (the only per-phase source). On this hardware those
+blocks do not add up exactly to the `50946` system totals:
+
+* per-line **active** energy tracks the system total to ~0.015 % — at 20.7 MWh that is a
+  static ~3 kWh installation-history offset, which stays constant;
+* per-direction per-line **reactive** counters differ from the system reactive totals by
+  up to ~2 % (≈507 vs ≈394 kvarh here). Socomec defines those two objects differently
+  (per-phase counters versus system reactive totals), so this is not a decoding error.
+
+That is why the driver's sanity cross-check gates **active** energy only, and why a
+comparison against the LCD's summed reactive total is not a valid health check. The raw
+evidence and the decoded tables are in the
+[2026-10-29 probe](socomec-countis-probe-2026-10-29.md).
+
 Notes:
 
 * The E03 is single-phase and has **no per-line energy block**; the driver reads the
@@ -111,8 +126,12 @@ build-linux-socomec/supla-device-linux -c /etc/supla-device.yaml --verbose
 ## ESP32 (ESP-IDF)
 
 Wire a 3.3 V RS-485 transceiver (MAX3485/SP3485), with DE/RE on the UART's RTS pin.
-The transport enables the ESP-IDF hardware half-duplex mode
-(`UART_MODE_RS485_HALF_DUPLEX`), so the driver never toggles DE itself.
+**Tie the transceiver's `/RE` to the same RTS-driven `DE` line** (or otherwise keep the
+receiver disabled while transmitting). If `/RE` stays enabled, the transceiver echoes the
+8-byte request back, every reply parses as a bad frame, and the meter is reported offline
+after ~15 s even though the wiring is otherwise correct. The transport enables the ESP-IDF
+hardware half-duplex mode (`UART_MODE_RS485_HALF_DUPLEX`), so the driver never toggles
+DE/RE itself.
 
 ```cpp
 #include "esp_idf_socomec_transport.h"
@@ -135,7 +154,10 @@ Bring-up checklist:
    then released before the meter replies.
 2. First expected log is the identity check; a wrong `model` disables polling with an
    ERROR instead of publishing garbage.
-3. Values should match the meter LCD (V, I, P, PF, F, Ea±).
+3. Values should match the meter LCD (V, I, P, PF, F). For energy, compare trend and
+   resolution rather than the summed LCD total: per-phase energy comes from the line
+   blocks and carries the static offsets described above (active ≈0.015 %, reactive up to
+   ~2 %).
 4. An E03 logs `no line-1 energy block, using totals` once and publishes the totals.
 5. Leave it running for a day and confirm no repeated `implausible`/`inconsistent`
    warnings.
@@ -147,7 +169,7 @@ Bring-up checklist:
 | `adding SocomecCountis e03 on … address=2` | YAML channel accepted (INFO) | — |
 | `meter is not a COUNTIS E03/E23, polling disabled` (ERROR) | `device.model` does not match the meter's extended name | Fix `model`; check the wiring/polarity if the identity read is garbage |
 | `no line-1 energy block, using totals` (INFO) | E03 has no per-line block | Expected on E03 |
-| `exception reading register N` (WARNING) | Meter rejected one register block | Usually firmware/model mismatch; the cycle continues |
+| `exception reading register N` (WARNING) | Meter rejected one register block | That step aborts the cycle and counts toward the offline threshold; usually a firmware/model mismatch. Two exceptions are handled instead of aborting: the E03 line-1 block (permanent totals fallback) and the phase-sequence register (ignored) |
 | `meter not answering, marked offline` (WARNING) | 3 consecutive failed cycles | Check power, RS-485 pair, adapter, `serial.device` path |
 | `energy registers inconsistent, keeping previous values` (WARNING) | Σ per-line active energy no longer matches the meter totals | A decode/register problem; report with the raw probe |
 | `implausible energy jump rejected` (WARNING) | One energy counter jumped faster than `max_power_kw` allows | A real meter fault or a too-tight `max_power_kw` |

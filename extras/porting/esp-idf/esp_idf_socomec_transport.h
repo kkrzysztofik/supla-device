@@ -15,7 +15,10 @@
 
 namespace Supla {
 
-// RS-485 half duplex; DE/RE driven by the UART on the RTS pin.
+// RS-485 half duplex; DE/RE driven by the UART on the RTS pin. Wire the
+// transceiver's /RE to the same RTS-driven DE line (or otherwise keep the
+// receiver disabled during TX): an always-enabled receiver echoes the request
+// back and breaks every poll.
 class EspIdfSocomecTransport : public Socomec::Transport {
  public:
   EspIdfSocomecTransport(uart_port_t uart, int txPin, int rxPin, int dePin,
