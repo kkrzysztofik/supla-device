@@ -285,3 +285,10 @@ noise; larger backward steps are still rejected. After that change the
 The phase-sequence register still returns `132` on the E23 during the run, so
 the SUPLA phase-sequence flag is cleared as designed. The `pi-szn` copy of the
 worktree was left with a clean (non-instrumented) source tree.
+
+**Re-verification after the jitter fix (22:35, 95 s).** A second instrumented
+run confirmed the published lifetime counters stay monotonic: 19 publishes per
+channel, every one of the 12 phase counters non-decreasing on both meters
+(E03 Ea+ 4 852.32 → 4 852.33 kWh; E23 Ea+ L1/L2/L3 5 909.8628 → 5 909.8746 /
+12 239.2920 → 12 239.2936 / 2 599.9413 → 2 599.9415 kWh), with 0 implausible,
+0 inconsistent, 0 offline and 0 re-anchor events.
