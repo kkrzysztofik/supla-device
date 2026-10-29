@@ -30,6 +30,13 @@ def frame_of(addr: int, func: int, start: int, count: int) -> bytes:
     return payload + crc16(payload).to_bytes(2, "little")
 
 
+def t35_seconds(baud):
+    """Modbus RTU t3.5 inter-frame gap: 3.5 character times (11 bits each),
+    fixed at 1.75 ms above 19200 baud. A slave may start its reply once this
+    gap has elapsed, so the direction must be released within it."""
+    return max(0.00175, 3.5 * 11.0 / float(baud))
+
+
 def attempt(ser, addr, func, start, count, timeout=0.15, release_direction=None):
     ser.timeout = timeout
     ser.reset_input_buffer()
@@ -38,11 +45,12 @@ def attempt(ser, addr, func, start, count, timeout=0.15, release_direction=None)
     if release_direction is not None:
         # With a manual DE/RE adapter the line stays in transmit while DE is
         # asserted, so it has to be turned around before listening for the
-        # reply. Give the last stop bit time to leave the FTDI FIFO first: the
-        # meters answer ~47-62 ms after the request, so a couple of ms of
-        # turnaround is harmless. On adapters where the modem-line change is too
-        # slow, use hardware-assisted (auto-direction) RS-485 instead.
-        time.sleep(0.002)
+        # reply. `flush()` returns once the last stop bit has left the FIFO;
+        # wait the Modbus t3.5 gap (baud-dependent, 1.75 ms above 19200 baud)
+        # because the slave may start its reply after exactly that gap. On
+        # adapters where the modem-line change is slower than t3.5, use
+        # hardware-assisted (auto-direction) RS-485 instead.
+        time.sleep(t35_seconds(ser.baudrate or 9600))
         release_direction()
         time.sleep(0.001)
     exp = 5 + 2 * count

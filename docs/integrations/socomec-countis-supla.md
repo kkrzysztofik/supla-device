@@ -185,11 +185,14 @@ share, so one phase cannot justify a step that is only plausible for the whole s
 Defaults are deliberately generous: 82 800 W (≈83 kW, i.e. 27 600 W per phase) for the E23
 (3 × 80 A × 230 V × 1.5) and 40 000 W for the E03, a single-phase direct meter whose ceiling
 is a round installation limit rather than a formula fit. Set it from the installation's
-breaker rating to tighten the filter:
+breaker rating to tighten the filter — and keep it at least 3× the largest single-phase
+load you expect, since each E23 phase gets one third of it:
 
 ```yaml
     max_power_kw: 25
 ```
 
 Rejections keep the previous energy values, so a badly chosen value shows up as a
-repeating `implausible energy jump rejected` warning, not as wrong data.
+repeating `implausible energy jump rejected` warning, not as wrong data. If the real load
+stays above the configured ceiling, the guard re-anchors to it after the 12-cycle
+re-anchor window instead of freezing energy publication.
