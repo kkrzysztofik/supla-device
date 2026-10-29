@@ -1921,8 +1921,7 @@ rtk git commit -m "feat(displayhatmini): sd4linux extension with buttons, LED an
   uncommitted changes in the main checkout; edit only in this worktree)
 
 **Step 1: Example YAML** — the design's YAML block wrapped in a full config
-(`name`, `log_level`, `state_files_path`, `supla:`), with two `VirtualRelay` channels and one
-`ThermometerParsed`-free setup so it runs with no other hardware:
+(`name`, `log_level`, `state_files_path`, `supla:`), with two `VirtualRelay` channels so it runs with no other hardware:
 
 ```yaml
 name: Display HAT Mini example
