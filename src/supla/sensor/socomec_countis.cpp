@@ -181,16 +181,26 @@ uint64_t EnergyGuard::maxDelta(uint32_t elapsedMs) const {
 }
 
 bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
+  if (!hasBaseline) {
+    hasBaseline = true;
+    last = value;
+    lastMs = nowMs;
+    candidateCount = 0;
+    return true;
+  }
+  if (value >= last && value - last <= maxDelta(nowMs - lastMs)) {
+    last = value;
+    lastMs = nowMs;
+    candidateCount = 0;
+    return true;
+  }
   // The meter derives the line-block residual from a coarser internal
   // accumulator, so a counter's lowest digits jitter in both directions by a
   // few 0.1 Wh counts (observed on E23 firmware 3.00). A backward step within
-  // kSlack is noise, not a meter reset.
-  const bool forward =
-      hasBaseline && value >= last && value - last <= maxDelta(nowMs - lastMs);
-  const bool noise = hasBaseline && value < last && last - value <= kSlack;
-  if (!hasBaseline || forward || noise) {
-    hasBaseline = true;
-    last = value;
+  // kSlack is noise, not a meter reset: accept the reading as plausible but
+  // keep the high-water value, so the published lifetime counter never
+  // decreases.
+  if (value < last && last - value <= kSlack) {
     lastMs = nowMs;
     candidateCount = 0;
     return true;
@@ -490,6 +500,11 @@ void SocomecCountis::finishCycle(uint32_t now) {
                             energy.value[Socomec::FwdAct][0]));
     }
     return;
+  }
+  for (int kind = 0; kind < EnergyKinds; kind++) {
+    for (int p = 0; p < phases; p++) {
+      energy.value[kind][p] = guard[kind][p].value();
+    }
   }
   publishedEnergy = energy;
   haveEnergy = true;

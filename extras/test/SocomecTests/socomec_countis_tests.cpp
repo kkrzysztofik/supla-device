@@ -179,6 +179,29 @@ TEST_F(SocomecCountisTests, E23PublishesThreePhasesAndSequence) {
   EXPECT_EQ(em.getFwdActEnergy(2), 674400000ULL);
 }
 
+TEST_F(SocomecCountisTests, E23PhaseSequenceDirections) {
+  loadE23(&meter);
+  SocomecCountis em(&meter, Model::E23, 2);
+  run(&em, 6000);  // 51315 = 0 -> clockwise
+  ASSERT_TRUE(em.isVoltagePhaseSequenceSet());
+  EXPECT_TRUE(em.isVoltagePhaseSequenceClockwise());
+  meter.blocks[51315] = {1};  // counter-clockwise
+  run(&em, 10000);
+  EXPECT_TRUE(em.isVoltagePhaseSequenceSet());
+  EXPECT_FALSE(em.isVoltagePhaseSequenceClockwise());
+}
+
+TEST_F(SocomecCountisTests, E23UnknownPhaseSequenceClearsFlag) {
+  // E23 firmware 3.00 answers 132 at 51315, not the documented 0/1/3 enum.
+  loadE23(&meter);
+  SocomecCountis em(&meter, Model::E23, 2);
+  run(&em, 6000);
+  ASSERT_TRUE(em.isVoltagePhaseSequenceSet());
+  meter.blocks[51315] = {132};
+  run(&em, 10000);
+  EXPECT_FALSE(em.isVoltagePhaseSequenceSet());
+}
+
 TEST_F(SocomecCountisTests, E03WithoutLineBlockFallsBackToTotals) {
   loadE03(&meter);
   meter.exceptions.insert(0x4D83);
@@ -227,6 +250,19 @@ TEST_F(SocomecCountisTests, CrossCheckMismatchKeepsPreviousEnergy) {
   meter.blocks[0x4D83] = lineBlock(9000, 0);  // L1 garbage, totals unchanged
   run(&em, 10000);
   EXPECT_EQ(em.getFwdActEnergy(0), 700000000ULL);
+}
+
+TEST_F(SocomecCountisTests, EnergyJitterDoesNotDecreasePublishedValue) {
+  // E23 fw 3.00 line-block residuals jitter backwards by a few 0.1 Wh counts;
+  // a lifetime SUPLA energy counter must not go down because of that.
+  loadE23(&meter);
+  meter.blocks[0x4D83] = lineBlock(7000, 500);
+  SocomecCountis em(&meter, Model::E23, 2);
+  run(&em, 6000);
+  ASSERT_EQ(em.getFwdActEnergy(0), 700005000ULL);
+  meter.blocks[0x4D83] = lineBlock(7000, 400);  // 10 Wh lower
+  run(&em, 10000);
+  EXPECT_EQ(em.getFwdActEnergy(0), 700005000ULL);
 }
 
 TEST_F(SocomecCountisTests, IterateNeverWaitsOnTheBus) {

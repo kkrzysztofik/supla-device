@@ -99,10 +99,12 @@ std::vector<uint16_t> e03Measurements() {
   put32(&r, 0, 23875);                         // V1 238.75 V
   put32(&r, 6, 5000);                          // F 50.00 Hz (E03: 0.01 Hz LSB)
   put32(&r, 8, 2810);                          // I1 2.810 A
-  put32(&r, 16, 55);                           // P 550 W
-  put32(&r, 18, static_cast<uint32_t>(-34));   // Q -340 var
-  put32(&r, 20, 66);                           // S 660 VA
-  put32(&r, 22, static_cast<uint32_t>(-813));  // PF
+  // Sum registers deliberately differ from the phase-1 registers, so a
+  // decoder that reads 50536..50542 instead of 50544..50550 fails the test.
+  put32(&r, 16, 47);                           // P sum 470 W
+  put32(&r, 18, static_cast<uint32_t>(-33));   // Q sum -330 var
+  put32(&r, 20, 60);                           // S sum 600 VA
+  put32(&r, 22, static_cast<uint32_t>(-800));  // PF sum
   put32(&r, 24, 55);                           // P1
   put32(&r, 30, static_cast<uint32_t>(-34));   // Q1
   put32(&r, 36, 66);                           // S1
@@ -120,6 +122,23 @@ std::vector<uint16_t> e23Measurements() {
   put32(&r, 8, 3006);
   put32(&r, 10, 105);
   put32(&r, 12, 466);
+  // Sums differ from the per-phase registers on purpose.
+  put32(&r, 16, 58);                           // P sum 580 W
+  put32(&r, 18, static_cast<uint32_t>(-54));   // Q sum -540 var
+  put32(&r, 20, 85);                           // S sum 850 VA
+  put32(&r, 22, static_cast<uint32_t>(-626));  // PF sum
+  put32(&r, 24, 49);                           // P1 490 W
+  put32(&r, 26, 1);                            // P2 10 W
+  put32(&r, 28, 6);                            // P3 60 W
+  put32(&r, 30, static_cast<uint32_t>(-44));   // Q1 -440 var
+  put32(&r, 32, static_cast<uint32_t>(-2));    // Q2 -20 var
+  put32(&r, 34, static_cast<uint32_t>(-8));    // Q3 -80 var
+  put32(&r, 36, 72);                           // S1 720 VA
+  put32(&r, 38, 2);                            // S2 20 VA
+  put32(&r, 40, 11);                           // S3 110 VA
+  put32(&r, 42, static_cast<uint32_t>(-733));  // PF1
+  put32(&r, 44, static_cast<uint32_t>(-452));  // PF2
+  put32(&r, 46, static_cast<uint32_t>(-597));  // PF3
   return r;
 }
 
@@ -175,6 +194,26 @@ TEST(SocomecDecodeTests, E23FrequencyHasFinerLsb) {
   EXPECT_TRUE(m.phase[2].present);
   EXPECT_EQ(m.phase[1].voltage, 24040);
   EXPECT_EQ(m.phase[2].current, 466u);
+}
+
+TEST(SocomecDecodeTests, E23PerPhasePowerDecoded) {
+  Measurements m;
+  Supla::Socomec::decodeMeasurements(Model::E23, e23Measurements().data(), &m);
+  ASSERT_TRUE(m.phase[0].present);
+  ASSERT_TRUE(m.phase[1].present);
+  ASSERT_TRUE(m.phase[2].present);
+  EXPECT_EQ(m.phase[0].powerActive, 49000000);
+  EXPECT_EQ(m.phase[1].powerActive, 1000000);
+  EXPECT_EQ(m.phase[2].powerActive, 6000000);
+  EXPECT_EQ(m.phase[0].powerReactive, -44000000);
+  EXPECT_EQ(m.phase[1].powerReactive, -2000000);
+  EXPECT_EQ(m.phase[2].powerReactive, -8000000);
+  EXPECT_EQ(m.phase[0].powerApparent, 72000000);
+  EXPECT_EQ(m.phase[1].powerApparent, 2000000);
+  EXPECT_EQ(m.phase[2].powerApparent, 11000000);
+  EXPECT_EQ(m.phase[0].powerFactor, -733);
+  EXPECT_EQ(m.phase[1].powerFactor, -452);
+  EXPECT_EQ(m.phase[2].powerFactor, -597);
 }
 
 TEST(SocomecDecodeTests, E23AbsentPhaseIsSkipped) {
@@ -234,6 +273,18 @@ TEST(SocomecDecodeTests, TotalsDecodeAndRealCrossCheck) {
   // Reactive totals are not part of the gate.
   totals[Supla::Socomec::FwdReact] += 200000000ULL;
   EXPECT_TRUE(Supla::Socomec::energyMatchesTotals(e, totals, 3));
+}
+
+TEST(SocomecDecodeTests, CrossCheckSinglePhaseTolerance) {
+  uint64_t totals[Supla::Socomec::EnergyKinds];
+  const auto t = totalsBlock(484612, 0, 0, 0, 0);
+  ASSERT_TRUE(Supla::Socomec::decodeTotals(t.data(), totals));
+  Energy e;
+  ASSERT_TRUE(Supla::Socomec::decodeLineEnergy(
+      lineBlock(4846, 1234, 0, 0, 0, 0, 0, 0).data(), 0, &e));
+  EXPECT_TRUE(Supla::Socomec::energyMatchesTotals(e, totals, 1));
+  totals[Supla::Socomec::FwdAct] += 200000000ULL;  // 2000 kWh: too far
+  EXPECT_FALSE(Supla::Socomec::energyMatchesTotals(e, totals, 1));
 }
 
 TEST(SocomecDecodeTests, IdentityMatchesModel) {
@@ -315,12 +366,14 @@ TEST(SocomecEnergyGuardTests, UnstableGarbageNeverReanchors) {
 
 TEST(SocomecEnergyGuardTests, SmallBackwardJitterIsNoise) {
   // E23 firmware 3.00 derives the line-block residual from a coarser internal
-  // accumulator, so its low digits move a few 0.1 Wh counts both ways.
+  // accumulator, so its low digits move a few 0.1 Wh counts both ways. The
+  // reading is plausible, but the published value stays on the high-water mark.
   EnergyGuard g;
   ASSERT_TRUE(g.accept(10 * kWh, 0));
   EXPECT_TRUE(g.accept(10 * kWh - 80, 5000));  // 0.8 Wh lower
-  EXPECT_EQ(g.value(), 10 * kWh - 80);
-  EXPECT_TRUE(g.accept(10 * kWh - 80 + 60, 10000));
+  EXPECT_EQ(g.value(), 10 * kWh);
+  EXPECT_TRUE(g.accept(10 * kWh + 60, 10000));
+  EXPECT_EQ(g.value(), 10 * kWh + 60);
 }
 
 TEST(SocomecEnergyGuardTests, BigBackwardStepIsRejected) {
