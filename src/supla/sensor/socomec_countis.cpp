@@ -181,8 +181,14 @@ uint64_t EnergyGuard::maxDelta(uint32_t elapsedMs) const {
 }
 
 bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
-  if (!hasBaseline || (value >= last &&
-                       value - last <= maxDelta(nowMs - lastMs))) {
+  // The meter derives the line-block residual from a coarser internal
+  // accumulator, so a counter's lowest digits jitter in both directions by a
+  // few 0.1 Wh counts (observed on E23 firmware 3.00). A backward step within
+  // kSlack is noise, not a meter reset.
+  const bool forward =
+      hasBaseline && value >= last && value - last <= maxDelta(nowMs - lastMs);
+  const bool noise = hasBaseline && value < last && last - value <= kSlack;
+  if (!hasBaseline || forward || noise) {
     hasBaseline = true;
     last = value;
     lastMs = nowMs;

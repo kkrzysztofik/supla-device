@@ -312,3 +312,20 @@ TEST(SocomecEnergyGuardTests, UnstableGarbageNeverReanchors) {
   }
   EXPECT_EQ(g.value(), 1 * kWh);
 }
+
+TEST(SocomecEnergyGuardTests, SmallBackwardJitterIsNoise) {
+  // E23 firmware 3.00 derives the line-block residual from a coarser internal
+  // accumulator, so its low digits move a few 0.1 Wh counts both ways.
+  EnergyGuard g;
+  ASSERT_TRUE(g.accept(10 * kWh, 0));
+  EXPECT_TRUE(g.accept(10 * kWh - 80, 5000));  // 0.8 Wh lower
+  EXPECT_EQ(g.value(), 10 * kWh - 80);
+  EXPECT_TRUE(g.accept(10 * kWh - 80 + 60, 10000));
+}
+
+TEST(SocomecEnergyGuardTests, BigBackwardStepIsRejected) {
+  EnergyGuard g;
+  ASSERT_TRUE(g.accept(10 * kWh, 0));
+  EXPECT_FALSE(g.accept(10 * kWh - 2000, 5000));  // 20 Wh, beyond noise
+  EXPECT_EQ(g.value(), 10 * kWh);
+}
