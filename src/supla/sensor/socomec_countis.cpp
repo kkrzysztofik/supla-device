@@ -9,6 +9,9 @@
 
 #include "socomec_countis.h"
 
+#include <math.h>
+#include <string.h>
+
 namespace Supla {
 namespace Socomec {
 
@@ -17,6 +20,17 @@ bool crcOk(const uint8_t *frame, size_t len) {
   const uint16_t crc = crc16(frame, len - 2);
   return frame[len - 2] == (crc & 0xFF) && frame[len - 1] == (crc >> 8);
 }
+
+uint32_t u32(const uint16_t *r, int i) {
+  return (static_cast<uint32_t>(r[i]) << 16) | r[i + 1];
+}
+
+int32_t s32(const uint16_t *r, int i) {
+  return static_cast<int32_t>(u32(r, i));
+}
+
+constexpr int64_t kPowerScale = 1000000;  // raw LSB 10 W -> 0.00001 W
+constexpr double kDeciDegreesPerRadian = 1800.0 / 3.14159265358979323846;
 }  // namespace
 
 uint16_t crc16(const uint8_t *data, size_t len) {
@@ -73,6 +87,88 @@ ParseResult parseReadHolding(const uint8_t *frame,
     registers[i] = (frame[3 + 2 * i] << 8) | frame[4 + 2 * i];
   }
   return ParseResult::Ok;
+}
+
+void decodeMeasurements(Model model, const uint16_t *r, Measurements *out) {
+  const uint32_t freq = u32(r, 6);
+  // Hardware-verified: E03 LSB 0.01 Hz, E23 LSB 0.001 Hz.
+  out->freq = static_cast<uint16_t>(model == Model::E23 ? freq / 10 : freq);
+  for (int i = 0; i < 3; i++) {
+    Phase &p = out->phase[i];
+    p = Phase();
+    const uint32_t voltage = u32(r, 2 * i);
+    if ((model == Model::E03 && i > 0) || voltage == kAbsent32) {
+      continue;
+    }
+    const int32_t active = s32(r, 24 + 2 * i);
+    const int32_t reactive = s32(r, 30 + 2 * i);
+    p.present = true;
+    p.voltage = static_cast<uint16_t>(voltage);
+    p.current = u32(r, 8 + 2 * i);
+    p.powerActive = active * kPowerScale;
+    p.powerReactive = reactive * kPowerScale;
+    p.powerApparent = static_cast<int64_t>(u32(r, 36 + 2 * i)) * kPowerScale;
+    p.powerFactor = s32(r, 42 + 2 * i);
+    p.phaseAngle = static_cast<int32_t>(
+        lround(atan2(reactive, active) * kDeciDegreesPerRadian));
+  }
+}
+
+bool decodeLineEnergy(const uint16_t *r, int phase, Energy *out) {
+  for (int kind = 0; kind < EnergyKinds; kind++) {
+    const uint32_t main = u32(r, kind * 3);     // 1 kWh LSB
+    const uint16_t residual = r[kind * 3 + 2];  // 0.1 Wh LSB, < 1 kWh
+    if (main == kAbsent32 || residual > 9999) {
+      return false;
+    }
+    out->value[kind][phase] = main * 100000ULL + residual * 10ULL;
+  }
+  return true;
+}
+
+bool decodeTotals(const uint16_t *r, uint64_t totals[EnergyKinds]) {
+  // 50946 Ea+, 50948 Er+, 50950 Eap, 50952 Ea-, 50954 Er-.
+  const int offset[EnergyKinds] = {0, 6, 2, 8};
+  for (int kind = 0; kind < EnergyKinds; kind++) {
+    const uint32_t value = u32(r, offset[kind]);  // 0.01 kWh LSB
+    if (value == kAbsent32) {
+      return false;
+    }
+    totals[kind] = value * 1000ULL;
+  }
+  return true;
+}
+
+bool energyMatchesTotals(const Energy &lines,
+                         const uint64_t totals[EnergyKinds],
+                         int phases) {
+  const uint64_t gross = totals[FwdAct] + totals[RvrAct];
+  const uint64_t relative = gross / kCrossCheckDivisor;
+  const uint64_t tolerance =
+      relative > kCrossCheckFloor ? relative : kCrossCheckFloor;
+  // Only active energy: see the comment on kCrossCheckDivisor.
+  const EnergyKind checked[] = {FwdAct, RvrAct};
+  for (EnergyKind kind : checked) {
+    uint64_t sum = 0;
+    for (int p = 0; p < phases; p++) {
+      sum += lines.value[kind][p];
+    }
+    const uint64_t diff =
+        sum > totals[kind] ? sum - totals[kind] : totals[kind] - sum;
+    if (diff > tolerance) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool identityMatches(Model model, const uint16_t *regs, size_t count) {
+  char name[2 * kIdentityCount + 1] = {};
+  for (size_t i = 0; i < count && i < kIdentityCount; i++) {
+    name[2 * i] = static_cast<char>(regs[i] >> 8);
+    name[2 * i + 1] = static_cast<char>(regs[i] & 0xFF);
+  }
+  return strstr(name, model == Model::E23 ? "E23" : "E03") != nullptr;
 }
 
 }  // namespace Socomec
