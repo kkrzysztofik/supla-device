@@ -211,8 +211,8 @@ class HatController : public Supla::Element, public Supla::ActionHandler {
     for (int action : actions) {
       if (action == kWakeAction) {
         if (!backlightOn) {
-          // ponytail: time window, not per-press tracking; a press held
-          // longer than hold+multiclick on a dark screen still acts.
+          // A wake press also produces a click; swallow the next clicks for
+          // one hold+multiclick window instead of tracking each press.
           ignoreClicksUntil = now + config.holdTimeMs +
                               config.multiclickTimeMs;
           backlightOn = true;

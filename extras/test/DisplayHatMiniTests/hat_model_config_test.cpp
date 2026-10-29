@@ -113,6 +113,25 @@ TEST(HatModelConfigTest, RejectsAlertWithoutExactlyOneThreshold) {
                      &cfg, &error));
 }
 
+TEST(HatModelConfigTest, RejectsNonFiniteNumbers) {
+  Config cfg;
+  std::string error;
+  EXPECT_FALSE(
+      parse("pages: [{type: chart, channel: 0, min: .nan}]", &cfg, &error));
+  EXPECT_NE(error.find("min"), std::string::npos) << error;
+  EXPECT_FALSE(
+      parse("pages: [{type: chart, channel: 0, max: .inf}]", &cfg, &error));
+  EXPECT_NE(error.find("max"), std::string::npos) << error;
+  EXPECT_FALSE(
+      parse("led: {alerts: [{channel: 0, below: -.inf, color: red}]}",
+            &cfg, &error));
+  EXPECT_NE(error.find("below"), std::string::npos) << error;
+  EXPECT_FALSE(
+      parse("led: {alerts: [{channel: 0, above: .nan, color: red}]}",
+            &cfg, &error));
+  EXPECT_NE(error.find("above"), std::string::npos) << error;
+}
+
 TEST(HatModelConfigTest, RejectsEmptyValuesPageAndBadChart) {
   Config cfg;
   std::string error;

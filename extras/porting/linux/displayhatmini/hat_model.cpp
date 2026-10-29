@@ -12,6 +12,7 @@
 #include <SuplaDevice.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <initializer_list>
 #include <string>
@@ -57,6 +58,21 @@ bool parseChannel(const YAML::Node &node,
     return fail(error, where + ": missing or negative \"channel\"");
   }
   *out = node.as<int>();
+  return true;
+}
+
+// YAML accepts .nan/.inf/-.inf. A non-finite threshold silently disables an
+// alert, and a non-finite axis bound pushes NaN into lv_chart_set_range().
+bool parseFinite(const YAML::Node &node,
+                 const char *key,
+                 double *out,
+                 const std::string &where,
+                 std::string *error) {
+  double value = node.as<double>();
+  if (!std::isfinite(value)) {
+    return fail(error, where + ": \"" + key + "\" must be a finite number");
+  }
+  *out = value;
   return true;
 }
 
@@ -176,10 +192,18 @@ bool parsePage(const YAML::Node &node,
       out->sampleSec = sampleSec;
     }
     if (node["min"]) {
-      out->min = node["min"].as<double>();
+      double value = 0;
+      if (!parseFinite(node["min"], "min", &value, where, error)) {
+        return false;
+      }
+      out->min = value;
     }
     if (node["max"]) {
-      out->max = node["max"].as<double>();
+      double value = 0;
+      if (!parseFinite(node["max"], "max", &value, where, error)) {
+        return false;
+      }
+      out->max = value;
     }
     return true;
   }
@@ -199,10 +223,18 @@ bool parseAlert(const YAML::Node &node,
     return false;
   }
   if (node["below"]) {
-    out->below = node["below"].as<double>();
+    double value = 0;
+    if (!parseFinite(node["below"], "below", &value, where, error)) {
+      return false;
+    }
+    out->below = value;
   }
   if (node["above"]) {
-    out->above = node["above"].as<double>();
+    double value = 0;
+    if (!parseFinite(node["above"], "above", &value, where, error)) {
+      return false;
+    }
+    out->above = value;
   }
   if (out->below.has_value() == out->above.has_value()) {
     return fail(error, where + ": set exactly one of \"below\" / \"above\"");
@@ -378,14 +410,15 @@ Color ledOutput(LedState state, uint32_t nowMs) {
 
 std::pair<double, double> chartRange(const History &history,
                                      const Page &page) {
-  if (history.size() == 0) {
-    return {page.min.value_or(0), page.max.value_or(1)};
-  }
-  double low = history.at(0);
-  double high = low;
-  for (size_t i = 1; i < history.size(); i++) {
-    low = std::min(low, history.at(i));
-    high = std::max(high, history.at(i));
+  double low = 0;
+  double high = 1;
+  if (history.size() > 0) {
+    low = history.at(0);
+    high = low;
+    for (size_t i = 1; i < history.size(); i++) {
+      low = std::min(low, history.at(i));
+      high = std::max(high, history.at(i));
+    }
   }
   low = page.min.value_or(low);
   high = page.max.value_or(high);

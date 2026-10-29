@@ -146,6 +146,18 @@ TEST(HatModelHistoryTest, ChartRangeAutoScalesUnlessFixed) {
   EXPECT_EQ(chartRange(history, page), std::make_pair(0.0, 30.0));
 }
 
+TEST(HatModelHistoryTest, ChartRangeIsNeverInvertedWithoutSamples) {
+  History history;
+  Page page;
+  page.min = 5;  // no max: {5, 1} would plot nothing
+  EXPECT_EQ(chartRange(history, page), std::make_pair(4.0, 6.0));
+
+  Page zeroHeight;
+  zeroHeight.min = 0;
+  zeroHeight.max = 0;
+  EXPECT_EQ(chartRange(history, zeroHeight), std::make_pair(-1.0, 1.0));
+}
+
 TEST(HatModelFormatTest, FormatsValues) {
   Item power{0, Field::PowerActive, "Power", "W"};
   EXPECT_EQ(formatValue(power, 1234.56, false), "1234.6 W");
