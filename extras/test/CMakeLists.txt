@@ -122,6 +122,7 @@ file(GLOB TEST_SRC CONFIGURE_DEPENDS
 
 file(GLOB SD4LINUX_TEST_SRC CONFIGURE_DEPENDS
   LinuxPortTests/*.cpp
+  DisplayHatMiniTests/*.cpp
   )
 
 if(NOT SUPLA_TEST_CURL_HTTP_ENABLED)
@@ -287,6 +288,7 @@ add_executable(sd4linuxtests
   ../porting/linux/extensions/sma/sma_extension.cpp
   ../porting/linux/extensions/ingecon/ingecon_extension.cpp
   ../porting/linux/extensions/byd/byd_extension.cpp
+  ../porting/linux/displayhatmini/hat_model.cpp
   )
 
 add_executable(arduinoesp8266_tls_lifetime_tests
@@ -332,6 +334,7 @@ target_include_directories(sd4linuxtests PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/sma
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/ingecon
   ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/byd
+  ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux/displayhatmini
 )
 
 target_link_libraries(supladevicetests
