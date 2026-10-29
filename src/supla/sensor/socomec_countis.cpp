@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include <supla/log_wrapper.h>
+#include <supla/time.h>
 
 namespace Supla {
 namespace Socomec {
@@ -217,4 +218,314 @@ uint32_t defaultMaxPowerW(Model model) {
 
 }  // namespace Socomec
 
+namespace {
+struct Request {
+  uint16_t address;
+  uint16_t count;
+};
+}  // namespace
+
+namespace Sensor {
+
+using Socomec::EnergyKinds;
+using Socomec::Model;
+using Socomec::ParseResult;
+
+namespace {
+Request requestFor(uint8_t step) {
+  switch (step) {
+    case 0: return {Socomec::kIdentityAddr, Socomec::kIdentityCount};
+    case 1: return {Socomec::kMeasurementsAddr, Socomec::kMeasurementsCount};
+    case 2:
+    case 3:
+    case 4:
+      return {Socomec::kLineEnergyAddr[step - 2], Socomec::kLineEnergyCount};
+    case 5: return {Socomec::kTotalsAddr, Socomec::kTotalsCount};
+    case 6: return {Socomec::kPhaseSequenceAddr, 1};
+    default: return {0, 0};
+  }
+}
+}  // namespace
+
+SocomecCountis::SocomecCountis(Socomec::Transport *transport,
+                               Socomec::Model model,
+                               uint8_t slave)
+    : transport(transport), model(model), slave(slave) {
+  setMaxPowerKw(Socomec::defaultMaxPowerW(model) / 1000);
+}
+
+void SocomecCountis::setMaxPowerKw(uint32_t kw) {
+  for (auto &kind : guard) {
+    for (auto &g : kind) {
+      g.setMaxPowerW(kw * 1000);
+    }
+  }
+}
+
+int SocomecCountis::phaseCount() const {
+  return model == Model::E23 ? 3 : 1;
+}
+
+bool SocomecCountis::logAllowed(uint32_t now) {
+  if (loggedOnce && now - lastLogMs < kLogIntervalMs) {
+    return false;
+  }
+  loggedOnce = true;
+  lastLogMs = now;
+  return true;
+}
+
+void SocomecCountis::iterateAlways() {
+  pollBus(millis());
+  ElectricityMeter::iterateAlways();
+}
+
+void SocomecCountis::pollBus(uint32_t now) {
+  switch (state) {
+    case State::Disabled:
+      return;
+    case State::Idle:
+      if (cycleStarted && now - cycleMs < refreshRateSec * 1000U) {
+        return;
+      }
+      cycleStarted = true;
+      cycleMs = now;
+      step = identityOk ? Step::Measurements : Step::Identity;
+      linesOk = true;
+      totalsOk = false;
+      phaseSequence = -1;
+      startRequest(now);
+      return;
+    case State::Gap:
+      if (now - stateMs >= kGapMs) {
+        startRequest(now);
+      }
+      return;
+    case State::Wait:
+      break;
+  }
+
+  const int n = transport->readAvailable(rx + rxLen, sizeof(rx) - rxLen);
+  if (n < 0) {
+    onFailure(now);
+    return;
+  }
+  rxLen += n;
+  const auto request = requestFor(static_cast<uint8_t>(step));
+  switch (Socomec::parseReadHolding(rx, rxLen, slave, request.count, regs)) {
+    case ParseResult::Ok:
+      onReply(now);
+      return;
+    case ParseResult::Exception:
+      onException(now);
+      return;
+    case ParseResult::Bad:
+      transport->flushRx();
+      onFailure(now);
+      return;
+    case ParseResult::Incomplete:
+      if (now - stateMs > kReplyTimeoutMs) {
+        onFailure(now);
+      }
+      return;
+  }
+}
+
+void SocomecCountis::startRequest(uint32_t now) {
+  const auto request = requestFor(static_cast<uint8_t>(step));
+  uint8_t frame[8];
+  Socomec::buildReadHolding(slave, request.address, request.count, frame);
+  transport->flushRx();
+  rxLen = 0;
+  state = State::Wait;
+  stateMs = now;
+  if (!transport->write(frame, sizeof(frame))) {
+    onFailure(now);
+  }
+}
+
+void SocomecCountis::onReply(uint32_t now) {
+  switch (step) {
+    case Step::Identity:
+      if (!Socomec::identityMatches(model, regs, Socomec::kIdentityCount)) {
+        SUPLA_LOG_ERROR("Socomec[%d]: meter is not a COUNTIS %s, polling "
+                        "disabled", getChannelNumber(),
+                        model == Model::E23 ? "E23" : "E03");
+        state = State::Disabled;
+        return;
+      }
+      identityOk = true;
+      break;
+    case Step::Measurements:
+      Socomec::decodeMeasurements(model, regs, &measurements);
+      break;
+    case Step::Line1:
+    case Step::Line2:
+    case Step::Line3: {
+      const int phase =
+          static_cast<int>(step) - static_cast<int>(Step::Line1);
+      linesOk = Socomec::decodeLineEnergy(regs, phase, &lineEnergy) && linesOk;
+      break;
+    }
+    case Step::Totals:
+      totalsOk = Socomec::decodeTotals(regs, totals);
+      break;
+    case Step::PhaseSequence:
+      phaseSequence = regs[0] <= 1 ? static_cast<int8_t>(regs[0]) : -1;
+      break;
+    case Step::Done:
+      break;
+  }
+  nextStep(now);
+}
+
+void SocomecCountis::onException(uint32_t now) {
+  if (step == Step::Line1 && model == Model::E03) {
+    SUPLA_LOG_INFO("Socomec[%d]: no line-1 energy block, using totals",
+                   getChannelNumber());
+    lineBlocks = false;
+    nextStep(now);
+    return;
+  }
+  if (step == Step::PhaseSequence) {
+    nextStep(now);
+    return;
+  }
+  if (logAllowed(now)) {
+    SUPLA_LOG_WARNING("Socomec[%d]: exception reading register %u",
+                      getChannelNumber(),
+                      requestFor(static_cast<uint8_t>(step)).address);
+  }
+  retried = true;  // an exception will not change on retry
+  onFailure(now);
+}
+
+void SocomecCountis::onFailure(uint32_t now) {
+  if (!retried) {
+    retried = true;
+    state = State::Gap;
+    stateMs = now;
+    return;
+  }
+  retried = false;
+  state = State::Idle;
+  if (failedCycles < kOfflineAfterFailedCycles &&
+      ++failedCycles == kOfflineAfterFailedCycles) {
+    SUPLA_LOG_WARNING("Socomec[%d]: meter not answering, marked offline",
+                      getChannelNumber());
+    offline = true;
+  }
+}
+
+bool SocomecCountis::skipStep(Step s) const {
+  switch (s) {
+    case Step::Line1:
+      return !lineBlocks;
+    case Step::Line2:
+    case Step::Line3:
+    case Step::PhaseSequence:
+      return model == Model::E03;
+    default:
+      return false;
+  }
+}
+
+void SocomecCountis::nextStep(uint32_t now) {
+  retried = false;
+  do {
+    step = static_cast<Step>(static_cast<uint8_t>(step) + 1);
+  } while (step != Step::Done && skipStep(step));
+  if (step == Step::Done) {
+    finishCycle(now);
+    return;
+  }
+  state = State::Gap;
+  stateMs = now;
+}
+
+void SocomecCountis::finishCycle(uint32_t now) {
+  state = State::Idle;
+  failedCycles = 0;
+  offline = false;
+  published = measurements;
+  publishedSequence = phaseSequence;
+  havePublished = true;
+
+  const int phases = phaseCount();
+  Socomec::Energy energy;
+  bool consistent = totalsOk;
+  if (lineBlocks) {
+    energy = lineEnergy;
+    consistent = consistent && linesOk &&
+                 Socomec::energyMatchesTotals(energy, totals, phases);
+  } else {
+    for (int kind = 0; kind < EnergyKinds; kind++) {
+      energy.value[kind][0] = totals[kind];
+    }
+  }
+  if (!consistent) {
+    if (logAllowed(now)) {
+      SUPLA_LOG_WARNING("Socomec[%d]: energy registers inconsistent, "
+                        "keeping previous values", getChannelNumber());
+    }
+    return;
+  }
+  bool accepted = true;
+  for (int kind = 0; kind < EnergyKinds; kind++) {
+    for (int p = 0; p < phases; p++) {
+      accepted = guard[kind][p].accept(energy.value[kind][p], now) && accepted;
+    }
+  }
+  if (!accepted) {
+    if (logAllowed(now)) {
+      SUPLA_LOG_WARNING("Socomec[%d]: implausible energy jump rejected "
+                        "(Ea+ L1 %llu)", getChannelNumber(),
+                        static_cast<unsigned long long>(  // NOLINT(runtime/int)
+                            energy.value[Socomec::FwdAct][0]));
+    }
+    return;
+  }
+  publishedEnergy = energy;
+  haveEnergy = true;
+}
+
+void SocomecCountis::readValuesFromDevice() {
+  if (offline) {
+    resetReadParameters();
+    return;
+  }
+  if (!havePublished) {
+    return;
+  }
+  for (int i = 0; i < phaseCount(); i++) {
+    const auto &p = published.phase[i];
+    if (!p.present) {
+      resetReadParametersForPhase(i);
+      continue;
+    }
+    setVoltage(i, p.voltage);
+    setCurrent(i, p.current);
+    setPowerActive(i, p.powerActive);
+    setPowerReactive(i, p.powerReactive);
+    setPowerApparent(i, p.powerApparent);
+    setPowerFactor(i, p.powerFactor);
+    setPhaseAngle(i, p.phaseAngle);
+    if (haveEnergy) {
+      setFwdActEnergy(i, publishedEnergy.value[Socomec::FwdAct][i]);
+      setRvrActEnergy(i, publishedEnergy.value[Socomec::RvrAct][i]);
+      setFwdReactEnergy(i, publishedEnergy.value[Socomec::FwdReact][i]);
+      setRvrReactEnergy(i, publishedEnergy.value[Socomec::RvrReact][i]);
+    }
+  }
+  setFreq(published.freq);
+  if (model == Model::E23) {
+    if (publishedSequence < 0) {
+      clearVoltagePhaseSequenceFlag();
+    } else {
+      setVoltagePhaseSequence(publishedSequence == 0);
+    }
+  }
+}
+
+}  // namespace Sensor
 }  // namespace Supla

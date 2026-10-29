@@ -125,6 +125,87 @@ class EnergyGuard {
 uint32_t defaultMaxPowerW(Model model);
 
 }  // namespace Socomec
+
+namespace Sensor {
+
+class SocomecCountis : public ElectricityMeter {
+ public:
+  // transport is not owned and must outlive this object.
+  SocomecCountis(Socomec::Transport *transport,
+                 Socomec::Model model,
+                 uint8_t slave);
+
+  void setMaxPowerKw(uint32_t kw);
+  void iterateAlways() override;
+  void readValuesFromDevice() override;
+
+ private:
+  enum class Step : uint8_t {
+    Identity,
+    Measurements,
+    Line1,
+    Line2,
+    Line3,
+    Totals,
+    PhaseSequence,
+    Done
+  };
+  enum class State : uint8_t { Idle, Gap, Wait, Disabled };
+
+  static constexpr uint32_t kReplyTimeoutMs = 300;
+  static constexpr uint32_t kGapMs = 50;
+  static constexpr uint8_t kOfflineAfterFailedCycles = 3;
+  static constexpr uint32_t kLogIntervalMs = 60000;
+
+  void pollBus(uint32_t now);
+  void startRequest(uint32_t now);
+  void onReply(uint32_t now);
+  void onException(uint32_t now);
+  void onFailure(uint32_t now);
+  void nextStep(uint32_t now);
+  void finishCycle(uint32_t now);
+  bool skipStep(Step s) const;
+  bool logAllowed(uint32_t now);
+  int phaseCount() const;
+
+  Socomec::Transport *transport = nullptr;
+  Socomec::Model model;
+  uint8_t slave = 0;
+
+  State state = State::Idle;
+  Step step = Step::Identity;
+  bool identityOk = false;
+  bool lineBlocks = true;  // false after an E03 exception on line 1
+  bool retried = false;
+  bool cycleStarted = false;
+  uint8_t failedCycles = 0;
+  uint32_t stateMs = 0;
+  uint32_t cycleMs = 0;
+  uint32_t lastLogMs = 0;
+  bool loggedOnce = false;
+  size_t rxLen = 0;
+  uint8_t rx[Socomec::kMaxFrame] = {};
+  uint16_t regs[Socomec::kMeasurementsCount] = {};
+
+  // Current cycle
+  Socomec::Measurements measurements;
+  Socomec::Energy lineEnergy;
+  uint64_t totals[Socomec::EnergyKinds] = {};
+  bool linesOk = false;
+  bool totalsOk = false;
+  int8_t phaseSequence = -1;  // -1 unknown, 0 clockwise, 1 counter-clockwise
+
+  // Last complete cycle
+  bool offline = false;
+  bool havePublished = false;
+  bool haveEnergy = false;
+  Socomec::Measurements published;
+  int8_t publishedSequence = -1;
+  Socomec::Energy publishedEnergy;
+  Socomec::EnergyGuard guard[Socomec::EnergyKinds][3];
+};
+
+}  // namespace Sensor
 }  // namespace Supla
 
 #endif  // SRC_SUPLA_SENSOR_SOCOMEC_COUNTIS_H_
