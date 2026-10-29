@@ -69,7 +69,6 @@ def transaction(ser, addr, func, start, count, timeout=0.15):
 
 
 def scan(port, max_addr=247):
-    any_hit = False
     for parity in PARITIES:
         for baud in BAUDS:
             try:
@@ -91,12 +90,10 @@ def scan(port, max_addr=247):
             finally:
                 ser.close()
             if hit:
-                any_hit = True
                 print(f"HIT {port} {baud} 8{parity}1 addr={hit[0]} {hit[1]} {hit[2]}", flush=True)
-            else:
-                print(f"    {port} {baud} 8{parity}1: silent 1..{max_addr}", flush=True)
-    if not any_hit:
-        print(f"{port}: NO DEVICE RESPONDED (all bauds/parities/addresses 1..{max_addr})", flush=True)
+                return 0
+            print(f"    {port} {baud} 8{parity}1: silent 1..{max_addr}", flush=True)
+    print(f"{port}: NO DEVICE RESPONDED (all bauds/parities/addresses 1..{max_addr})", flush=True)
     return 0
 
 

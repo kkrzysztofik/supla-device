@@ -30,11 +30,16 @@ def frame_of(addr: int, func: int, start: int, count: int) -> bytes:
     return payload + crc16(payload).to_bytes(2, "little")
 
 
-def attempt(ser, addr, func, start, count, timeout=0.15):
+def attempt(ser, addr, func, start, count, timeout=0.15, release_direction=None):
     ser.timeout = timeout
     ser.reset_input_buffer()
     ser.write(frame_of(addr, func, start, count))
     ser.flush()
+    if release_direction is not None:
+        # With a manual DE/RE adapter the line stays in transmit while DE is
+        # asserted, so it has to be turned around before listening for the reply.
+        release_direction()
+        time.sleep(0.001)
     exp = 5 + 2 * count
     resp = ser.read(exp)
     if not resp:
@@ -54,26 +59,29 @@ def attempt(ser, addr, func, start, count, timeout=0.15):
 def run_mode(port, baud, parity, mode, max_addr):
     ser = serial.Serial(port, baud, bytesize=8, parity=parity, stopbits=1,
                         timeout=0.15, xonxoff=False, rtscts=False)
+    manual = mode != "auto"
+
+    def set_transmit(transmit):
+        # `_high` modes drive DE with the line high, `_low` modes with it low.
+        if mode == "rts_high":
+            ser.rts = transmit
+        elif mode == "rts_low":
+            ser.rts = not transmit
+        elif mode == "dtr_high":
+            ser.dtr = transmit
+        elif mode == "dtr_low":
+            ser.dtr = not transmit
+
     hits = []
     try:
         for addr in range(1, max_addr + 1):
             for func in (3, 4):
-                # set driver-enable polarity for this mode
-                if mode == "rts_high":
-                    ser.rts = True
-                elif mode == "rts_low":
-                    ser.rts = False
-                elif mode == "dtr_high":
-                    ser.dtr = True
-                elif mode == "dtr_low":
-                    ser.dtr = False
+                if manual:
+                    set_transmit(True)
                 ser.reset_input_buffer()
-                result = attempt(ser, addr, func, 0, 2)
-                if mode in ("rts_high", "dtr_high"):
-                    # release the driver so the transceiver can receive
-                    ser.rts = False
-                    ser.dtr = False
-                    time.sleep(0.02)
+                result = attempt(
+                    ser, addr, func, 0, 2,
+                    release_direction=(lambda: set_transmit(False)) if manual else None)
                 if result:
                     hits.append((addr, func, result))
         return hits
