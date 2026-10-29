@@ -30,6 +30,20 @@ class Transport {
   virtual void flushRx() = 0;
 };
 
+enum class ParseResult : uint8_t { Incomplete, Ok, Exception, Bad };
+
+uint16_t crc16(const uint8_t *data, size_t len);
+void buildReadHolding(uint8_t slave,
+                      uint16_t address,
+                      uint16_t count,
+                      uint8_t out[8]);
+// Parses the bytes received so far for an FC03 request of `count` registers.
+ParseResult parseReadHolding(const uint8_t *frame,
+                             size_t len,
+                             uint8_t slave,
+                             uint16_t count,
+                             uint16_t *registers);
+
 }  // namespace Socomec
 }  // namespace Supla
 
