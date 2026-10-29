@@ -12,6 +12,8 @@
 #include <math.h>
 #include <string.h>
 
+#include <supla/log_wrapper.h>
+
 namespace Supla {
 namespace Socomec {
 
@@ -171,5 +173,48 @@ bool identityMatches(Model model, const uint16_t *regs, size_t count) {
   return strstr(name, model == Model::E23 ? "E23" : "E03") != nullptr;
 }
 
+
+uint64_t EnergyGuard::maxDelta(uint32_t elapsedMs) const {
+  // W * ms / 36000 = 0.01 Wh
+  return static_cast<uint64_t>(maxPowerW) * elapsedMs / 36000 + kSlack;
+}
+
+bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
+  if (!hasBaseline || (value >= last &&
+                       value - last <= maxDelta(nowMs - lastMs))) {
+    hasBaseline = true;
+    last = value;
+    lastMs = nowMs;
+    candidateCount = 0;
+    return true;
+  }
+  // Out of range: only a value that keeps growing plausibly on its own for
+  // kReanchorCycles in a row replaces the baseline (meter swap/reset).
+  const bool sameCandidate =
+      candidateCount > 0 && value >= candidate &&
+      value - candidate <= maxDelta(nowMs - candidateMs);
+  candidateCount = sameCandidate ? candidateCount + 1 : 1;
+  candidate = value;
+  candidateMs = nowMs;
+  if (candidateCount < kReanchorCycles) {
+    return false;
+  }
+  SUPLA_LOG_WARNING("Socomec: energy counter re-anchored %llu -> %llu",
+                    static_cast<unsigned long long>(last),  // NOLINT(runtime/int)
+                    static_cast<unsigned long long>(value));  // NOLINT(runtime/int)
+  last = value;
+  lastMs = nowMs;
+  candidateCount = 0;
+  return true;
+}
+
+uint32_t defaultMaxPowerW(Model model) {
+  // Rated current x 230 V x phases x 1.5 margin. Calibration knob:
+  // setMaxPowerKw() / max_power_kw -- set it from the installation's breaker.
+  return model == Model::E23 ? 82800 : 40000;
+}
+
+
 }  // namespace Socomec
+
 }  // namespace Supla

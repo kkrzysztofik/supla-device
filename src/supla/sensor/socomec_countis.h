@@ -100,6 +100,30 @@ bool energyMatchesTotals(const Energy &lines,
                          int phases);
 bool identityMatches(Model model, const uint16_t *regs, size_t count);
 
+// Plausibility filter for one monotonic energy counter (0.00001 kWh units).
+class EnergyGuard {
+ public:
+  static constexpr uint8_t kReanchorCycles = 12;  // ~1 min at 5 s polls
+  static constexpr uint64_t kSlack = 1000;        // 10 Wh = one totals LSB
+
+  void setMaxPowerW(uint32_t watts) { maxPowerW = watts; }
+  bool accept(uint64_t value, uint32_t nowMs);
+  uint64_t value() const { return last; }
+
+ private:
+  uint64_t maxDelta(uint32_t elapsedMs) const;
+
+  uint32_t maxPowerW = 83000;
+  bool hasBaseline = false;
+  uint64_t last = 0;
+  uint32_t lastMs = 0;
+  uint64_t candidate = 0;
+  uint32_t candidateMs = 0;
+  uint8_t candidateCount = 0;
+};
+
+uint32_t defaultMaxPowerW(Model model);
+
 }  // namespace Socomec
 }  // namespace Supla
 

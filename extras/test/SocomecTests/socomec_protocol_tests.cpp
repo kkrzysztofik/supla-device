@@ -243,3 +243,72 @@ TEST(SocomecDecodeTests, IdentityMatchesModel) {
   EXPECT_TRUE(Supla::Socomec::identityMatches(Model::E23, e23, 8));
   EXPECT_FALSE(Supla::Socomec::identityMatches(Model::E03, e23, 8));
 }
+
+using Supla::Socomec::EnergyGuard;
+
+namespace {
+constexpr uint64_t kWh = 100000;  // 1 kWh in 0.00001 kWh
+}
+
+TEST(SocomecEnergyGuardTests, FirstValueBecomesBaseline) {
+  EnergyGuard g;
+  EXPECT_TRUE(g.accept(1 * kWh, 0));
+  EXPECT_EQ(g.value(), 1 * kWh);
+}
+
+TEST(SocomecEnergyGuardTests, SpikeIsRejectedAndRealValueStillAccepted) {
+  // The user's case: 1 kWh -> 2 000 000 kWh -> 1.2 kWh, 5 s polls.
+  EnergyGuard g;
+  g.setMaxPowerW(83000);
+  ASSERT_TRUE(g.accept(1 * kWh, 0));
+  EXPECT_FALSE(g.accept(2000000 * kWh, 5000));
+  EXPECT_EQ(g.value(), 1 * kWh);
+  EXPECT_TRUE(g.accept(120000, 10000));  // 0.2 kWh in 10 s = 72 kW < 83 kW
+  EXPECT_EQ(g.value(), 120000u);
+}
+
+TEST(SocomecEnergyGuardTests, TighterMaxPowerRejectsImplausibleStep) {
+  EnergyGuard g;
+  g.setMaxPowerW(17000);  // 25 A breaker
+  ASSERT_TRUE(g.accept(1 * kWh, 0));
+  EXPECT_FALSE(g.accept(120000, 10000));
+}
+
+TEST(SocomecEnergyGuardTests, BackwardsIsRejected) {
+  EnergyGuard g;
+  ASSERT_TRUE(g.accept(10 * kWh, 0));
+  EXPECT_FALSE(g.accept(9 * kWh, 5000));
+  EXPECT_EQ(g.value(), 10 * kWh);
+}
+
+TEST(SocomecEnergyGuardTests, NormalGrowthAccepted) {
+  EnergyGuard g;
+  ASSERT_TRUE(g.accept(10 * kWh, 0));
+  EXPECT_TRUE(g.accept(10 * kWh + 65, 5000));  // 470 W for 5 s = 0.65 Wh
+}
+
+TEST(SocomecEnergyGuardTests, ReanchorsAfterStableNewValue) {
+  // Meter swapped: the counter restarts near 0 and stays consistent.
+  EnergyGuard g;
+  ASSERT_TRUE(g.accept(20744 * kWh, 0));
+  uint32_t now = 0;
+  for (int i = 1; i < EnergyGuard::kReanchorCycles; i++) {
+    now += 5000;
+    EXPECT_FALSE(g.accept(5 * kWh, now)) << i;
+  }
+  now += 5000;
+  EXPECT_TRUE(g.accept(5 * kWh, now));
+  EXPECT_EQ(g.value(), 5 * kWh);
+}
+
+TEST(SocomecEnergyGuardTests, UnstableGarbageNeverReanchors) {
+  EnergyGuard g;
+  ASSERT_TRUE(g.accept(1 * kWh, 0));
+  uint32_t now = 0;
+  for (int i = 0; i < 50; i++) {
+    now += 5000;
+    const uint64_t garbage = (i % 2) ? 0 : 3000000 * kWh;
+    EXPECT_FALSE(g.accept(garbage, now)) << i;
+  }
+  EXPECT_EQ(g.value(), 1 * kWh);
+}
