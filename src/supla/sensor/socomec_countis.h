@@ -107,13 +107,20 @@ class EnergyGuard {
   static constexpr uint64_t kSlack = 1000;        // 10 Wh = one totals LSB
 
   void setMaxPowerW(uint32_t watts) { maxPowerW = watts; }
+  // Absolute physical ceiling for the re-anchor run (0 = no bound). The soft
+  // ceiling above comes from the installation; this one comes from the meter's
+  // own rating, so a faulty register cannot become the baseline by growing
+  // monotonically for the re-anchor window.
+  void setHardMaxPowerW(uint32_t watts) { hardMaxPowerW = watts; }
   bool accept(uint64_t value, uint32_t nowMs);
   uint64_t value() const { return last; }
 
  private:
   uint64_t maxDelta(uint32_t elapsedMs) const;
+  uint64_t hardMaxDelta(uint32_t elapsedMs) const;
 
   uint32_t maxPowerW = 83000;
+  uint32_t hardMaxPowerW = 0;
   bool hasBaseline = false;
   uint64_t last = 0;
   uint32_t lastMs = 0;

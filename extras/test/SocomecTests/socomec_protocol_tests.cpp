@@ -412,7 +412,8 @@ TEST(SocomecEnergyGuardTests, ReanchorsUnderSustainedFastLoadAboveCeiling) {
   // load or a stale baseline, but it must not freeze energy publication
   // forever: after a full re-anchor run the new level becomes the baseline.
   EnergyGuard g;
-  g.setMaxPowerW(8300);  // 8.3 kW per-phase share
+  g.setMaxPowerW(8300);      // 8.3 kW per-phase share
+  g.setHardMaxPowerW(27600); // E23 physical per-phase ceiling
   ASSERT_TRUE(g.accept(1 * kWh, 0));
   uint32_t now = 0;
   uint64_t value = 1 * kWh;
@@ -424,5 +425,23 @@ TEST(SocomecEnergyGuardTests, ReanchorsUnderSustainedFastLoadAboveCeiling) {
   now += 5000;
   value += 2360;
   EXPECT_TRUE(g.accept(value, now));
-  EXPECT_GE(g.value(), value - 2360);
+  EXPECT_EQ(g.value(), value);
+}
+
+TEST(SocomecEnergyGuardTests, RejectsUnphysicalGrowthDuringReanchorRun) {
+  // A faulty register growing by 1 kvarh per 5 s poll must never become the
+  // baseline, even though it grows monotonically for many cycles: the
+  // re-anchor run is bounded by the meter's physical per-phase rating.
+  EnergyGuard g;
+  g.setMaxPowerW(83000);       // soft, installation/user ceiling
+  g.setHardMaxPowerW(27600);   // physical per-phase ceiling (E23)
+  ASSERT_TRUE(g.accept(1 * kWh, 0));
+  uint32_t now = 0;
+  uint64_t value = 1 * kWh;
+  for (int i = 1; i <= 20; i++) {
+    now += 5000;
+    value += 100000;  // +1 kvarh per poll
+    EXPECT_FALSE(g.accept(value, now)) << i;
+  }
+  EXPECT_EQ(g.value(), 1 * kWh);
 }

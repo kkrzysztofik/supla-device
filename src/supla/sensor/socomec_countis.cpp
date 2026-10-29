@@ -180,6 +180,10 @@ uint64_t EnergyGuard::maxDelta(uint32_t elapsedMs) const {
   return static_cast<uint64_t>(maxPowerW) * elapsedMs / 36000 + kSlack;
 }
 
+uint64_t EnergyGuard::hardMaxDelta(uint32_t elapsedMs) const {
+  return static_cast<uint64_t>(hardMaxPowerW) * elapsedMs / 36000 + kSlack;
+}
+
 bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
   if (!hasBaseline) {
     hasBaseline = true;
@@ -214,7 +218,10 @@ bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
   // cross-checked against the meter totals before the guard runs.
   bool sameCandidate = false;
   if (candidateCount > 0) {
-    sameCandidate = value + kSlack >= candidate;
+    const bool physical = value < candidate || hardMaxPowerW == 0 ||
+                          value - candidate <=
+                              hardMaxDelta(nowMs - candidateMs);
+    sameCandidate = physical && value + kSlack >= candidate;
   }
   candidateCount = sameCandidate ? candidateCount + 1 : 1;
   if (!sameCandidate || value > candidate) {
@@ -287,10 +294,15 @@ void SocomecCountis::setMaxPowerW(uint32_t watts) {
   // `watts` is the installation-wide ceiling. Each guard watches one phase, so
   // it gets an equal share: a per-phase counter must not be able to justify a
   // step that is only plausible for the whole three-phase service.
-  const uint32_t perPhase = watts / static_cast<uint32_t>(phaseCount());
+  const auto phases = static_cast<uint32_t>(phaseCount());
+  const uint32_t perPhase = watts / phases;
+  // Independent of the user's soft ceiling, the re-anchor run is bounded by the
+  // meter's own per-phase rating.
+  const uint32_t hardPerPhase = Socomec::defaultMaxPowerW(model) / phases;
   for (auto &kind : guard) {
     for (auto &g : kind) {
       g.setMaxPowerW(perPhase);
+      g.setHardMaxPowerW(hardPerPhase);
     }
   }
 }

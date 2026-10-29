@@ -195,4 +195,6 @@ load you expect, since each E23 phase gets one third of it:
 Rejections keep the previous energy values, so a badly chosen value shows up as a
 repeating `implausible energy jump rejected` warning, not as wrong data. If the real load
 stays above the configured ceiling, the guard re-anchors to it after the 12-cycle
-re-anchor window instead of freezing energy publication.
+re-anchor window instead of freezing energy publication. Re-anchoring is still bounded by
+the meter's own physical per-phase rating (27.6 kW on the E23, 40 kW on the E03), so a
+faulty register that keeps growing cannot become the baseline.
