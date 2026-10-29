@@ -407,6 +407,13 @@ TEST(SocomecEnergyGuardTests, DefaultMaxPowerWatts) {
   EXPECT_EQ(Supla::Socomec::defaultMaxPowerW(Model::E03), 40000u);
 }
 
+TEST(SocomecEnergyGuardTests, HardMaxPowerWattsComeFromModelRating) {
+  // E23: 3 x 80 A, per phase 80 A x 230 V x 1.5 = 27 600 W.
+  // E03: 1PH 40 A (Socomec 4850 3039), 40 A x 230 V x 1.5 = 13 800 W.
+  EXPECT_EQ(Supla::Socomec::hardMaxPowerW(Model::E23), 27600u);
+  EXPECT_EQ(Supla::Socomec::hardMaxPowerW(Model::E03), 13800u);
+}
+
 TEST(SocomecEnergyGuardTests, ReanchorsUnderSustainedFastLoadAboveCeiling) {
   // A phase loaded above the configured per-phase ceiling is either a real
   // load or a stale baseline, but it must not freeze energy publication

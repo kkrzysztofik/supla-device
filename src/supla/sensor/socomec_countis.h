@@ -130,6 +130,12 @@ class EnergyGuard {
 };
 
 uint32_t defaultMaxPowerW(Model model);
+// Independent hard bound for one counter's re-anchor run, from the model's
+// rated current at 230 V with a 1.5x margin: E23 = 80 A per phase, E03 = 40 A
+// single phase (Socomec refs 4850 3050 / 4850 3039). Unlike defaultMaxPowerW()
+// this is not an installation-tunable ceiling, so a faulty register cannot
+// become the baseline by growing monotonically.
+uint32_t hardMaxPowerW(Model model);
 
 }  // namespace Socomec
 

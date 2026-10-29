@@ -196,5 +196,7 @@ Rejections keep the previous energy values, so a badly chosen value shows up as 
 repeating `implausible energy jump rejected` warning, not as wrong data. If the real load
 stays above the configured ceiling, the guard re-anchors to it after the 12-cycle
 re-anchor window instead of freezing energy publication. Re-anchoring is still bounded by
-the meter's own physical per-phase rating (27.6 kW on the E23, 40 kW on the E03), so a
-faulty register that keeps growing cannot become the baseline.
+a driver hard bound derived from the model rating with a 1.5× margin — 27.6 kW per E23
+phase (80 A × 230 V) and 13.8 kW for the E03 (40 A × 230 V) — so a faulty register that
+keeps growing cannot become the baseline. This hard bound is independent of
+`max_power_kw`.

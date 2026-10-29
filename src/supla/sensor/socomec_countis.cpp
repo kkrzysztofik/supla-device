@@ -240,6 +240,10 @@ bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
   return true;
 }
 
+uint32_t hardMaxPowerW(Model model) {
+  return model == Model::E23 ? 27600 : 13800;
+}
+
 uint32_t defaultMaxPowerW(Model model) {
   // Generous ceiling for the energy plausibility filter, from the rated current
   // at 230 V per phase with a 1.5x margin:
@@ -297,8 +301,8 @@ void SocomecCountis::setMaxPowerW(uint32_t watts) {
   const auto phases = static_cast<uint32_t>(phaseCount());
   const uint32_t perPhase = watts / phases;
   // Independent of the user's soft ceiling, the re-anchor run is bounded by the
-  // meter's own per-phase rating.
-  const uint32_t hardPerPhase = Socomec::defaultMaxPowerW(model) / phases;
+  // meter's own rating.
+  const uint32_t hardPerPhase = Socomec::hardMaxPowerW(model);
   for (auto &kind : guard) {
     for (auto &g : kind) {
       g.setMaxPowerW(perPhase);
