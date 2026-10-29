@@ -275,3 +275,16 @@ TEST_F(SocomecCountisTests, IterateNeverWaitsOnTheBus) {
   }
   EXPECT_EQ(meter.requests.size(), 1u);
 }
+
+TEST_F(SocomecCountisTests, PerPhaseEnergyCeilingRejectsPhaseSpike) {
+  // A 60 Wh step in 5 s is 43 kW on one phase: implausible for an 80 A phase
+  // (per-phase ceiling ~27.6 kW) even though it is plausible for the whole
+  // three-phase service (82.8 kW). The per-phase guard must reject it.
+  loadE23(&meter);
+  SocomecCountis em(&meter, Model::E23, 2);
+  run(&em, 6000);
+  ASSERT_EQ(em.getFwdActEnergy(0), 700000000ULL);
+  meter.blocks[0x4D83] = lineBlock(7000, 600);  // +60 Wh on phase 1
+  run(&em, 10000);
+  EXPECT_EQ(em.getFwdActEnergy(0), 700000000ULL);
+}

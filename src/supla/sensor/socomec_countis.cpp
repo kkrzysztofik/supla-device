@@ -286,9 +286,13 @@ SocomecCountis::SocomecCountis(Socomec::Transport *transport,
 }
 
 void SocomecCountis::setMaxPowerW(uint32_t watts) {
+  // `watts` is the installation-wide ceiling. Each guard watches one phase, so
+  // it gets an equal share: a per-phase counter must not be able to justify a
+  // step that is only plausible for the whole three-phase service.
+  const uint32_t perPhase = watts / static_cast<uint32_t>(phaseCount());
   for (auto &kind : guard) {
     for (auto &g : kind) {
-      g.setMaxPowerW(watts);
+      g.setMaxPowerW(perPhase);
     }
   }
 }
