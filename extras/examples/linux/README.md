@@ -219,6 +219,29 @@ working directory the binary is started in; built-in fallbacks cover
 declares `byd_field` (e.g. `soc`, `is_charging`, `cabin_temp_c`). Multiple
 channels on one VIN share a single poll loop.
 
+### Pimoroni Display HAT Mini extension
+
+Build with the native Display HAT Mini extension (Raspberry Pi LCD dashboard,
+four buttons, RGB LED; libgpiod v2 and LVGL v9.2.2 are pulled in by the
+extension CMake, so `libgpiod-dev` and `pkg-config` must be installed):
+
+    cd extras/examples/linux
+    ./build-displayhatmini.sh
+    ../../../build-linux-displayhatmini/supla-device-linux \
+      -c supla-device-displayhatmini.yaml --verbose
+
+Manual equivalent (same build directory as `build-displayhatmini.sh`):
+
+    cmake -S . -B ../../../build-linux-displayhatmini \
+      -DSUPLA_LINUX_EXTENSION_DIRS="../../porting/linux/extensions/displayhatmini"
+    cmake --build ../../../build-linux-displayhatmini -j$(nproc)
+
+Copy `supla-device-displayhatmini.yaml`, set SUPLA credentials, `gpio_chip`
+and `backlight` for your Pi, and keep the `DisplayHatMini` entry last in
+`channels` (its button action triggers take the following channel numbers).
+Display overlay, permissions, full YAML reference and the on-hardware smoke
+checklist: [docs/integrations/display-hat-mini.md](../../../docs/integrations/display-hat-mini.md).
+
 # Usage
 
 Currently, there is no automated installation available. So please follow below
@@ -583,6 +606,7 @@ Supported channel types:
 * `BydMeter` - related class `Supla::PV::BydMeter` (extension, BYD cloud energy counters)
 * `BydThermometer` - related class `Supla::PV::BydThermometer` (extension, BYD cabin/outside temperature)
 * `BydBinary` - related class `Supla::PV::BydBinary` (extension, BYD charging/online/door flags)
+* `DisplayHatMini` - Display HAT Mini dashboard/buttons/RGB LED (extension, local UI only, adds no channel of its own; see `supla-device-displayhatmini.yaml`)
 * `SolarEdge` - related class `Supla::PV::SolarEdge`
 * `Afore` - related class `Supla::PV::Afore`
 * `ThermometerParsed` - related class `Supla::Sensor::ThermometerParsed`

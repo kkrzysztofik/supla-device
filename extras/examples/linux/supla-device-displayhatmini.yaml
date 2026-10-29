@@ -1,0 +1,63 @@
+# Example sd4linux config for the Pimoroni Display HAT Mini on a Raspberry Pi.
+#
+# Build (from extras/examples/linux):  ./build-displayhatmini.sh
+# Run:    ../../../build-linux-displayhatmini/supla-device-linux \
+#           -c supla-device-displayhatmini.yaml
+#
+# Hardware setup (SPI/display overlay, gpio chip name, backlight path), the
+# full YAML reference and the on-hardware smoke checklist are in
+# docs/integrations/display-hat-mini.md.
+#
+# Before starting: set supla.server / supla.mail to your SUPLA account, adjust
+# gpio_chip and backlight to your Pi (see the guide), and make sure
+# state_files_path exists and is writable by the user running sd4linux.
+
+name: Display HAT Mini example
+log_level: info
+state_files_path: "/var/local/user/supla-device-displayhatmini"
+security_level: 0
+
+supla:
+  server: svrXyz.supla.org
+  mail: user@mail.com
+
+channels:
+  # Two virtual relays so the example runs without any extra hardware.
+  # Channel numbers are assigned in list order: Pump = 0, Heater = 1.
+  - type: VirtualRelay          # channel 0
+    initial_caption: Pump
+  - type: VirtualRelay          # channel 1
+    initial_caption: Heater
+
+  # Keep the DisplayHatMini entry last: it adds no value channel of its own,
+  # and its button action triggers take the next free channel numbers
+  # (here A = 2, B = 3, X = 4, Y = 5).
+  - type: DisplayHatMini
+    gpio_chip: gpiochip0
+    # Take this path from: ls /sys/class/backlight/
+    backlight: /sys/class/backlight/fb_st7789v
+    # Defaults (shown for reference, uncomment to change):
+    # framebuffer: /dev/fb1
+    # backlight_timeout_sec: 60   # 0 = always on
+    # hold_time_ms: 700
+    # multiclick_time_ms: 300
+    buttons:                     # each listed button gets an action trigger
+      a: { caption: "HAT A" }
+      b: { caption: "HAT B" }
+      x: { caption: "HAT X" }
+      y: { caption: "HAT Y" }
+    pages:
+      - title: Relays
+        items:                   # values page; field defaults to primary value
+          - { channel: 0, label: Pump }
+          - { channel: 1, label: Heater }
+      - title: Pump history
+        type: chart
+        channel: 0               # relay state: 1 = on, 0 = off
+        sample_sec: 5            # 320 samples ~= 27 minutes of history
+        min: 0
+        max: 1
+    led:
+      alerts:                    # first matching alert wins, missing data skipped
+        # Heater on (relay value 1) -> yellow LED; off -> normal status colour.
+        - { channel: 1, above: 0.5, color: yellow }

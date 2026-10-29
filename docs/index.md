@@ -30,6 +30,7 @@ A ready-to-run SUPLA device implementation for desktop environments, useful for 
 
 - Start here: [Quickstart: sd4linux](quickstart/sd4linux.md)
 - SMA inverters: [Integration plan](integrations/yasdi-supla-device-plan.md) (includes native `SmaInverter` extension), [YASDI architecture](integrations/yasdi-architecture.md), [SMA module README](../extras/porting/linux/sma/README.md), [refactor baseline](integrations/sma-refactor-baseline.md)
+- Pimoroni Display HAT Mini (Raspberry Pi LCD dashboard, buttons, RGB LED): [Integration guide](integrations/display-hat-mini.md)
 
 ---
 

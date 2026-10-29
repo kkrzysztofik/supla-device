@@ -27,7 +27,7 @@ mapfile -d '' -t CPP_FILES < <(
 )
 
 mapfile -d '' -t TEST_CPP_FILES < <(
-  find ./extras/test -path './extras/test/build' -prune -o -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0
+  find ./extras/test -path './extras/test/build*' -prune -o -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0
 )
 
 mapfile -d '' -t LINUX_CPP_FILES < <(
