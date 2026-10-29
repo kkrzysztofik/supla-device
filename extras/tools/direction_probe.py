@@ -37,7 +37,12 @@ def attempt(ser, addr, func, start, count, timeout=0.15, release_direction=None)
     ser.flush()
     if release_direction is not None:
         # With a manual DE/RE adapter the line stays in transmit while DE is
-        # asserted, so it has to be turned around before listening for the reply.
+        # asserted, so it has to be turned around before listening for the
+        # reply. Give the last stop bit time to leave the FTDI FIFO first: the
+        # meters answer ~47-62 ms after the request, so a couple of ms of
+        # turnaround is harmless. On adapters where the modem-line change is too
+        # slow, use hardware-assisted (auto-direction) RS-485 instead.
+        time.sleep(0.002)
         release_direction()
         time.sleep(0.001)
     exp = 5 + 2 * count

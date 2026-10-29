@@ -179,10 +179,13 @@ Bring-up checklist:
 ## `max_power_kw`
 
 The energy plausibility filter rejects any counter step that would need more power
-than `max_power_kw` since the last accepted value. Defaults are deliberately generous:
-82 800 W (≈83 kW) for the E23 (3 × 80 A × 230 V × 1.5) and 40 000 W for the E03, a
-single-phase direct meter whose ceiling is a round installation limit rather than a
-formula fit. Set it from the installation's breaker rating to tighten the filter:
+than `max_power_kw` since the last accepted value. `max_power_kw` is the **installation-wide**
+ceiling; the driver divides it by the number of phases and gives each per-phase guard its
+share, so one phase cannot justify a step that is only plausible for the whole service.
+Defaults are deliberately generous: 82 800 W (≈83 kW, i.e. 27 600 W per phase) for the E23
+(3 × 80 A × 230 V × 1.5) and 40 000 W for the E03, a single-phase direct meter whose ceiling
+is a round installation limit rather than a formula fit. Set it from the installation's
+breaker rating to tighten the filter:
 
 ```yaml
     max_power_kw: 25

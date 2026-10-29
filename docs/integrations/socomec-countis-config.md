@@ -56,9 +56,9 @@ This table is the **target configuration** for a future shared-bus setup. The cu
 installation keeps each meter alone on its own bus at address **2** (see the
 [commissioning report](socomec-countis-commissioning-report.md)), and the shipped
 [`supla-device-socomec.yaml`](../../extras/examples/linux/supla-device-socomec.yaml) uses
-`modbus_address: 2` for both channels accordingly. If you do change the E03 to address 1,
-update both channels' `device.modbus_address` in the YAML as well, otherwise the driver
-polls the wrong address and the E03 stays offline.
+`modbus_address: 2` for both channels accordingly. If you do change the E03 to address 1, update **only the
+E03 channel's** `device.modbus_address` in the YAML to `1`; the E23 channel must stay at
+`2`. Setting both to `1` would make the E23 poll the wrong address and go offline.
 
 ### 1.3 What each model can actually be set to
 

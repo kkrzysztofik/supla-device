@@ -40,8 +40,8 @@ channels:
       model: e03            # required: e03 | e23
       modbus_address: 2     # required, 1-247
     poll_interval_sec: 5
-    # Set from the installation's breaker rating; tightens the energy
-    # plausibility filter (default for the E03 is 40 kW).
+    # Installation-wide ceiling from the breaker rating; each phase guard gets
+    # its share (default for the E03 is 40 kW).
     # max_power_kw: 25
 
   # COUNTIS E23: three-phase, per-phase energy from the line blocks.
@@ -54,5 +54,6 @@ channels:
       model: e23
       modbus_address: 2
     poll_interval_sec: 5
-    # Default for the E23 is 83 kW (3 x 80 A x 230 V x 1.5).
+    # Installation-wide default for the E23 is 82.8 kW (3 x 80 A x 230 V x 1.5),
+    # i.e. 27.6 kW per phase after the driver divides by the phase count.
     # max_power_kw: 25
