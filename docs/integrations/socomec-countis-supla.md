@@ -95,7 +95,8 @@ Or from the repository root:
 extras/examples/linux/build-socomec.sh
 ```
 
-Install the binary, config, and the generic service unit:
+Install the binary, config, and the generic service unit (the following commands assume
+the repository root as the working directory):
 
 ```bash
 sudo install -m 0755 build-linux-socomec/supla-device-linux /usr/local/bin/
@@ -179,8 +180,9 @@ Bring-up checklist:
 
 The energy plausibility filter rejects any counter step that would need more power
 than `max_power_kw` since the last accepted value. Defaults are deliberately generous:
-83 kW for the E23 (3 × 80 A × 230 V × 1.5) and 40 kW for the E03. Set it from the
-installation's breaker rating to tighten the filter:
+82 800 W (≈83 kW) for the E23 (3 × 80 A × 230 V × 1.5) and 40 000 W for the E03, a
+single-phase direct meter whose ceiling is a round installation limit rather than a
+formula fit. Set it from the installation's breaker rating to tighten the filter:
 
 ```yaml
     max_power_kw: 25

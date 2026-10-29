@@ -179,3 +179,32 @@ manual bring-up checklist in the README.
 * Lines #2/#3 layout and the E03 L1 block — settled by probe task 1.
 * Word order (big-endian high word first) — confirmed in practice by the 2026-10-29 readings.
 * Joining both meters on one bus requires readdressing one of them and a shared transport.
+
+## Implementation outcome (2026-10-29)
+
+The driver was built from this design and probed on live hardware. Three points changed
+during implementation; they are recorded here rather than rewritten above, so the approved
+design stays readable as a historical record.
+
+* **A Modbus exception aborts the cycle.** The implemented state machine (and the plan's
+  deliberate refinement) aborts the current cycle on an exception and counts it toward the
+  offline threshold, with two carve-outs: the E03 line-1 block switches permanently to the
+  totals, and a phase-sequence exception is ignored. The "that step fails, other steps go
+  ahead" sentence in *Error handling* is superseded.
+* **The energy cross-check is active-only with a relative tolerance.** The per-counter
+  30 Wh check against both `50946` and `50770/50776` does not hold on this hardware: the
+  probe showed the per-direction per-line reactive sums differ from the system reactive
+  totals by 1.7–1.9 %, and the per-line active sums carry a static ~3 kWh
+  installation-history offset (0.014 %). `energyMatchesTotals()` therefore checks forward
+  and reverse *active* energy against `50946` with `max(30 Wh, 1 % of gross active)`;
+  reactive energy is published from the line blocks without a totals cross-check, and the
+  `50770/50776` kWh registers are not read.
+* **Other probe findings now in the implementation:** the phase-sequence register (`51315`)
+  returns `132` on E23 firmware 3.00 and is treated as unknown; line-block residuals jitter
+  backwards by a few 0.1 Wh counts, so backward steps within 10 Wh are noise and published
+  counters stay on the high-water value; the E03 answers the line-block reads with Modbus
+  exception 2 (no per-line energy) and returns `0xFFFFFFFF` for the `50950` apparent-energy
+  slot.
+
+Evidence: [probe and hardware-verification report](../integrations/socomec-countis-probe-2026-10-29.md).
+Operator documentation: [SUPLA driver setup](../integrations/socomec-countis-supla.md).

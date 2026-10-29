@@ -17,7 +17,10 @@
 
 name: supla-device-socomec
 log_level: info
-state_files_path: "./var/supla-device-socomec"
+# Matches StateDirectory=supla-device in the example systemd unit. For a
+# foreground/development run from this directory, "./var/supla-device-socomec"
+# works too.
+state_files_path: "/var/lib/supla-device"
 
 supla:
   server: svr1.supla.org

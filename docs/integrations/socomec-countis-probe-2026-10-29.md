@@ -93,7 +93,7 @@ Each word row is: `Ea+ (2)`, `rEa+ (1)`, `Ea− (2)`, `rEa− (1)`, `Er+ (2)`, `
 | --- | --- | --- | --- | --- | --- |
 | L1 | `0, 5909, 4269, 0, 0, 0, 0, 176, 6735, 0, 2084, 6893` | 5 909 426.9 Wh | 0 Wh | 176 673.5 Wh | 2 084 689.3 Wh |
 | L2 | `0, 12239, 2756, 0, 0, 0, 0, 274, 3766, 0, 2964, 8611` | 12 239 275.6 Wh | 0 Wh | 274 376.6 Wh | 2 964 861.1 Wh |
-| L3 | `0, 2599, 9099, 0, 0, 0, 30, 0, 55, 6186, 0, 502, 3799` | 2 599 909.9 Wh | 3.0 Wh | 55 618.6 Wh | 502 379.9 Wh |
+| L3 | `0, 2599, 9099, 0, 0, 30, 0, 55, 6186, 0, 502, 3799` | 2 599 909.9 Wh | 3.0 Wh | 55 618.6 Wh | 502 379.9 Wh |
 
 The L3 residual `30` under a zero `Ea−` main is a genuine 3 Wh export residual, not a
 decode error: it is inside the 0…9999 residual range.
@@ -265,7 +265,7 @@ directions. The strict `0 ≤ Δ` guard rejected the counter and then held the
 energy for the full 12-cycle re-anchor window (~1 min), repeating as the jitter
 recurred.
 
-`EnergyGuard` now treats a backward step within `kSlack` (10 Wh, one 0.05 %%
+`EnergyGuard` now treats a backward step within `kSlack` (10 Wh, one 0.05 %
 count of a lifetime counter, and the resolution of the `50946` fine totals) as
 noise; larger backward steps are still rejected. After that change the
 3-minute soak above was clean, and the value cross-check passed.

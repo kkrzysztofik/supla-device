@@ -104,6 +104,10 @@ All `U32` energy registers hold two words. "No resetable" = lifetime counter;
 | 50786 | 0xC662 | 2 | U32 | 1000 | Wh | Partial negative active energy Ea− |
 | 50788 | 0xC664 | 2 | U32 | 1000 | varh | Partial negative reactive energy Er− |
 | 50946 | 0xC702 | 2 | U32 | 10 | Wh | Total Ea+ in the coarser "Unit/100" block (10 Wh LSB, ~42.9 GWh span) |
+| 50948 | 0xC704 | 2 | U32 | 10 | varh | Total Er+ in the same fine block |
+| 50950 | 0xC706 | 2 | U32 | 10 | VAh | Total Eap in the same fine block — **absent (`0xFFFFFFFF`) on the probed E03** |
+| 50952 | 0xC708 | 2 | U32 | 10 | Wh | Total Ea− in the same fine block |
+| 50954 | 0xC70A | 2 | U32 | 10 | varh | Total Er− in the same fine block |
 | 50850 | 0xC6A2 | 2 | U32 | 1000 | Wh | Positive active energy, tariff 1 |
 | 50852 | 0xC6A4 | 2 | U32 | 1000 | Wh | Positive active energy, tariff 2 |
 | 50866 | 0xC6B2 | 2 | U32 | 1000 | varh | Positive reactive energy, tariff 1 |
@@ -118,6 +122,10 @@ All `U32` energy registers hold two words. "No resetable" = lifetime counter;
 | 26401 | 0x6721 | 2 | U32 | 1000 | varh | T1 — Er+ |
 | 26403 | 0x6723 | 2 | U32 | 1000 | varh | T2 — Er+ |
 | 36868 | 0x9004 | 2 | U32 | 1 | Wh | Energy index (plain `Wh`, 1 Wh LSB) — pulse/LED index, not the same object as Ea+ |
+
+The E03 shares the `50946–50955` layout with the E23 (one 10-register read covers all five
+U32 totals); on the probed unit only the `Eap` slot returned `0xFFFFFFFF`. The driver reads
+this block for the E03 because the E03 has no per-line energy blocks.
 
 The tariff count and current tariff position are also exposed at 50848 (U8, "1 ≥ tariff
 number ≤ 2") and 50849 (U8, tariff in progress). Tariff can be forced by writing
@@ -291,9 +299,13 @@ settings block and accept `WRITE` / `WRITE_MANY`.
 
 Each line has a 66-register `Info` block (lock level `NONE`, `READ` only). Line #1 at
 `19840` / `0x4D80` is transcribed from the E23 communication table (V103.18); Line #2
-(`0x5580`) and Line #3 (`0x5D80`) are **assumed** to share the layout at +0x800 /
-+0x1000 — not yet verified on hardware. Whether the E03 exposes a Line #1 block is
-also unverified.
+(`0x5580`) and Line #3 (`0x5D80`) share the layout at +0x800 / +0x1000.
+
+All three blocks were read and decoded on live hardware on 2026-10-29
+([probe report](socomec-countis-probe-2026-10-29.md)): E23 per-line values are
+self-consistent and their active sums track the system totals. The E03 answers all three
+reads with **Modbus exception 2 (illegal data address)** — it has no per-line energy
+block, so the driver uses the `50946` totals for the E03.
 
 | Offset | Dec (L1) | Hex (L1) | W | Type | Unit | Description |
 | --- | --- | --- | --- | --- | --- | --- |

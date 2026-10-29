@@ -52,6 +52,14 @@ no "default" column at all.
 
 Resulting line: **9600 8N1** on both.
 
+This table is the **target configuration** for a future shared-bus setup. The current
+installation keeps each meter alone on its own bus at address **2** (see the
+[commissioning report](socomec-countis-commissioning-report.md)), and the shipped
+[`supla-device-socomec.yaml`](../../extras/examples/linux/supla-device-socomec.yaml) uses
+`modbus_address: 2` for both channels accordingly. If you do change the E03 to address 1,
+update both channels' `device.modbus_address` in the YAML as well, otherwise the driver
+polls the wrong address and the E03 stays offline.
+
 ### 1.3 What each model can actually be set to
 
 | Setting | E03 (4850 3039) | E23 (4850 3050) |
@@ -62,9 +70,11 @@ Resulting line: **9600 8N1** on both.
 | Stop bits | **not configurable** — no screen, no register | 1 or 2 |
 | Data bits | 8 | 8 |
 
-Consequence for the Pi: against an **E03 you only need 5 baud rates × 3 parities ×
-247 addresses with 1 stop bit**. Sweeping 2 stop bits against an E03 can never be
-right — it has no stop-bit setting at all.
+Consequence for the Pi: against an **E03 you only need 6 baud rates × 3 parities ×
+247 addresses with 1 stop bit**. Include **1200**: the front panel does not offer it, but
+the Modbus table defines code `0` = 1200 and accepts writes to the settings block, so a
+unit can be at 1200. Sweeping 2 stop bits against an E03 can never be right — it has no
+stop-bit setting at all.
 
 ---
 
@@ -422,7 +432,8 @@ COUNTIS E23 4850 3050              COUNTIS E03 4850 3039
                                       SAVE screen to exit
 
 Both: 120 ohm at both ends, LIYCY(-CY), <=32 nodes, <=1200 m,
-      no 0V terminal, no bias resistors, shield to the NC pin only.
+      no 0V terminal, no documented bias resistors, shield to the NC pin only.
+      (Bias and shield behaviour is [UNVERIFIED] -- see the section above.)
 Modbus store action: 57856 (0xE200) = 0xA1
 ```
 
