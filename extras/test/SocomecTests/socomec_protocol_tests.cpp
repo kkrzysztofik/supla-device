@@ -406,3 +406,23 @@ TEST(SocomecEnergyGuardTests, DefaultMaxPowerWatts) {
   EXPECT_EQ(Supla::Socomec::defaultMaxPowerW(Model::E23), 82800u);
   EXPECT_EQ(Supla::Socomec::defaultMaxPowerW(Model::E03), 40000u);
 }
+
+TEST(SocomecEnergyGuardTests, ReanchorsUnderSustainedFastLoadAboveCeiling) {
+  // A phase loaded above the configured per-phase ceiling is either a real
+  // load or a stale baseline, but it must not freeze energy publication
+  // forever: after a full re-anchor run the new level becomes the baseline.
+  EnergyGuard g;
+  g.setMaxPowerW(8300);  // 8.3 kW per-phase share
+  ASSERT_TRUE(g.accept(1 * kWh, 0));
+  uint32_t now = 0;
+  uint64_t value = 1 * kWh;
+  for (int i = 1; i < EnergyGuard::kReanchorCycles; i++) {
+    now += 5000;
+    value += 2360;  // 17 kW sustained -> 23.6 Wh per 5 s poll
+    EXPECT_FALSE(g.accept(value, now)) << i;
+  }
+  now += 5000;
+  value += 2360;
+  EXPECT_TRUE(g.accept(value, now));
+  EXPECT_GE(g.value(), value - 2360);
+}

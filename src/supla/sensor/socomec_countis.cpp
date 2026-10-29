@@ -205,18 +205,16 @@ bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
     candidateCount = 0;
     return true;
   }
-  // Out of range: only a value that keeps growing plausibly on its own for
-  // kReanchorCycles in a row replaces the baseline (meter swap/reset). The same
-  // LSB jitter tolerated above must not break the run: on a low-load phase the
-  // counter grows by less than the jitter amplitude per poll, so a strict
-  // `value >= candidate` test could never reach kReanchorCycles and energy
-  // publication would stay stopped until a restart.
+  // Out of range: only a value that keeps moving on its own for
+  // kReanchorCycles in a row replaces the baseline (meter swap/reset or a
+  // sustained load above the configured ceiling). The run therefore only
+  // requires jitter-tolerant monotonic progress: a rate bound here would never
+  // be satisfied by exactly the loads that exceed the ceiling, and energy
+  // publication would stay frozen until a restart. The cycle has already been
+  // cross-checked against the meter totals before the guard runs.
   bool sameCandidate = false;
   if (candidateCount > 0) {
-    const uint64_t drift =
-        value >= candidate ? value - candidate : candidate - value;
-    sameCandidate =
-        drift <= maxDelta(nowMs - candidateMs) && value + kSlack >= candidate;
+    sameCandidate = value + kSlack >= candidate;
   }
   candidateCount = sameCandidate ? candidateCount + 1 : 1;
   if (!sameCandidate || value > candidate) {
