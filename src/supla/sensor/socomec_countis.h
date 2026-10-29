@@ -157,6 +157,7 @@ class SocomecCountis : public ElectricityMeter {
   static constexpr uint8_t kOfflineAfterFailedCycles = 3;
   static constexpr uint32_t kLogIntervalMs = 60000;
 
+  void setMaxPowerW(uint32_t watts);
   void pollBus(uint32_t now);
   void startRequest(uint32_t now);
   void onReply(uint32_t now);

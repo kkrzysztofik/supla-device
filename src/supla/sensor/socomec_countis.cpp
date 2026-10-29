@@ -206,28 +206,43 @@ bool EnergyGuard::accept(uint64_t value, uint32_t nowMs) {
     return true;
   }
   // Out of range: only a value that keeps growing plausibly on its own for
-  // kReanchorCycles in a row replaces the baseline (meter swap/reset).
-  const bool sameCandidate =
-      candidateCount > 0 && value >= candidate &&
-      value - candidate <= maxDelta(nowMs - candidateMs);
+  // kReanchorCycles in a row replaces the baseline (meter swap/reset). The same
+  // LSB jitter tolerated above must not break the run: on a low-load phase the
+  // counter grows by less than the jitter amplitude per poll, so a strict
+  // `value >= candidate` test could never reach kReanchorCycles and energy
+  // publication would stay stopped until a restart.
+  bool sameCandidate = false;
+  if (candidateCount > 0) {
+    const uint64_t drift =
+        value >= candidate ? value - candidate : candidate - value;
+    sameCandidate =
+        drift <= maxDelta(nowMs - candidateMs) && value + kSlack >= candidate;
+  }
   candidateCount = sameCandidate ? candidateCount + 1 : 1;
-  candidate = value;
+  if (!sameCandidate || value > candidate) {
+    candidate = value;  // keep the high-water candidate across jitter
+  }
   candidateMs = nowMs;
   if (candidateCount < kReanchorCycles) {
     return false;
   }
   SUPLA_LOG_WARNING("Socomec: energy counter re-anchored %llu -> %llu",
                     static_cast<unsigned long long>(last),  // NOLINT(runtime/int)
-                    static_cast<unsigned long long>(value));  // NOLINT(runtime/int)
-  last = value;
+                    static_cast<unsigned long long>(candidate));  // NOLINT(runtime/int)
+  last = candidate;
   lastMs = nowMs;
   candidateCount = 0;
   return true;
 }
 
 uint32_t defaultMaxPowerW(Model model) {
-  // Rated current x 230 V x phases x 1.5 margin. Calibration knob:
-  // setMaxPowerKw() / max_power_kw -- set it from the installation's breaker.
+  // Generous ceiling for the energy plausibility filter, from the rated current
+  // at 230 V per phase with a 1.5x margin:
+  //   E23: 3 x 80 A x 230 V x 1.5 = 82 800 W
+  //   E03: 40 000 W ceiling for a single-phase direct meter (a 40 A x 230 V
+  //        x 1.5 fit would be ~13.8 kW, too tight for this installation)
+  // Calibration knob: setMaxPowerKw() / max_power_kw -- set it from the
+  // installation's breaker rating.
   return model == Model::E23 ? 82800 : 40000;
 }
 
@@ -267,15 +282,19 @@ SocomecCountis::SocomecCountis(Socomec::Transport *transport,
                                Socomec::Model model,
                                uint8_t slave)
     : transport(transport), model(model), slave(slave) {
-  setMaxPowerKw(Socomec::defaultMaxPowerW(model) / 1000);
+  setMaxPowerW(Socomec::defaultMaxPowerW(model));
+}
+
+void SocomecCountis::setMaxPowerW(uint32_t watts) {
+  for (auto &kind : guard) {
+    for (auto &g : kind) {
+      g.setMaxPowerW(watts);
+    }
+  }
 }
 
 void SocomecCountis::setMaxPowerKw(uint32_t kw) {
-  for (auto &kind : guard) {
-    for (auto &g : kind) {
-      g.setMaxPowerW(kw * 1000);
-    }
-  }
+  setMaxPowerW(kw * 1000);
 }
 
 int SocomecCountis::phaseCount() const {

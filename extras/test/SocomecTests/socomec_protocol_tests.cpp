@@ -382,3 +382,27 @@ TEST(SocomecEnergyGuardTests, BigBackwardStepIsRejected) {
   EXPECT_FALSE(g.accept(10 * kWh - 2000, 5000));  // 20 Wh, beyond noise
   EXPECT_EQ(g.value(), 10 * kWh);
 }
+
+TEST(SocomecEnergyGuardTests, ReanchorsDespiteLowLoadJitter) {
+  // Meter swapped: the new counter sits near 5 kWh, the load is low, and the
+  // residual jitters backwards within kSlack. The re-anchor run must survive
+  // that, otherwise energy publication would never resume.
+  EnergyGuard g;
+  g.setMaxPowerW(83000);
+  ASSERT_TRUE(g.accept(20744 * kWh, 0));
+  uint32_t now = 0;
+  const uint64_t base = 5 * kWh;
+  for (int i = 1; i < EnergyGuard::kReanchorCycles; i++) {
+    now += 5000;
+    const uint64_t jittered = base + (i % 3 == 0 ? 0 : 40);
+    EXPECT_FALSE(g.accept(jittered, now)) << i;
+  }
+  now += 5000;
+  EXPECT_TRUE(g.accept(base + 40, now));
+  EXPECT_EQ(g.value(), base + 40);
+}
+
+TEST(SocomecEnergyGuardTests, DefaultMaxPowerWatts) {
+  EXPECT_EQ(Supla::Socomec::defaultMaxPowerW(Model::E23), 82800u);
+  EXPECT_EQ(Supla::Socomec::defaultMaxPowerW(Model::E03), 40000u);
+}

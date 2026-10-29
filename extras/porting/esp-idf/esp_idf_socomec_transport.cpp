@@ -26,7 +26,10 @@ EspIdfSocomecTransport::EspIdfSocomecTransport(uart_port_t uart, int txPin,
   ready = uart_param_config(uart, &config) == ESP_OK &&
           uart_set_pin(uart, txPin, rxPin, dePin, UART_PIN_NO_CHANGE) ==
               ESP_OK &&
-          uart_driver_install(uart, 256, 0, 0, nullptr, 0) == ESP_OK &&
+          // RX and TX ring buffers: a zero TX buffer makes uart_write_bytes
+          // wait for FIFO space, which would break the immediate-return
+          // transport contract.
+          uart_driver_install(uart, 256, 256, 0, nullptr, 0) == ESP_OK &&
           uart_set_mode(uart, UART_MODE_RS485_HALF_DUPLEX) == ESP_OK;
   if (!ready) {
     SUPLA_LOG_ERROR("Socomec: UART%d setup failed", uart);
