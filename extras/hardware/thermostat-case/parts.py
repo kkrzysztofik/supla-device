@@ -168,19 +168,24 @@ def lid():
 
     for n in P.MODULES:
         s += notch_posts(n)
+        f = P.MODULES[n][0]
+        zf, zk = P.module_z(n)
         lo, hi, _, _ = P.pilots()["mod_" + n]
         for nx, ny in P.MOD_NOTCHES:
-            s -= zcyl(*P.MODULES[n][0](nx, ny), lo, hi, P.M2_PILOT)
+            x, y = f(nx, ny)
+            s -= zcyl(x, y, zk + P.MOD_POST_LIFT, zf, P.MOD_SCREW_CLEAR)   # shank passes the locator band
+            s -= zcyl(x, y, lo, hi, P.M2_PILOT)
     return s
 
 
 def notch_posts(name):
     """A post at each edge notch: shoulder under the board front, clipped off the glass / switch,
-    and outside the board it rises past the PCB edge (stops short of the back face) to locate it."""
+    and outside the board it rises past the PCB edge (from MOD_POST_LIFT behind its back face) to
+    locate it."""
     f, _ = P.MODULES[name]
     zf, zk = P.module_z(name)
     c = P.MOD_CLR
-    posts = [zcyl(*f(nx, ny), zk + 0.3, P.Z_RIM + 0.01, P.NOTCH_POST_D) for nx, ny in P.MOD_NOTCHES]
+    posts = [zcyl(*f(nx, ny), zk + P.MOD_POST_LIFT, P.Z_RIM + 0.01, P.NOTCH_POST_D) for nx, ny in P.MOD_NOTCHES]
     out = posts[0] + posts[1] + posts[2]
     out -= wbox(*P.rect(f, (-c, P.MOD[0] + c), (-c, P.MOD[1] + c)), (zk - 1, zf))
     (kx0, kx1), (ky0, ky1) = P.MOD_FRONT_KEEPOUT[name]
@@ -291,6 +296,25 @@ def check_part(name, shape):
     return ok
 
 
+def check_screw_paths(lid_shape):
+    """Each M2 shank must reach its pilot through air: no lid material in the locator band.
+
+    The Ø1.6 pilot starts at the board front face. Below it the shank crosses the band where the
+    post locates the PCB edge, so that band needs a MOD_SCREW_CLEAR bore at every notch.
+    """
+    ok = True
+    for n, (f, _) in P.MODULES.items():
+        zf, zk = P.module_z(n)
+        for nx, ny in P.MOD_NOTCHES:
+            x, y = f(nx, ny)
+            v = (zcyl(x, y, zk + P.MOD_POST_LIFT, zf, P.M2_SHANK) & lid_shape).volume
+            if v > 0.01:
+                print(f"FAIL screw {n} at ({nx}, {ny}): {v:.3f} mm3 of lid blocks the shank below the pilot")
+                ok = False
+    print(("ok   " if ok else "FAIL ") + f"module screw paths: {len(P.MODULES) * len(P.MOD_NOTCHES)} notch screws")
+    return ok
+
+
 def check_assembly(parts):
     """Pairwise mesh intersection; flush contact is fine. Envelopes of one board may touch.
 
@@ -346,6 +370,7 @@ def main():
     if a.check:
         ok = all(check_part(n, s) for n, s in shapes.items())
         if a.part == "all":
+            ok &= check_screw_paths(shapes["lid"])
             placed = {k: v for k, v in shapes.items() if k not in ("tab", "washer", "clamp")}
             ok &= check_assembly({**placed, **fixings_placed(), "clampbar": clamp_placed(), **envelopes()})
         print("\nall green" if ok else "\nFAILED")

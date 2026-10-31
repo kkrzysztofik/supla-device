@@ -45,7 +45,8 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
   If the thread feels loose in your filament, lower `M2_PILOT`; if it's too stiff, raise it.
 - 2 × 4 mm countersunk wood screws + wall plugs, box to the wall
 - 1 small zip tie, relay cable to the anchor above its hole
-- 4 Grove cables: 10 cm for the relay, 20 cm for the OLED and the button (they ride on the lid)
+- 4 Grove cables: 10 cm for the relay, 20 cm for the OLED and the button (they ride on the lid), and
+  one cut in half for the probe
 
 ## Assembly
 
@@ -76,6 +77,8 @@ The OLED and button boards were measured with calipers (both are 40.1 × 20 Grov
 values are still estimates. Update them and re-run both checks:
 
 - `BTN_BODY_H`: switch body height under the cap. It sets the lid post and the switch pocket, so the cap stands `BTN_PROUD` (1.4) out of the lid.
+- `BTN_CAP_D`, `BTN_TOP_H`: cap diameter (sets the cap hole) and cap top above the PCB (sets `BTN_PROUD`).
+- `OLED_GLASS_H`: PCB face to glass face, i.e. how deep the glass sits in its lid recess.
 - `OLED_FPC`: where along the top edge the display flex wraps round (x start).
 - `MOD_PLUG_OUT`: how far the right-angle Grove plug and its cable stick out past the board's left edge.
 - `XIAO_USB_PROTRUDE`, `USB_RECEPT`: how far the XIAO's USB-C receptacle sticks out past the shield's
@@ -83,11 +86,13 @@ values are still estimates. Update them and re-run both checks:
   slot, so this sets whether the plug seats fully.
 - `USB_OVERMOLD`: the plug body of your USB-C cable; it nests in a shallow recess outside the slot.
 - `PROBE_CABLE_D`, `RELAY_CABLE_D`, `ANT_BASE_D`: the cable holes and the antenna socket bore.
-- `RELAY_BODY_H`, `GROVE_PLUG_UP`, `GROVE_CONN_H`: these set the box depth (worst case, `IN_D` in `params.py`).
+- `RELAY_BODY_H`, `GROVE_PLUG_UP`, `GROVE_CONN_H`: these set the depth the box needs. `IN_D` is printed
+  at 36 mm, and `check.py` asserts the back and front stacks still fit under it.
 
 ## Sources
 
-Board outlines, holes and part positions were parsed from Seeed's CAD files, not traced from images:
-`Grove_Shield_for_Seeeduino_XIAO_v1.2_KiCad_SCH_PCB.zip`, `Grove-Relay_Eagle_Files.zip` (v1.2 board,
-the v1.3 outline is assumed the same), `Grove-Red_LED_Button.zip` and `OLED 128x64.zip`, all
-linked from wiki.seeedstudio.com. Panel data comes from the LY190-128064 datasheet.
+The shield and relay outlines, holes and part positions were parsed from Seeed's CAD files, not
+traced from images: `Grove_Shield_for_Seeeduino_XIAO_v1.2_KiCad_SCH_PCB.zip` and
+`Grove-Relay_Eagle_Files.zip` (v1.2 board, the v1.3 outline is assumed the same), linked from
+wiki.seeedstudio.com. The OLED and button boards were measured with calipers: the Seeed files
+describe older boards.

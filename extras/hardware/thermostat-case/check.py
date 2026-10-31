@@ -136,15 +136,20 @@ ok(w[0][0] - c >= glass[0][0] and w[0][1] + c <= glass[0][1] and w[1][0] - c >= 
    f"window {fmt(w)} + chamfer inside the glass")
 bh = P.BTN_C[1] + P.BTN_HOLE / 2 + c
 ok(w[1][0] - c - bh >= P.WALL_MIN, f"lid between window and button hole {w[1][0] - c - bh:.1f}")
-ok(P.OLED_POST >= P.OLED_GLASS_H + 0.1, "glass not pressed by the lid")
-ok(P.BTN_POST + P.BTN_POCKET >= P.BTN_BODY_H + 0.2, f"switch body {P.BTN_BODY_H} fits post {P.BTN_POST:.1f} + pocket {P.BTN_POCKET:.1f}")
+ok(P.OLED_POST >= P.OLED_GLASS_H + P.GLASS_GAP, f"glass gap {P.OLED_POST - P.OLED_GLASS_H:.1f} >= {P.GLASS_GAP}")
+ok(P.BTN_POST + P.BTN_POCKET >= P.BTN_BODY_H + 0.3, f"switch body {P.BTN_BODY_H} fits post {P.BTN_POST:.1f} + pocket {P.BTN_POCKET:.1f}")
 ok(P.LID_T - P.BTN_POCKET >= 0.8, f"lid skin over the switch pocket {P.LID_T - P.BTN_POCKET:.1f}")
 ok(P.BTN_PROUD >= P.BTN_TRAVEL + 0.3, f"cap {P.BTN_PROUD:.1f} proud, travel {P.BTN_TRAVEL}")
 ok(P.BTN_HOLE + 2 * P.WALL_MIN <= P.BTN_SW + 2 * P.MOD_CLR, "pocket ledge around the cap hole")
 
 # Notch mounts: washer covers the notch, posts in the cavity, shoulders bear on bare PCB.
-ok(P.WASHER_D - P.NOTCH_D >= 2.0, f"washer {P.WASHER_D} laps the {P.NOTCH_D} notch by {(P.WASHER_D - P.NOTCH_D) / 2:.2f}")
-ok(P.TAB_HOLE < 3.5, "M2 head can't pull through the washer")
+ok(P.WASHER_D - P.NOTCH_D >= 2 * P.WALL_MIN, f"washer {P.WASHER_D} laps the {P.NOTCH_D} notch by {(P.WASHER_D - P.NOTCH_D) / 2:.2f}")
+ok(P.TAB_HOLE < P.M2_HEAD_D, "M2 head cannot pull through the washer")
+ok(P.M2_HEAD_D < P.WASHER_D, f"M2 head {P.M2_HEAD_D} lands on the {P.WASHER_D} washer")
+# The shank crosses the locator band below the pilot, so that band needs a bore wider than it.
+ok(P.MOD_SCREW_CLEAR >= P.M2_SHANK + P.HOLE_COMP, f"screw bore {P.MOD_SCREW_CLEAR} clears the {P.M2_SHANK} shank")
+ok(P.MOD_POST_LIFT > 0 and P.MOD_PCB_T - P.MOD_POST_LIFT >= 2 * P.CLR,
+   f"locator band {P.MOD_PCB_T - P.MOD_POST_LIFT:.1f} tall, {P.MOD_POST_LIFT} behind the PCB back")
 r = P.NOTCH_POST_D / 2
 posts = {n: [f(*nt) for nt in P.MOD_NOTCHES] for n, (f, _) in P.MODULES.items()}
 for n in P.MODULES:
@@ -154,7 +159,8 @@ for n in P.MODULES:
         ok(g >= 0.3, f"{n} washer at ({nx}, {ny}) clears the Grove socket by {g:.2f}")
         # shoulder: annulus notch..post, on the board, off the keepout (+CLR); 0.05 grid
         k = 0.05
-        area = sum(k * k for i in range(-80, 81) for j in range(-80, 81)
+        span = math.ceil(r / k) + 1
+        area = sum(k * k for i in range(-span, span + 1) for j in range(-span, span + 1)
                    if P.NOTCH_D / 2 <= math.hypot(i * k, j * k) <= r
                    and 0 <= nx + i * k <= P.MOD[0] and 0 <= ny + j * k <= P.MOD[1]
                    and not (kx0 - P.CLR <= nx + i * k <= kx1 + P.CLR and ky0 - P.CLR <= ny + j * k <= ky1 + P.CLR))

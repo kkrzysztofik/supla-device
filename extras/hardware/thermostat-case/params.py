@@ -21,6 +21,9 @@ CLR = 0.3               # per side, board in a pocket
 BED = (220, 220, 250)   # assumption: Prusa MK-class bed
 TAB_POST_D = 5.0        # posts for the M2x6 locking-tab screws
 M2_PILOT = 1.6          # M2 machine screw threading into plastic, no HOLE_COMP. Calibration knob.
+M2_SHANK = 2.0          # M2 machine screw shank; pan head is M2_HEAD_D x M2_HEAD_T
+M2_HEAD_D = 3.8
+M2_HEAD_T = 1.6
 M3_CLEAR = 3.4 + HOLE_COMP
 M3_CSK_D = 6.5          # countersunk head
 WOOD_SCREW = 4.0        # wall screws, countersunk from inside
@@ -61,21 +64,21 @@ RELAY_GROVE = ((-18.7, -12.3), (-5.0, 5.0))  # vertical DIP socket
 # Calipers, 2026-10-30. Board frame seen from outside the lid (glass / cap towards you):
 # bx 0..40.1 right, by 0..20 up, Grove socket on the back at the left edge. Front faces out: no mirror.
 MOD = (40.1, 20.0)
-MOD_PCB_T = 1.5
+MOD_PCB_T = 1.5         # calipered; GROVE_PCB_T (1.6) is the Seeed default for the other Grove boards
 NOTCH_D = 4.5           # open half-holes centred on the board edge (Grove standard)
 MOD_NOTCHES = [(10.0, 0.0), (10.0, MOD[1]), (MOD[0], MOD[1] / 2)]
 MOD_GROVE = ((0.0, 9.0), (4.0, 16.0))   # socket on the back, 9 x 12 centred on the left edge
 MOD_PLUG_OUT = 8.0      # right-angle plug + cable bend past the left edge. MEASURE
 
 OLED_GLASS = ((11.6, 38.6), (0.0, 20.0))  # front; the left notches end where the glass starts
-OLED_GLASS_H = 1.8      # PCB face -> glass face incl. tape
+OLED_GLASS_H = 1.8      # PCB face -> glass face incl. tape. MEASURE
 OLED_FPC = ((18.0, 30.1), (MOD[1], MOD[1] + 3.0))  # wraps the top edge, 3 past it, ends 10 from the right. x0 MEASURE
 
 BTN_SW = 12.0           # switch body, centred on the board (its side notches don't matter here)
 BTN_BODY_H = 4.3        # switch body height above the PCB, 12x12 tact. MEASURE
-BTN_CAP_D = 7.0
-BTN_TOP_H = 7.0         # PCB face -> cap top
-BTN_TRAVEL = 1.0
+BTN_CAP_D = 7.0         # MEASURE: it sets the cap hole (BTN_HOLE below)
+BTN_TOP_H = 7.0         # PCB face -> cap top. MEASURE: it sets BTN_PROUD
+BTN_TRAVEL = 1.0        # MEASURE
 
 GROVE_CONN_H = 6.0      # right-angle socket + plug height above the PCB. MEASURE
 GROVE_PLUG_UP = 15.0    # vertical socket + plug + cable bend above the PCB. MEASURE
@@ -147,6 +150,9 @@ POST_D = 4.5            # standoffs under the relay holes
 # Lid module mounts: a post at each edge notch. Under the board it is a shoulder (clipped off the
 # glass); outside the board it rises past the PCB edge and locates it. M2x6 + printed washer from inside.
 MOD_CLR = float(os.environ.get("MOD_CLR", "0.3"))   # board edge to locating post, per side. Calibration knob.
+MOD_POST_LIFT = 0.3     # the locator starts this far behind the PCB back face, so the washer can pull the
+                        # board onto the shoulder; the shank passes that band through a clearance bore
+MOD_SCREW_CLEAR = 2.4   # bore for the M2 shank through the locator band (the Ø1.6 pilot starts above it)
 NOTCH_POST_D = 7.0
 WASHER_D = 7.0          # the Ø4.5 notch swallows an M2 head (Ø3.8)
 WASHER_T = 1.5
@@ -163,7 +169,7 @@ BACK_STACK = max(
     LEDGE_H + SH_PCB_T + max(HDR_H + XIAO_PCB_T + USB_H, GROVE_PLUG_UP),
     LEDGE_H + GROVE_PCB_T + max(RELAY_BODY_H, GROVE_PLUG_UP),
 )
-FRONT_STACK = max(OLED_POST, BTN_POST) + MOD_PCB_T + max(GROVE_CONN_H, WASHER_T + 1.6)   # 1.6: M2 head
+FRONT_STACK = max(OLED_POST, BTN_POST) + MOD_PCB_T + max(GROVE_CONN_H, WASHER_T + M2_HEAD_T)
 STACK_GAP = 2.0
 IN_D = 36               # kept from the printed base (the new lid stack is 3 mm thinner); check.py asserts it fits
 Z_RIM = BACK_T + IN_D
