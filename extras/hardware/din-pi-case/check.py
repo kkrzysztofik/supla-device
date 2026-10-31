@@ -23,15 +23,18 @@ def dist(a, b):
 def wall_to_window(p, hole_d):
     """Thinnest wall between a hole edge and the window edge, in the board frame.
 
-    Signed distance to the active area (positive outside, negative inside, so a
-    hole moved into the window can never pass WALL_MIN). The 45 deg chamfer
-    widens the window by WINDOW_CHAMFER on the outside face, which is the face
-    the plate prints against the bed, so it eats into the wall there.
+    Signed distance to the window cut (positive outside, negative inside, so a
+    hole moved into the window can never pass WALL_MIN). The window is the active
+    area grown by WINDOW_MARGIN, and by WINDOW_CHAMFER again on the outside face,
+    which is the face the plate prints against the bed. The margin has to grow
+    the rectangle before the distance is taken, not be subtracted after: away
+    from the axes a corner is closer than the straight edges.
     """
-    dx = max(P.ACTIVE_B[0][0] - p[0], p[0] - P.ACTIVE_B[0][1])
-    dy = max(P.ACTIVE_B[1][0] - p[1], p[1] - P.ACTIVE_B[1][1])
+    m = P.WINDOW_MARGIN + P.WINDOW_CHAMFER
+    dx = max(P.ACTIVE_B[0][0] - m - p[0], p[0] - (P.ACTIVE_B[0][1] + m))
+    dy = max(P.ACTIVE_B[1][0] - m - p[1], p[1] - (P.ACTIVE_B[1][1] + m))
     gap = math.hypot(max(dx, 0.0), max(dy, 0.0)) + min(max(dx, dy), 0.0)
-    return gap - P.WINDOW_MARGIN - P.WINDOW_CHAMFER - hole_d / 2
+    return gap - hole_d / 2
 
 
 # Board -> world is a rotation, not a mirror (else the LED lands on the wrong end).
