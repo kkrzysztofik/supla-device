@@ -30,7 +30,11 @@ A ready-to-run SUPLA device implementation for desktop environments, useful for 
 
 - Start here: [Quickstart: sd4linux](quickstart/sd4linux.md)
 - SMA inverters: [Integration plan](integrations/yasdi-supla-device-plan.md) (includes native `SmaInverter` extension), [YASDI architecture](integrations/yasdi-architecture.md), [SMA module README](../extras/porting/linux/sma/README.md), [refactor baseline](integrations/sma-refactor-baseline.md)
+<<<<<<< HEAD
+- Socomec COUNTIS meters (RS-485/Modbus): [commissioning report](integrations/socomec-countis-commissioning-report.md), [register reference](integrations/socomec-countis-modbus.md), [front-panel configuration guide](integrations/socomec-countis-config.md), [SUPLA driver design](plans/2026-10-29-socomec-countis-design.md), [SUPLA driver setup](integrations/socomec-countis-supla.md)
+=======
 - Pimoroni Display HAT Mini (Raspberry Pi LCD dashboard, buttons, RGB LED): [Integration guide](integrations/display-hat-mini.md)
+>>>>>>> origin/main
 
 ---
 

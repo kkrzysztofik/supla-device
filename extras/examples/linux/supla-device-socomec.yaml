@@ -1,0 +1,59 @@
+# Example sd4linux config for two Socomec COUNTIS meters (COUNTIS E03 + E23),
+# one meter per RS-485 bus, both at Modbus address 2.
+#
+# Build the binary with:  ./build-socomec.sh
+# The generic unit extras/examples/linux/supla-device-linux.service reads
+# /etc/supla-device.yaml, so:
+#   sudo install -m 0755 ../../../build-linux-socomec/supla-device-linux \
+#       /usr/local/bin/
+#   sudo install -m 0644 supla-device-socomec.yaml /etc/supla-device.yaml
+#   sudo cp supla-device-linux.service /etc/systemd/system/supla-device.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now supla-device
+#   journalctl -u supla-device -f
+# Keep state_files_path aligned with the unit's StateDirectory (/var/lib/supla-device).
+#
+# Set supla.server and supla.mail before the first run. GUID and AuthKey are
+# generated on first start under state_files_path/guid_auth.yaml.
+
+name: supla-device-socomec
+log_level: info
+# Matches StateDirectory=supla-device in the example systemd unit. For a
+# foreground/development run from this directory, "./var/supla-device-socomec"
+# works too.
+state_files_path: "/var/lib/supla-device"
+
+supla:
+  server: svr1.supla.org
+  mail: user@example.com
+
+channels:
+  # COUNTIS E03: single-phase, phase 1 only. Has no per-line energy block, so
+  # the driver publishes the meter's lifetime totals as phase 1.
+  - type: SocomecCountis
+    caption: Countis E03
+    serial:
+      # Use the stable by-id path, not ttyUSB*: enumeration order is not
+      # guaranteed across re-plugs.
+      device: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG03FMMW-if00-port0
+      baud: 9600
+    device:
+      model: e03            # required: e03 | e23
+      modbus_address: 2     # required, 1-247
+    poll_interval_sec: 5
+    # Installation-wide ceiling from the breaker rating; each phase guard gets
+    # its share (default for the E03 is 40 kW).
+    # max_power_kw: 25
+
+  # COUNTIS E23: three-phase, per-phase energy from the line blocks.
+  - type: SocomecCountis
+    caption: Countis E23
+    serial:
+      device: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG041JVI-if00-port0
+      baud: 9600
+    device:
+      model: e23
+      modbus_address: 2
+    poll_interval_sec: 5
+    # Installation-wide default for the E23 is 82.8 kW (3 x 80 A x 230 V x 1.5),
+    # i.e. 27.6 kW per phase after the driver divides by the phase count.
+    # max_power_kw: 25
