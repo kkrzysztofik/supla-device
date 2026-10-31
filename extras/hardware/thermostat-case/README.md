@@ -27,7 +27,8 @@ About 76 × 69 × 41 mm closed, plus a 10 mm antenna socket on top.
 |---|---|
 | `out/thermostat_base.stl` | back on the bed, as exported |
 | `out/thermostat_lid.stl` | face on the bed, as exported |
-| `out/thermostat_tab_x5.stl` | print 5, flat (2 lid modules, 3 shield) |
+| `out/thermostat_tab_x3.stl` | print 3, flat (shield) |
+| `out/thermostat_washer_x6.stl` | print 6, flat (OLED and button notches) |
 | `out/thermostat_clamp.stl` | probe cable clamp bar, groove up |
 
 Holes through the walls are teardrops, so they print without supports. PLA or PETG both work.
@@ -38,8 +39,9 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
 
 - 4 × M3 heat-set inserts (M3 × 5.7, OD ~4.6, e.g. Ruthex) pressed into the corner columns (Ø4.0 holes)
 - 4 × M3×8 countersunk machine screws (DIN 7991), lid into the inserts
-- 10 × M2×6 machine screws: 3 for the relay (into its standoffs), 5 for the locking tabs (OLED,
-  button, 3 on the shield), 2 for the probe cable clamp. They thread straight into Ø1.6 plastic holes.
+- 14 × M2×6 machine screws: 3 for the relay (into its standoffs), 3 for the shield tabs, 6 for the
+  OLED and button (through their edge notches, with printed washers), 2 for the probe cable clamp.
+  They thread straight into Ø1.6 plastic holes.
   If the thread feels loose in your filament, lower `M2_PILOT`; if it's too stiff, raise it.
 - 2 × 4 mm countersunk wood screws + wall plugs, box to the wall
 - 1 small zip tie, relay cable to the anchor above its hole
@@ -54,10 +56,11 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
    M2×6. Then plug in the USB-C from below.
 4. **Relay:** three M2×6 through its holes into the standoffs. Two of the holes are edge notches;
    the screw head still clamps them.
-5. **Button, OLED** mount the same way, in a channel with side rails along their long edges: tilt the board, slide its Grove-connector end
-   under the two lips, lower the other end onto its supports, put a tab on the post so it overlaps
-   the board edge, and screw it down with an M2×6. The post stops the board sliding out of the lips
-   even before the tab goes on.
+5. **Button, OLED** mount the same way: drop the board face-down between the three notch posts
+   (the posts' outer halves locate its edges), put a printed washer over each Ø4.5 edge notch and
+   screw it down with an M2×6. The washer matters: the notch is bigger than the screw head.
+   If the board won't drop in or rattles, set `MOD_CLR` (default 0.3 per side), e.g.
+   `MOD_CLR=0.4 uv run parts.py --part lid`, and reprint the lid.
 6. **Probe cable:** pass it through its hole, lay it in the saddle groove behind the wall, put the
    clamp bar on (groove down) and tighten both M2×6 until the bar stops ~0.4 mm off the saddle.
    A pull on the probe now ends at the clamp, not at the solder joint. If the cable still slips,
@@ -69,10 +72,12 @@ DS18B20: cut one end off a Grove cable and join it to the probe's bare wires
 
 ## Measure before printing
 
-These values in `params.py` aren't in any Seeed file, so they are estimates. Update them and re-run both checks:
+The OLED and button boards were measured with calipers (both are 40.1 × 20 Grove 1x2 boards). These
+values are still estimates. Update them and re-run both checks:
 
-- `BTN_SW_H`, `BTN_CAP_D`: button cap height above the PCB and its diameter. Together these set the lid post length and the cap hole.
-- `OLED_PANEL_H`, `OLED_AA_TOP`: glass height above the PCB, and the gap from the glass top edge to the lit area. These set the pad height and where the window sits.
+- `BTN_BODY_H`: switch body height under the cap. It sets the lid post and the switch pocket, so the cap stands `BTN_PROUD` (1.4) out of the lid.
+- `OLED_FPC`: where along the top edge the display flex wraps round (x start).
+- `MOD_PLUG_OUT`: how far the right-angle Grove plug and its cable stick out past the board's left edge.
 - `XIAO_USB_PROTRUDE`, `USB_RECEPT`: how far the XIAO's USB-C receptacle sticks out past the shield's
   edge, and its size. The receptacle sits in a pocket right behind a 0.8 mm bezel with a shell-shaped
   slot, so this sets whether the plug seats fully.

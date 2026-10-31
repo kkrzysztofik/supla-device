@@ -32,7 +32,7 @@ def build():
     import parts
     importlib.reload(params)
     importlib.reload(parts)
-    shapes = {"base": parts.base(), "lid": parts.lid(), **parts.tabs_placed(), "tab_clamp": parts.clamp_placed(), **parts.envelopes()}
+    shapes = {"base": parts.base(), "lid": parts.lid(), **parts.fixings_placed(), "tab_clamp": parts.clamp_placed(), **parts.envelopes()}
     tmp = tempfile.mkdtemp()
     scene = trimesh.Scene()
     for n, s in shapes.items():
@@ -107,7 +107,7 @@ new GLTFLoader().parse(bin,'',g=>{
   const sz=box.getSize(new THREE.Vector3()).length();ctl.target.copy(c);cam.position.set(c.x+sz*.9,c.y+sz*.6,c.z+sz*1.5);ctl.update();
   const nm=o=>(o.name||o.parent?.name||'');
   const lid=ms.filter(o=>nm(o).startsWith('lid')),base=ms.filter(o=>nm(o).startsWith('base'));
-  const brd=ms.filter(o=>!lid.includes(o)&&!base.includes(o)),front=brd.filter(o=>/^(oled|button|tab_oled|tab_button)/.test(nm(o)));
+  const brd=ms.filter(o=>!lid.includes(o)&&!base.includes(o)),front=brd.filter(o=>/^(oled|button|washer)/.test(nm(o)));
   const $=id=>document.getElementById(id);
   const upd=()=>{const e=+$('ex').value;[...lid,...front].forEach(o=>o.position.z=e);
     lid.forEach(o=>{o.visible=$('lid').checked;o.material.opacity=$('op').value/100;o.material.depthWrite=$('op').value>99});

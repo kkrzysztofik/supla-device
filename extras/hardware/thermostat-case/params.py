@@ -8,10 +8,10 @@ Cavity = x 0..IN_W, y 0..IN_H, z BACK_T..Z_RIM.
 Board data come from Seeed's own CAD files (downloaded 2026-10-20, parsed, not traced from images):
   shield  Grove_Shield_for_Seeeduino_XIAO_v1.2_KiCad_SCH_PCB.zip  (KiCad, origin top-left, Y down)
   relay   Grove-Relay_Eagle_Files.zip  "Grove - Relay v1.2.brd"   (Eagle, origin board centre, Y up)
-  button  Grove-Red_LED_Button.zip     (the yellow one shares the board)
-  oled    OLED 128x64.zip + LY190-128064.pdf (panel 26.7x19.26, active 21.74x11.175)
+  oled, button: measured with calipers (the Seeed files describe older boards)
 MEASURE = not in any file; check with calipers, update, re-run both checks.
 """
+import os
 
 # --- Process: home FDM, PLA/PETG, 0.4 nozzle ------------------------------
 WALL_MIN = 1.2          # 3 perimeters at 0.4
@@ -56,30 +56,25 @@ RELAY_BODY = ((-3.4, 18.2), (-8.6, 8.7))   # HLS8L outline from the footprint
 RELAY_BODY_H = 15.6     # MEASURE
 RELAY_GROVE = ((-18.7, -12.3), (-5.0, 5.0))  # vertical DIP socket
 
-BTN_X = (-19.57, 20.64)
-BTN_Y = (-10.30, 10.20)
-BTN_HOLES = [(-10.64, -10.0), (-10.63, 10.0), (19.36, 0.0)]
-BTN_SW = 12.0           # 12x12 switch on the back (B) side, centred (0, 0)
-BTN_SW_H = 10.0         # PCB face -> cap top ("12X12X10" footprint). MEASURE
-BTN_CAP_D = 11.0        # MEASURE
-BTN_CAP_H = 4.0         # part of BTN_SW_H that is the round cap. MEASURE
-BTN_TRAVEL = 0.5        # MEASURE
-BTN_GROVE = ((-20.0, -10.8), (-6.1, 6.1))   # right-angle socket on the front (T) side
+# Lid modules: Grove OLED 0.96" and Grove LED Button share one 40.1 x 20 Grove 1x2 board.
+# Calipers, 2026-10-30. Board frame seen from outside the lid (glass / cap towards you):
+# bx 0..40.1 right, by 0..20 up, Grove socket on the back at the left edge. Front faces out: no mirror.
+MOD = (40.1, 20.0)
+MOD_PCB_T = 1.5
+NOTCH_D = 4.5           # open half-holes centred on the board edge (Grove standard)
+MOD_NOTCHES = [(10.0, 0.0), (10.0, MOD[1]), (MOD[0], MOD[1] / 2)]
+MOD_GROVE = ((0.0, 9.0), (4.0, 16.0))   # socket on the back, 9 x 12 centred on the left edge
+MOD_PLUG_OUT = 8.0      # right-angle plug + cable bend past the left edge. MEASURE
 
-OLED_X = (-20.0, 22.1)
-OLED_Y = (-12.1, 12.1)
-OLED_HOLES = [(-12.1, 10.0), (-12.1, -10.0), (17.9, 0.0)]   # full holes, but the first two
-# sit ~1.1 from the glass corners: no post fits. Held like the others: lips + tab.
-OLED_PAD_A = (16.0, 22.1)   # glass-free end strip, under the tab
-OLED_PAD_B = (-20.0, -11.6) # glass-free end strip under the lips
-OLED_LIP_Y = 7.0            # lips at |y| >= this, clear of the Grove socket (|y| <= 6.1)
-LIP = 1.0                   # overhang onto the T side
-LIP_T = 1.2
-OLED_PANEL = ((-11.0, 15.7), (-9.14, 9.735))  # glass on the B side, FPC bends at the low-Y edge
-OLED_PANEL_H = 1.5      # PCB face -> glass face incl. tape. MEASURE
-OLED_AA = (21.74, 11.175)
-OLED_AA_TOP = 2.5       # glass top edge (high Y, away from FPC) -> active area. MEASURE
-OLED_GROVE = ((-21.5, -10.8), (-6.1, 6.1))  # right-angle socket on the T side
+OLED_GLASS = ((11.6, 38.6), (0.0, 20.0))  # front; the left notches end where the glass starts
+OLED_GLASS_H = 1.8      # PCB face -> glass face incl. tape
+OLED_FPC = ((18.0, 30.1), (MOD[1], MOD[1] + 3.0))  # wraps the top edge, 3 past it, ends 10 from the right. x0 MEASURE
+
+BTN_SW = 12.0           # switch body, centred on the board (its side notches don't matter here)
+BTN_BODY_H = 4.3        # switch body height above the PCB, 12x12 tact. MEASURE
+BTN_CAP_D = 7.0
+BTN_TOP_H = 7.0         # PCB face -> cap top
+BTN_TRAVEL = 1.0
 
 GROVE_CONN_H = 6.0      # right-angle socket + plug height above the PCB. MEASURE
 GROVE_PLUG_UP = 15.0    # vertical socket + plug + cable bend above the PCB. MEASURE
@@ -104,10 +99,11 @@ IN_W = RL_X0 + (RELAY_Y[1] - RELAY_Y[0]) + 7.0
 IN_H = max(RL_TOP + 2.0, SH_Y0 + SH[0] + 2 * CLR + TAB_POST_D + 0.5)  # room for the shield's end tab post
 WALL_SCREWS = [(SH_X0 + SH[1] + GAP_SCREW / 2, y) for y in (28.0, 54.0)]
 
-# Front modules on the lid, seen from outside: B side faces out, so x mirrors.
+# Lid modules: world position of each board's bx = by = 0 corner. Glass and cap on the centre line.
 WIN_CX = IN_W / 2
-OLED_C = (WIN_CX + (OLED_PANEL[0][0] + OLED_PANEL[0][1]) / 2, IN_H - 3.0 - OLED_Y[1])
-BTN_C = (WIN_CX, 18.0)
+OLED_O = (WIN_CX - sum(OLED_GLASS[0]) / 2, IN_H - 4.0 - MOD[1])   # top: FPC (3) + CLR, posts in the cavity
+BTN_O = (WIN_CX - MOD[0] / 2, 8.0)
+BTN_C = (WIN_CX, BTN_O[1] + MOD[1] / 2)
 
 # Cables through the bottom wall (axis along Y). Teardrops: printed axis-horizontal.
 PROBE_CABLE_D = 4.0     # DS18B20 SEN0002 cable. MEASURE
@@ -140,14 +136,22 @@ ANT_SOCKET_WALL = 2.0
 
 # --- Lid features -----------------------------------------------------------
 GLASS_GAP = 0.3         # glass must not be squeezed. Calibration knob.
-WINDOW_MARGIN = 1.0     # per side; absorbs OLED_AA_TOP error
+WINDOW_MARGIN = 1.0     # outer opening inset from the glass edge, per side; the unlit glass is a black border
 WINDOW_CHAMFER = 1.0
-BTN_PROUD = 1.5         # cap above the lid face
 BTN_HOLE = BTN_CAP_D + 0.6 + HOLE_COMP
-POST_D = 4.5            # supports under the relay and button holes
+POST_D = 4.5            # standoffs under the relay holes
+# Lid module mounts: a post at each edge notch. Under the board it is a shoulder (clipped off the
+# glass); outside the board it rises past the PCB edge and locates it. M2x6 + printed washer from inside.
+MOD_CLR = float(os.environ.get("MOD_CLR", "0.3"))   # board edge to locating post, per side. Calibration knob.
+NOTCH_POST_D = 7.0
+WASHER_D = 7.0          # the Ø4.5 notch swallows an M2 head (Ø3.8)
+WASHER_T = 1.5
+MOD_SCREW = 6.0
+BTN_POCKET = LID_T - 1.0    # switch body sinks into the lid's inner face, 1.0 skin left
 
-OLED_POST = OLED_PANEL_H + GLASS_GAP
-BTN_POST = BTN_SW_H - LID_T - BTN_PROUD
+OLED_POST = OLED_GLASS_H + GLASS_GAP
+BTN_POST = BTN_BODY_H + 0.3 - BTN_POCKET
+BTN_PROUD = BTN_TOP_H - BTN_POST - LID_T    # cap above the lid face
 
 # --- Depth: worst case, any back stack under any front stack ---------------
 # ponytail: assumes everything overlaps in plan; per-overlap stacking saves ~5 mm if it matters.
@@ -155,9 +159,9 @@ BACK_STACK = max(
     LEDGE_H + SH_PCB_T + max(HDR_H + XIAO_PCB_T + USB_H, GROVE_PLUG_UP),
     LEDGE_H + GROVE_PCB_T + max(RELAY_BODY_H, GROVE_PLUG_UP),
 )
-FRONT_STACK = max(OLED_POST, BTN_POST) + GROVE_PCB_T + GROVE_CONN_H
+FRONT_STACK = max(OLED_POST, BTN_POST) + MOD_PCB_T + max(GROVE_CONN_H, WASHER_T + 1.6)   # 1.6: M2 head
 STACK_GAP = 2.0
-IN_D = round(BACK_STACK + FRONT_STACK + STACK_GAP + 0.49)
+IN_D = 36               # kept from the printed base (the new lid stack is 3 mm thinner); check.py asserts it fits
 Z_RIM = BACK_T + IN_D
 
 
@@ -171,11 +175,11 @@ def relay_xy(x, y):
 
 
 def oled_xy(x, y):
-    return OLED_C[0] - x, OLED_C[1] + y
+    return OLED_O[0] + x, OLED_O[1] + y
 
 
 def btn_xy(x, y):
-    return BTN_C[0] - x, BTN_C[1] + y
+    return BTN_O[0] + x, BTN_O[1] + y
 
 
 def rect(f, xs, ys):
@@ -185,11 +189,10 @@ def rect(f, xs, ys):
 
 
 def oled_window():
-    """Active area + margin, world ((x0, x1), (y0, y1)). AA centred across the glass."""
-    top = OLED_PANEL[1][1] - OLED_AA_TOP
-    cx = (OLED_PANEL[0][0] + OLED_PANEL[0][1]) / 2
-    m = WINDOW_MARGIN
-    return rect(oled_xy, (cx - OLED_AA[0] / 2 - m, cx + OLED_AA[0] / 2 + m), (top - OLED_AA[1] - m, top + m))
+    """Through-opening, world ((x0, x1), (y0, y1)): the glass minus margin and chamfer per side."""
+    m = WINDOW_MARGIN + WINDOW_CHAMFER
+    (x0, x1), (y0, y1) = OLED_GLASS
+    return rect(oled_xy, (x0 + m, x1 - m), (y0 + m, y1 - m))
 
 
 def usb_port():
@@ -215,8 +218,8 @@ INSERT_D = 4.0          # hole for the insert (maker's figure for M3 x 5.7)
 INSERT_L = 5.7
 INSERT_HOLE = INSERT_L + 1.3   # melt room below the insert
 LID_SCREW = 8.0
-# Lid modules: slide the connector end under two lips, lock the far end with a printed tab
-# and one M2x6 machine screw threaded straight into a plastic post. All M2 are M2x6.
+# Shield tabs: a printed tab and one M2x6 machine screw threaded straight into a plastic post.
+# All M2 are M2x6.
 TAB_SCREW = 6.0
 TAB_T = 2.0
 TAB_W = 6.0
@@ -235,32 +238,19 @@ SHIELD_KEEPOUT = [  # component-side parts near the tabs, board frame ((bx0, bx1
     ((35.1, 36.3), (19.3, 21.9)),                               # R18, R20, R21
     ((56.6, 57.6), (22.3, 23.3)), ((56.0, 57.9), (6.3, 9.0)),   # D16 charge LED, J9 battery pads
 ]
-RAIL_T = 1.2            # side guide rails along the lid modules' long edges
-RAIL_PROUD = 0.5        # rail top past the PCB T face
 SCREW_SPARE = 0.5
 
 RELAY_SCREW = 6.0       # M2x6 machine screws through the relay's holes/notches into the standoffs
-# Lid modules: name -> mapping, board x/y ranges, lip start |y|. The connector end (-x) goes under the lips.
-MODULES = {
-    "oled": (oled_xy, OLED_X, OLED_Y, OLED_LIP_Y),
-    "button": (btn_xy, BTN_X, BTN_Y, 7.3),         # Grove socket |y| <= 6.1, test pads |y| <= 6.95
-}
-TAB_CLEAR_OF = {  # nearest T-side part to the tab overlap, board x of its +x edge
-    "oled": 16.32 + 0.5,                           # P1 marker pad
-    "button": 17.78 + 0.6,                         # TP5..TP8
-}
+MODULES = {"oled": (oled_xy, OLED_POST), "button": (btn_xy, BTN_POST)}   # name -> mapping, standoff
+# Front-side parts the notch shoulders must stay off, board frame.
+BTN_SW_B = tuple(((m - BTN_SW) / 2, (m + BTN_SW) / 2) for m in MOD)
+MOD_FRONT_KEEPOUT = {"oled": OLED_GLASS, "button": BTN_SW_B}
 
 
 def module_z(name):
-    """(z_mount, z_b, d): mounting surface, PCB face on the supports, direction to the T side."""
-    return Z_RIM, Z_RIM - (OLED_POST if name == "oled" else BTN_POST), -1
-
-
-def rails(name):
-    """World rects of the two side rails of a lid module (full length, CLR off the long edges)."""
-    f, xs, ys, _ = MODULES[name]
-    x = (xs[0] - CLR - LIP_T, xs[1] + CLR)
-    return [rect(f, x, (ys[1] + CLR, ys[1] + CLR + RAIL_T)), rect(f, x, (ys[0] - CLR - RAIL_T, ys[0] - CLR))]
+    """(front face, back face) of a lid module's PCB. The front rests on the shoulders."""
+    zf = Z_RIM - MODULES[name][1]
+    return zf, zf - MOD_PCB_T
 
 
 def shield_tab_sites():
@@ -281,11 +271,6 @@ def shield_tab_overlap(i):
     return (bx - w, bx + w), ((by, by + TAB_OVER) if oy < 0 else (by - TAB_OVER, by))
 
 
-def tab_post(name):
-    f, xs, _, _ = MODULES[name]
-    return f(xs[1] + CLR + TAB_POST_D / 2, 0.0)
-
-
 def pilots():
     """name -> (z_lo, z_hi, engagement, skin). Skin = plastic left beyond the hole on the outside."""
     out = {}
@@ -302,12 +287,9 @@ def pilots():
     tip = z_pcb + GROVE_PCB_T - RELAY_SCREW                  # head on the relay, pointing -z
     out["relay"] = (tip - SCREW_SPARE, z_pcb + 0.1, RELAY_SCREW - GROVE_PCB_T, tip - SCREW_SPARE)
     for n in MODULES:
-        zm, zb, d = module_z(n)
-        zt = zb + d * GROVE_PCB_T                            # T face = post top, tab sits on it
-        tip = zt + d * TAB_T - d * TAB_SCREW
-        lo, hi = sorted((zt + d * 0.1, tip - d * SCREW_SPARE))
-        skin = lo if d > 0 else Z_RIM + LID_T - hi           # back face z=0, lid face z1
-        out["tab_" + n] = (lo, hi, TAB_SCREW - TAB_T, skin)
+        zf, zk = module_z(n)
+        tip = zk - WASHER_T + MOD_SCREW                      # head on the washer, pointing +z
+        out["mod_" + n] = (zf, tip + SCREW_SPARE, tip - zf, Z_RIM + LID_T - tip - SCREW_SPARE)
     return out
 
 

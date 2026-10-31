@@ -144,45 +144,29 @@ def lid():
     cx, cy, w, h = (wx[0] + wx[1]) / 2, (wy[0] + wy[1]) / 2, wx[1] - wx[0], wy[1] - wy[0]
     l -= loft([Pos(cx, cy, z1 - c) * Rectangle(w, h), Pos(cx, cy, z1 + 0.01) * Rectangle(w + 2 * c, h + 2 * c)])
 
-    # OLED: pads on the glass-free ends (its holes are too close to the glass).
-    zb = z0 - P.OLED_POST
-    for xs in (P.OLED_PAD_A, P.OLED_PAD_B):
-        l += wbox(*P.rect(P.oled_xy, xs, P.OLED_Y), (zb, z0 + 0.01))
-
-    # Button: cap hole + supports under its three holes/notches.
+    # Button: cap hole, pocket for the switch body in the inner face.
     l -= zcyl(*P.BTN_C, z0 - 1, z1 + 1, P.BTN_HOLE)
-    for hh in P.BTN_HOLES:
-        l += zcyl(*P.btn_xy(*hh), z0 - P.BTN_POST, z0 + 0.01, P.POST_D)
+    l -= wbox(*P.rect(P.btn_xy, *[(a - P.MOD_CLR, b + P.MOD_CLR) for a, b in P.BTN_SW_B]), (z0 - 1, z0 + P.BTN_POCKET))
 
-    for n in ("oled", "button"):
-        add, cut = slide_mount(n)
-        l = l + add - cut
+    for n in P.MODULES:
+        l += notch_posts(n)
+        lo, hi, _, _ = P.pilots()["mod_" + n]
+        for nx, ny in P.MOD_NOTCHES:
+            l -= zcyl(*P.MODULES[n][0](nx, ny), lo, hi, P.M2_PILOT)
     return l
 
 
-def slide_mount(name):
-    """Two lips over the T face at the board's -x (connector) end, side rails along the long
-    edges, a post for the tab at +x.
-    Returns (material to add, M2 hole to cut)."""
-    f, xs, ys, lip_y = P.MODULES[name]
-    zm, zb, d = P.module_z(name)
-    zt = zb + d * P.GROVE_PCB_T
-    za, zl = sorted((zt + d * 0.1, zt + d * (0.1 + P.LIP_T)))     # lip slab
-    zw = sorted((zm - d * 0.01, zt + d * (0.1 + P.LIP_T)))        # wall, from the mounting surface
-    x0 = xs[0]
-    add = []
-    for yr in ((lip_y, ys[1]), (ys[0], -lip_y)):
-        add.append(wbox(*P.rect(f, (x0 - P.CLR - P.LIP_T, x0 - P.CLR), yr), zw))
-        add.append(wbox(*P.rect(f, (x0 - P.CLR - P.LIP_T, x0 + P.LIP), yr), (za, zl)))
-    for r in P.rails(name):                                         # side guides: no sideways play
-        add.append(wbox(*r, sorted((zm - d * 0.01, zt + d * P.RAIL_PROUD))))
-    px, py = P.tab_post(name)
-    add.append(zcyl(px, py, *sorted((zm - d * 0.01, zt)), P.TAB_POST_D))
-    out = add[0]
-    for s in add[1:]:
-        out += s
-    lo, hi, _, _ = P.pilots()["tab_" + name]
-    return out, zcyl(px, py, lo, hi, P.M2_PILOT)
+def notch_posts(name):
+    """A post at each edge notch: shoulder under the board front, clipped off the glass / switch,
+    and outside the board it rises past the PCB edge (stops short of the back face) to locate it."""
+    f, _ = P.MODULES[name]
+    zf, zk = P.module_z(name)
+    c = P.MOD_CLR
+    posts = [zcyl(*f(nx, ny), zk + 0.3, P.Z_RIM + 0.01, P.NOTCH_POST_D) for nx, ny in P.MOD_NOTCHES]
+    out = posts[0] + posts[1] + posts[2]
+    out -= wbox(*P.rect(f, (-c, P.MOD[0] + c), (-c, P.MOD[1] + c)), (zk - 1, zf))
+    (kx0, kx1), (ky0, ky1) = P.MOD_FRONT_KEEPOUT[name]
+    return out - wbox(*P.rect(f, (kx0 - P.CLR, kx1 + P.CLR), (ky0 - P.CLR, ky1 + P.CLR)), (zf - 0.01, P.Z_RIM))
 
 
 def tab():
@@ -210,21 +194,22 @@ def clamp_placed():
     return Pos(P.clamp_x(), sum(P.CLAMP_Y) / 2, zs + P.CLAMP_GAP) * clamp_bar()
 
 
-def tabs_placed():
-    """Tabs in the assembly: on the T face, overlap pointing at the board edge."""
-    sites = []   # (name, post xy, edge xy, T-face z, direction to the T side)
-    for n, (f, xs, _, _) in P.MODULES.items():
-        zm, zb, d = P.module_z(n)
-        sites.append(("tab_" + n, P.tab_post(n), f(xs[1], 0.0), zb + d * P.GROVE_PCB_T, d))
-    zt = P.BACK_T + P.LEDGE_H + P.SH_PCB_T
-    sites += [(f"tab_shield{i}", post, edge, zt, 1) for i, (post, edge) in enumerate(P.shield_tab_sites())]
+def washer():
+    """Lid module notch washer, flat on z=0."""
+    return Cylinder(P.WASHER_D / 2, P.WASHER_T, align=CC_MIN) - Cylinder(P.TAB_HOLE / 2, 3 * P.WASHER_T)
+
+
+def fixings_placed():
+    """Shield tabs on its T face, overlap pointing at the board edge; washers on the lid modules' backs."""
     out = {}
-    for name, (px, py), (ex, ey), zt, d in sites:
+    zt = P.BACK_T + P.LEDGE_H + P.SH_PCB_T
+    for i, ((px, py), (ex, ey)) in enumerate(P.shield_tab_sites()):
         ang = math.degrees(math.atan2(ey - py, ex - px)) + 180   # local -x -> towards the board
-        s = Rot(0, 0, ang) * tab()
-        if d < 0:
-            s = Pos(0, 0, -P.TAB_T) * s
-        out[name] = Pos(px, py, zt) * s
+        out[f"tab_shield{i}"] = Pos(px, py, zt) * Rot(0, 0, ang) * tab()
+    for n, (f, _) in P.MODULES.items():
+        _, zk = P.module_z(n)
+        for i, (nx, ny) in enumerate(P.MOD_NOTCHES):
+            out[f"washer_{n}{i}"] = Pos(*f(nx, ny), zk - P.WASHER_T) * washer()
     return out
 
 
@@ -249,17 +234,19 @@ def envelopes():
     e["relay_body"] = wbox(*P.rect(P.relay_xy, *P.RELAY_BODY), (zt, zt + P.RELAY_BODY_H))
     e["relay_grove"] = wbox(*P.rect(P.relay_xy, *P.RELAY_GROVE), (zt, zt + P.GROVE_PLUG_UP))
 
-    zb = P.Z_RIM - P.OLED_POST
-    e["oled"] = wbox(*P.rect(P.oled_xy, P.OLED_X, P.OLED_Y), (zb - P.GROVE_PCB_T, zb))
-    e["oled_glass"] = wbox(*P.rect(P.oled_xy, *P.OLED_PANEL), (zb, zb + P.OLED_PANEL_H))
-    e["oled_grove"] = wbox(*P.rect(P.oled_xy, *P.OLED_GROVE), (zb - P.GROVE_PCB_T - P.GROVE_CONN_H, zb - P.GROVE_PCB_T))
+    for n, (f, _) in P.MODULES.items():
+        zf, zk = P.module_z(n)
+        e[n] = wbox(*P.rect(f, (0, P.MOD[0]), (0, P.MOD[1])), (zk, zf))
+        gx, gy = P.rect(f, *P.MOD_GROVE)
+        e[n + "_grove"] = wbox((gx[0] - P.MOD_PLUG_OUT, gx[1]), gy, (zk - P.GROVE_CONN_H, zk))
 
-    zb = P.Z_RIM - P.BTN_POST
-    e["button"] = wbox(*P.rect(P.btn_xy, P.BTN_X, P.BTN_Y), (zb - P.GROVE_PCB_T, zb))
-    s = P.BTN_SW / 2
-    e["button_sw"] = wbox((P.BTN_C[0] - s, P.BTN_C[0] + s), (P.BTN_C[1] - s, P.BTN_C[1] + s), (zb, zb + P.BTN_SW_H - P.BTN_CAP_H))
-    e["button_cap"] = zcyl(*P.BTN_C, zb + P.BTN_SW_H - P.BTN_CAP_H, zb + P.BTN_SW_H, P.BTN_CAP_D)
-    e["button_grove"] = wbox(*P.rect(P.btn_xy, *P.BTN_GROVE), (zb - P.GROVE_PCB_T - P.GROVE_CONN_H, zb - P.GROVE_PCB_T))
+    zf, zk = P.module_z("oled")
+    e["oled_glass"] = wbox(*P.rect(P.oled_xy, *P.OLED_GLASS), (zf, zf + P.OLED_GLASS_H))
+    e["oled_fpc"] = wbox(*P.rect(P.oled_xy, *P.OLED_FPC), (zk, zf + P.OLED_GLASS_H))
+
+    zf, _ = P.module_z("button")
+    e["button_sw"] = wbox(*P.rect(P.btn_xy, *P.BTN_SW_B), (zf, zf + P.BTN_BODY_H))
+    e["button_cap"] = zcyl(*P.BTN_C, zf + P.BTN_BODY_H, zf + P.BTN_TOP_H, P.BTN_CAP_D)
     return e
 
 
@@ -309,7 +296,7 @@ def check_assembly(parts):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--part", default="all", choices=["all", "base", "lid", "tab", "clamp"])
+    ap.add_argument("--part", default="all", choices=["all", "base", "lid", "tab", "washer", "clamp"])
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
 
@@ -320,25 +307,27 @@ def main():
         shapes["lid"] = lid()
     if a.part in ("all", "tab"):
         shapes["tab"] = tab()
+    if a.part in ("all", "washer"):
+        shapes["washer"] = washer()
     if a.part in ("all", "clamp"):
         shapes["clamp"] = clamp_bar()
 
     if a.check:
         ok = all([check_part(n, s) for n, s in shapes.items()])
         if a.part == "all":
-            placed = {k: v for k, v in shapes.items() if k not in ("tab", "clamp")}
-            ok &= check_assembly({**placed, **tabs_placed(), "clampbar": clamp_placed(), **envelopes()})
+            placed = {k: v for k, v in shapes.items() if k not in ("tab", "washer", "clamp")}
+            ok &= check_assembly({**placed, **fixings_placed(), "clampbar": clamp_placed(), **envelopes()})
         print("\nall green" if ok else "\nFAILED")
         sys.exit(0 if ok else 1)
 
     os.makedirs(OUT, exist_ok=True)
     for n, s in shapes.items():
-        fn = "thermostat_tab_x5" if n == "tab" else f"thermostat_{n}"
+        fn = {"tab": "thermostat_tab_x3", "washer": "thermostat_washer_x6"}.get(n, f"thermostat_{n}")
         export_stl(to_print(s, flip=(n in ("lid", "clamp"))), os.path.join(OUT, fn + ".stl"), tolerance=0.01)
         export_step(s, os.path.join(OUT, f"thermostat_{n}.step"))
     if a.part == "all":
-        placed = [v for k, v in shapes.items() if k not in ("tab", "clamp")]
-        export_step(Compound([*placed, *tabs_placed().values(), clamp_placed(), *envelopes().values()]), os.path.join(OUT, "assembly_preview.step"))
+        placed = [v for k, v in shapes.items() if k not in ("tab", "washer", "clamp")]
+        export_step(Compound([*placed, *fixings_placed().values(), clamp_placed(), *envelopes().values()]), os.path.join(OUT, "assembly_preview.step"))
     print("wrote", sorted(os.listdir(OUT)))
 
 
