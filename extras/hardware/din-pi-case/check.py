@@ -23,11 +23,14 @@ def dist(a, b):
 def wall_to_window(p, hole_d):
     """Thinnest wall between a hole edge and the window edge, in the board frame.
 
-    The 45 deg chamfer widens the window by WINDOW_CHAMFER on the outside face,
-    which is the face the plate prints against the bed, so it eats into the wall.
+    Signed distance to the active area (positive outside, negative inside, so a
+    hole moved into the window can never pass WALL_MIN). The 45 deg chamfer
+    widens the window by WINDOW_CHAMFER on the outside face, which is the face
+    the plate prints against the bed, so it eats into the wall there.
     """
-    gap = min(min(abs(p[0] - P.ACTIVE_B[0][0]), abs(p[0] - P.ACTIVE_B[0][1])),
-              min(abs(p[1] - P.ACTIVE_B[1][0]), abs(p[1] - P.ACTIVE_B[1][1])))
+    dx = max(P.ACTIVE_B[0][0] - p[0], p[0] - P.ACTIVE_B[0][1])
+    dy = max(P.ACTIVE_B[1][0] - p[1], p[1] - P.ACTIVE_B[1][1])
+    gap = math.hypot(max(dx, 0.0), max(dy, 0.0)) + min(max(dx, dy), 0.0)
     return gap - P.WINDOW_MARGIN - P.WINDOW_CHAMFER - hole_d / 2
 
 
