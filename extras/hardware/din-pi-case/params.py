@@ -56,7 +56,11 @@ def b2w(bx, by):
 # --- Plate features ---------------------------------------------------------
 GLASS_GAP = 0.2       # glass must not be squeezed by the plate. Calibration knob.
 WINDOW_MARGIN = 0.5   # per side around the active area
-WINDOW_CHAMFER = 1.0  # 45 deg on the outside face, keeps viewing angle
+# 45 deg on the outside face, keeps viewing angle. The chamfer widens the window
+# on the face that prints against the bed, so it also eats into the wall to the
+# X/Y button holes and the LED hole: 4.0 - WINDOW_MARGIN - WINDOW_CHAMFER -
+# PLUNGER_HOLE/2 >= WALL_MIN. 0.8 leaves 1.25/1.35 mm there (check.py enforces it).
+WINDOW_CHAMFER = 0.8
 POST_D = 5.0          # inside the 5.6 keep-out
 POST_HOLE = 2.2       # M2.5 self-tapping into plastic (no HOLE_COMP: wants grip)
 POST_LEN = H_GLASS + GLASS_GAP   # plate underside -> HAT PCB top
@@ -73,6 +77,7 @@ SWITCH_TRAVEL = 0.25    # typical tact switch
 
 
 def z_pcb_top():
+    """HAT PCB top in world z: plate underside minus the post length."""
     return PLATE_Z[0] - POST_LEN
 
 

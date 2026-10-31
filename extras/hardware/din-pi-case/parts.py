@@ -37,6 +37,7 @@ def board_rect(bx, by):
 
 
 def plate():
+    """Top plate: screen window with chamfer, button/LED holes, HAT posts."""
     z0, z1 = P.PLATE_Z
     p = wbox(P.PLATE_X, P.PLATE_Y, P.PLATE_Z)
 
@@ -72,6 +73,7 @@ def plunger():
 
 
 def plungers_placed():
+    """One plunger per HAT switch, in world coords, glass side up."""
     out = []
     z = P.z_pcb_top() + P.H_SWITCH
     for b in P.BUTTONS_B:
@@ -106,6 +108,7 @@ def to_print(shape, flip):
 
 
 def check_part(name, shape):
+    """One solid, one shell, positive volume, fits the bed."""
     ok = True
     n = len(shape.solids())
     shells = len(shape.solids()[0].shells()) if n else 0
@@ -113,22 +116,26 @@ def check_part(name, shape):
     size = (bb.size.X, bb.size.Y, bb.size.Z)
     for cond, msg in [(n == 1, f"{n} solid(s)"), (shells == 1, f"{shells} shell(s)"),
                       (shape.volume > 0, f"volume {shape.volume:.1f} mm3"),
-                      (all(s <= b for s, b in zip(size, P.BED)), f"size {tuple(round(s, 1) for s in size)} fits bed")]:
+                      (all(s <= b for s, b in zip(size, P.BED, strict=True)),
+                       f"size {tuple(round(s, 1) for s in size)} fits bed")]:
         print(("ok   " if cond else "FAIL ") + f"{name}: {msg}")
         ok &= cond
     return ok
 
 
 def check_assembly(new):
+    """Every exported part is a closed volume and nothing intersects anything."""
     import trimesh
     tmp = tempfile.mkdtemp()
     meshes = {}
+    ok = True
     for name, s in new.items():
         f = os.path.join(tmp, name + ".stl")
         export_stl(s, f, tolerance=0.01)
         meshes[name] = trimesh.load(f)
         if not meshes[name].is_volume:
             print(f"FAIL {name}: exported mesh is not a closed volume")
+            ok = False
     case = {}
     for f in sorted(glob.glob(os.path.join(HERE, "ref", "case_*.stl"))):
         m = trimesh.load(f)
@@ -136,7 +143,9 @@ def check_assembly(new):
             print(f"skip {os.path.basename(f)}: not watertight (well below the HAT)")
             continue
         case[os.path.basename(f)[:-4]] = m
-    ok = True
+    if not case:
+        print("FAIL interference: no watertight ref/case_*.stl found")
+        return False
     names = list(meshes)
     pairs = [(a, b) for a in names for b in case] + [(names[i], names[j]) for i in range(len(names)) for j in range(i + 1, len(names))]
     for a, b in pairs:
@@ -149,6 +158,7 @@ def check_assembly(new):
 
 
 def main():
+    """--check runs the self-checks and exits non-zero; otherwise export the parts."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--part", default="all", choices=["all", "plate", "plunger"])
     ap.add_argument("--check", action="store_true")

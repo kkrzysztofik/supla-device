@@ -9,13 +9,26 @@ failed = []
 
 
 def ok(cond, msg):
+    """Print and record one check line; failures decide the exit status."""
     print(("ok   " if cond else "FAIL ") + msg)
     if not cond:
         failed.append(msg)
 
 
 def dist(a, b):
+    """2D distance between two board-frame or world-frame points."""
     return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def wall_to_window(p, hole_d):
+    """Thinnest wall between a hole edge and the window edge, in the board frame.
+
+    The 45 deg chamfer widens the window by WINDOW_CHAMFER on the outside face,
+    which is the face the plate prints against the bed, so it eats into the wall.
+    """
+    gap = min(min(abs(p[0] - P.ACTIVE_B[0][0]), abs(p[0] - P.ACTIVE_B[0][1])),
+              min(abs(p[1] - P.ACTIVE_B[1][0]), abs(p[1] - P.ACTIVE_B[1][1])))
+    return gap - P.WINDOW_MARGIN - P.WINDOW_CHAMFER - hole_d / 2
 
 
 # Board -> world is a rotation, not a mirror (else the LED lands on the wrong end).
@@ -59,8 +72,10 @@ for b in P.BUTTONS_B:
         ok(g >= 0.5, f"flange {b} clears post {h} by {g:.2f}") if dist(b, h) < 10 else None
     g = dist(b, P.LED_B) - P.FLANGE_D / 2 - P.LED_HOLE / 2
     ok(g >= 0.5, f"flange {b} clears LED hole by {g:.2f}") if dist(b, P.LED_B) < 10 else None
-    g = min(abs(b[0] - P.ACTIVE_B[0][0]), abs(b[0] - P.ACTIVE_B[0][1])) - P.WINDOW_MARGIN - P.PLUNGER_HOLE / 2
+    g = wall_to_window(b, P.PLUNGER_HOLE)
     ok(g >= P.WALL_MIN, f"plate wall between button {b} hole and window {g:.2f} >= {P.WALL_MIN}")
+g = wall_to_window(P.LED_B, P.LED_HOLE)
+ok(g >= P.WALL_MIN, f"plate wall between LED hole and window {g:.2f} >= {P.WALL_MIN}")
 ok(dist(P.BUTTONS_B[0], P.BUTTONS_B[1]) >= P.FLANGE_D + 0.5, "flanges of a button pair don't touch")
 
 # Plunger stack: rests on the switch, flange stays below the plate, travel available.
@@ -75,5 +90,5 @@ z_low = P.z_pcb_top() - P.PCB_T - P.H_SOCKET - P.H_IDC
 z_pi = P.Z_PI_PCB + P.PCB_T + P.H_PI_TALL
 ok(z_low - z_pi >= P.CABLE_BEND, f"ribbon connector bottom z {z_low:.1f} is {z_low - z_pi:.1f} above Pi top {z_pi:.1f}")
 
-print("\nFAILED: %d" % len(failed) if failed else "\nall green")
+print(f"\nFAILED: {len(failed)}" if failed else "\nall green")
 sys.exit(1 if failed else 0)
