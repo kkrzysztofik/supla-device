@@ -11,6 +11,7 @@ Board data come from Seeed's own CAD files (downloaded 2026-10-20, parsed, not t
   oled, button: measured with calipers (the Seeed files describe older boards)
 MEASURE = not in any file; check with calipers, update, re-run both checks.
 """
+import math
 import os
 
 # --- Process: home FDM, PLA/PETG, 0.4 nozzle ------------------------------
@@ -133,6 +134,9 @@ ANT_SOCKET_L = 10.0
 ANT_CABLE_HOLE = 4.5    # passes the U.FL plug
 ANT_X = WIN_CX
 ANT_SOCKET_WALL = 2.0
+ANT_BORE_R = ANT_BASE_D / 2 + 0.2          # bore radius: the base plus FDM clearance
+ANT_BORE_TIP = ANT_SOCKET_WALL + ANT_BORE_R * (1 + math.sqrt(2))   # teardrop apex: centre + r*sqrt(2)
+ANT_SOCKET_H = ANT_BORE_TIP + ANT_SOCKET_WALL   # block top, so the apex sits under plastic not air
 
 # --- Lid features -----------------------------------------------------------
 GLASS_GAP = 0.3         # glass must not be squeezed. Calibration knob.
@@ -154,7 +158,7 @@ BTN_POST = BTN_BODY_H + 0.3 - BTN_POCKET
 BTN_PROUD = BTN_TOP_H - BTN_POST - LID_T    # cap above the lid face
 
 # --- Depth: worst case, any back stack under any front stack ---------------
-# ponytail: assumes everything overlaps in plan; per-overlap stacking saves ~5 mm if it matters.
+# Note: assumes everything overlaps in plan; per-overlap stacking saves ~5 mm if it matters.
 BACK_STACK = max(
     LEDGE_H + SH_PCB_T + max(HDR_H + XIAO_PCB_T + USB_H, GROVE_PLUG_UP),
     LEDGE_H + GROVE_PCB_T + max(RELAY_BODY_H, GROVE_PLUG_UP),
@@ -166,6 +170,7 @@ Z_RIM = BACK_T + IN_D
 
 
 def shield_xy(bx, by):
+    """Shield vertical, XIAO/USB end down: board bx -> world +y downwards, board by -> world +x."""
     return SH_X0 + by, SH_Y0 + (SH[0] - bx)
 
 
@@ -175,10 +180,12 @@ def relay_xy(x, y):
 
 
 def oled_xy(x, y):
+    """OLED board frame -> world; the board is seen from outside the lid, so no mirror."""
     return OLED_O[0] + x, OLED_O[1] + y
 
 
 def btn_xy(x, y):
+    """Button board frame -> world, same frame and sense as the OLED."""
     return BTN_O[0] + x, BTN_O[1] + y
 
 
@@ -203,6 +210,7 @@ def usb_port():
 
 
 def usb_center():
+    """Centre of the receptacle: world (x, z) on the bottom wall."""
     x, _ = shield_xy(0, XIAO_USB_BY)
     z = BACK_T + LEDGE_H + SH_PCB_T + HDR_H + XIAO_PCB_T + USB_H / 2
     return x, z
@@ -294,6 +302,7 @@ def pilots():
 
 
 def clamp_x():
+    """World x of the probe-cable hole axis, which is also the clamp's centre line."""
     return next(x for n, x, _ in CABLE_HOLES if n == "probe")
 
 

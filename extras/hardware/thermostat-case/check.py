@@ -1,5 +1,6 @@
 # Copyright (C) Krzysztof Krzysztofik
 """Invariant checks on params.py. Plain /usr/bin/python3, no CAD."""
+import itertools
 import math
 import sys
 
@@ -11,6 +12,7 @@ failed = []
 
 
 def ok(cond, msg):
+    """Print one check line and remember it if it failed."""
     print(("ok   " if cond else "FAIL ") + msg)
     if not cond:
         failed.append(msg)
@@ -31,7 +33,8 @@ def circle_gap(c, r, rc):
 
 
 def fmt(r):
-    return "x %.1f..%.1f y %.1f..%.1f" % (*r[0], *r[1])
+    """World rect as 'x lo..hi y lo..hi', one decimal."""
+    return f"x {r[0][0]:.1f}..{r[0][1]:.1f} y {r[1][0]:.1f}..{r[1][1]:.1f}"
 
 
 shield = P.rect(P.shield_xy, (0, P.SH[0]), (0, P.SH[1]))
@@ -63,7 +66,7 @@ xiao = P.rect(P.shield_xy, *P.XIAO_B)
 
 # Shield tabs: overlap only bare board, posts inside the cavity and off the wall screws/columns,
 # screws reachable (outside the XIAO footprint).
-for i, ((post, edge), site) in enumerate(zip(P.shield_tab_sites(), P.SHIELD_TABS)):
+for i, ((post, _edge), site) in enumerate(zip(P.shield_tab_sites(), P.SHIELD_TABS, strict=True)):
     ov = P.shield_tab_overlap(i)
     hit = [k for k in P.SHIELD_KEEPOUT if gap(ov, k) < 0.3]
     ok(not hit, f"shield tab {site[0]} overlap {fmt(ov)} clear of parts {hit}")
@@ -93,10 +96,10 @@ ok(uo[0][0] >= P.BOSS_IN + P.BOSS_D / 2 + 1.0, "USB opening clear of the corner 
 
 # Cable holes: apart from each other, the USB opening and the far corner column.
 xs = sorted([(uo[0][0], uo[0][1], "usb")] + [(x - d / 2, x + d / 2, n) for n, x, d in P.CABLE_HOLES])
-for a, b in zip(xs, xs[1:]):
+for a, b in itertools.pairwise(xs):
     ok(b[0] - a[1] >= 2.0, f"bottom wall between {a[2]} and {b[2]}: {b[0] - a[1]:.1f}")
 ok(xs[-1][1] <= P.IN_W - P.BOSS_IN - P.BOSS_D / 2 - 1.0, f"{xs[-1][2]} hole clear of corner column")
-for n, x, d in P.CABLE_HOLES:
+for n, _x, d in P.CABLE_HOLES:
     ok(P.CABLE_Z - d / 2 >= P.BACK_T + 0.5, f"{n} hole above the floor")
 rx = next(x for n, x, _ in P.CABLE_HOLES if n == "relay")
 tie = ((rx - P.TIE[0] / 2, rx + P.TIE[0] / 2), (P.TIE_Y - P.TIE[1] / 2, P.TIE_Y + P.TIE[1] / 2))
@@ -119,6 +122,9 @@ for s in P.WALL_SCREWS:
 
 # Antenna socket on the top wall; it also sits on the bed.
 ok(P.ANT_CABLE_HOLE < P.ANT_BASE_D - 2 * P.WALL_MIN, "antenna socket has a floor around the cable hole")
+ok(P.ANT_SOCKET_H - P.ANT_BORE_TIP >= P.WALL_MIN,
+   f"antenna socket roof over the bore apex {P.ANT_SOCKET_H - P.ANT_BORE_TIP:.1f}")
+ok(P.ANT_SOCKET_H <= P.Z_RIM + P.LID_T, f"antenna socket {P.ANT_SOCKET_H:.1f} inside the box depth")
 ok(gap(((P.ANT_X - P.ANT_BASE_D, P.ANT_X + P.ANT_BASE_D), (P.IN_H - 1, P.IN_H)), ((P.IN_W - P.BOSS_IN - 4, P.IN_W), (0, P.IN_H))) > 0,
    "antenna clear of the top-right column")
 
@@ -141,7 +147,7 @@ ok(P.WASHER_D - P.NOTCH_D >= 2.0, f"washer {P.WASHER_D} laps the {P.NOTCH_D} not
 ok(P.TAB_HOLE < 3.5, "M2 head can't pull through the washer")
 r = P.NOTCH_POST_D / 2
 posts = {n: [f(*nt) for nt in P.MOD_NOTCHES] for n, (f, _) in P.MODULES.items()}
-for n, (f, _) in P.MODULES.items():
+for n in P.MODULES:
     (kx0, kx1), (ky0, ky1) = P.MOD_FRONT_KEEPOUT[n]
     for nx, ny in P.MOD_NOTCHES:
         g = circle_gap((nx, ny), P.WASHER_D / 2, P.MOD_GROVE)
@@ -160,7 +166,7 @@ for n, (f, _) in P.MODULES.items():
         for m, other in (("oled", oled), ("button", btn)):
             ok(gap(((px - r, px + r), (py - r, py + r)), other) >= 0.5, f"{n} post clears {m} board") if m != n else None
 plug = P.rect(P.oled_xy, *P.MOD_GROVE), P.rect(P.btn_xy, *P.MOD_GROVE)
-for n, pr in zip(("oled", "button"), plug):
+for n, pr in zip(("oled", "button"), plug, strict=True):
     ok(pr[0][0] - P.MOD_PLUG_OUT >= P.CLR, f"{n} Grove plug inside cavity (x {pr[0][0] - P.MOD_PLUG_OUT:.1f})")
 fpc = P.rect(P.oled_xy, *P.OLED_FPC)
 ok(fpc[1][1] <= P.IN_H - P.CLR, f"oled FPC fold inside cavity (y {fpc[1][1]:.1f})")
@@ -173,7 +179,7 @@ ok(P.LID_SCREW - P.LID_T <= P.INSERT_HOLE - P.SCREW_SPARE, "lid screw tip stays 
 for h in P.RELAY_HOLES:   # notch holes: the M2 head (3.8) must still land on the board
     inside = min(h[0] - P.RELAY_X[0], P.RELAY_X[1] - h[0], h[1] - P.RELAY_Y[0], P.RELAY_Y[1] - h[1])
     ok(inside + 1.9 >= 1.0, f"relay screw head at {h} overlaps the board by {inside + 1.9:.1f}")
-for n, (lo, hi, eng, skin) in P.pilots().items():
+for n, (_lo, _hi, eng, skin) in P.pilots().items():
     need = 5.0 if n == "lid" else 3.0
     ok(eng >= need, f"{n} screw engages {eng:.1f} mm (>= {need})")
     ok(skin >= 0.8, f"{n} pilot leaves {skin:.1f} mm skin outside")
@@ -182,7 +188,7 @@ for n, (lo, hi, eng, skin) in P.pilots().items():
 print(f"     depth: back stack {P.BACK_STACK:.1f} + front stack {P.FRONT_STACK:.1f} + gap {P.STACK_GAP} -> IN_D {P.IN_D}")
 ok(P.Z_RIM - P.BACK_T - P.BACK_STACK - P.FRONT_STACK >= P.STACK_GAP, "back and front stacks don't meet")
 size = [hi - lo for lo, hi in P.OUTER]
-ok(all(s <= b for s, b in zip(size, P.BED)), f"box {[round(s, 1) for s in size]} fits bed")
+ok(all(s <= b for s, b in zip(size, P.BED, strict=True)), f"box {[round(s, 1) for s in size]} fits bed")
 
-print("\nFAILED: %d" % len(failed) if failed else "\nall green")
+print(f"\nFAILED: {len(failed)}" if failed else "\nall green")
 sys.exit(1 if failed else 0)

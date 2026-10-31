@@ -28,17 +28,18 @@ WATCH = [os.path.join(HERE, f) for f in ("params.py", "parts.py")]
 
 
 def build():
+    """Build out/viewer.html: the meshes embedded as one GLB, three.js loaded from unpkg."""
     import params
     import parts
     importlib.reload(params)
     importlib.reload(parts)
     shapes = {"base": parts.base(), "lid": parts.lid(), **parts.fixings_placed(), "tab_clamp": parts.clamp_placed(), **parts.envelopes()}
-    tmp = tempfile.mkdtemp()
     scene = trimesh.Scene()
-    for n, s in shapes.items():
-        f = os.path.join(tmp, n + ".stl")
-        export_stl(s, f, tolerance=0.05, angular_tolerance=0.3)
-        scene.add_geometry(trimesh.load(f), node_name=n, geom_name=n)   # colours are set in the page by name
+    with tempfile.TemporaryDirectory() as tmp:
+        for n, s in shapes.items():
+            f = os.path.join(tmp, n + ".stl")
+            export_stl(s, f, tolerance=0.05, angular_tolerance=0.3)
+            scene.add_geometry(trimesh.load(f), node_name=n, geom_name=n)   # colours are set in the page by name
     glb = base64.b64encode(scene.export(file_type="glb")).decode()
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, "viewer.html"), "w") as f:
@@ -47,6 +48,7 @@ def build():
 
 
 def main():
+    """Build once; with --serve PORT also serve out/ and rebuild when the sources change."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--serve", type=int, metavar="PORT", help="serve out/ on 0.0.0.0 and rebuild on change")
     a = ap.parse_args()
@@ -55,7 +57,7 @@ def main():
     if not a.serve:
         return
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=OUT)
-    srv = http.server.ThreadingHTTPServer(("0.0.0.0", a.serve), handler)
+    srv = http.server.ThreadingHTTPServer(("0.0.0.0", a.serve), handler)   # noqa: S104 (LAN-only, opt-in --serve)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"serving out/ on http://0.0.0.0:{a.serve}/viewer.html, reload the page after a rebuild", flush=True)
     seen = [os.path.getmtime(p) for p in WATCH]
@@ -66,7 +68,7 @@ def main():
             seen = now
             try:
                 build()
-            except Exception as e:   # a half-saved params.py shouldn't kill the server
+            except Exception as e:   # noqa: BLE001 (a half-saved params.py shouldn't kill the server)
                 print("rebuild failed:", e, flush=True)
 
 
