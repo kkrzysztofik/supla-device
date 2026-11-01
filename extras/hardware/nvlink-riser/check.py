@@ -36,7 +36,8 @@ def invariants():
             f"M3x{P.FLANGE_SCREW_L:g} passes the nut (tip {tip:g} >= nut floor {nut_floor:g} below top)"),
         inv(P.H - relief >= P.INSERT_L + P.WALL_MIN,
             f"screw relief ({relief:g} deep) clear of the rail inserts: OFFSET >= {relief + P.INSERT_L + P.WALL_MIN:g}"),
-        inv(all(s <= b for s, b in zip(size, P.BED, strict=True)), f"size {size} fits bed {P.BED}"),
+        inv(size[0] <= P.BED[0] and size[1] <= P.BED[1] and size[2] <= P.BED[2],
+            f"size {size} fits bed {P.BED}"),
     ]
 
 
