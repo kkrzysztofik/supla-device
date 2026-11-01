@@ -81,8 +81,9 @@ void IngeconInverter::onInit() {
 #ifdef SUPLA_TEST
 void IngeconInverter::setReadingsForTest(
     const Supla::Linux::Ingecon::Readings& readings,
-    bool valid) {
-  busClient_.setReadingsForTest(readings, valid);
+    bool valid,
+    bool silent) {
+  busClient_.setReadingsForTest(readings, valid, silent);
 }
 
 void IngeconInverter::applyReadingsForTest() {
@@ -170,9 +171,15 @@ bool IngeconInverter::isThreePhaseConfigured() const {
 void IngeconInverter::applyReadingsToChannel() {
   Supla::Linux::Ingecon::Readings readings;
   bool valid = false;
-  if (!busClient_.copyReadings(&readings, &valid) || !valid) {
+  bool silent = false;
+  if (!busClient_.copyReadings(&readings, &valid, &silent) || !valid) {
     if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
-      setZeroInstantaneousValues();
+      // Asleep (no answer): really 0 W. Port/frame error: unknown, not 0.
+      if (silent) {
+        setZeroInstantaneousValues();
+      } else {
+        resetReadParameters();
+      }
       updateChannelValues();
     }
     return;

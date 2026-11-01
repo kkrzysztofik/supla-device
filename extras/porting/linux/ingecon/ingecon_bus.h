@@ -35,6 +35,9 @@ class Bus : public std::enable_shared_from_this<Bus> {
       mutable std::mutex mutex;
       Readings readings;
       bool cacheValid = false;
+      // Last poll failed with no answer at all on an open port (inverter
+      // asleep), as opposed to a port, write or frame error.
+      bool inverterSilent = false;
     };
 
     std::shared_ptr<State> state;
@@ -78,6 +81,7 @@ class Bus : public std::enable_shared_from_this<Bus> {
   Profile resolvedProfile_ = Profile::Lite27;
   Readings discoveryReadings_;
   EnergyFilter energyFilter_;  // worker thread only
+  bool lastReadSilent_ = false;  // worker thread only
 };
 
 }  // namespace Ingecon

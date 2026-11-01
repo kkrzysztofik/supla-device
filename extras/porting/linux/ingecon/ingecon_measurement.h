@@ -31,7 +31,8 @@ class IngeconMeasurement : public Supla::Sensor::GeneralPurposeMeasurement {
 
 #ifdef SUPLA_TEST
   void setReadingsForTest(const Supla::Linux::Ingecon::Readings& readings,
-                          bool valid);
+                          bool valid,
+                          bool silent = false);
 #endif
 
  private:

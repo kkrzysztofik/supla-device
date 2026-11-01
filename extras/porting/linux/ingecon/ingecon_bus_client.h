@@ -33,10 +33,16 @@ class BusClient {
   // Returns false if readings or valid is null. Callers must pass non-null
   // pointers. When returning true, *valid reflects whether the underlying bus
   // has valid cached readings (true = valid, false = stale/unavailable).
-  bool copyReadings(Readings* readings, bool* valid) const;
+  // Optional *silent tells why it is invalid: true = the inverter did not
+  // answer at all (asleep), false = port, write or frame error.
+  bool copyReadings(Readings* readings,
+                    bool* valid,
+                    bool* silent = nullptr) const;
 
 #ifdef SUPLA_TEST
-  void setReadingsForTest(const Readings& readings, bool valid);
+  void setReadingsForTest(const Readings& readings,
+                          bool valid,
+                          bool silent = false);
 #endif
 
  private:

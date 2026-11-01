@@ -8,10 +8,18 @@
 */
 
 #include "ingecon_bus.h"
+#include "ingecon_bus_client.h"
 
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include <chrono>
 #include <memory>
+#include <string>
+#include <thread>
 #include <vector>
 
 using Supla::Linux::Ingecon::Bus;
@@ -122,4 +130,70 @@ TEST(IngeconBusTest, EnergyFilterRejectsSpikeAndConfirmsReset) {
   const auto resetConfirmed = filterTotalEnergyKwh(&filter, 10u);
   ASSERT_TRUE(resetConfirmed.has_value());
   EXPECT_EQ(*resetConfirmed, 10u);
+}
+
+namespace {
+
+// Polls the client until the bus has reported a failed read, or gives up.
+bool waitForFailedRead(const Supla::Linux::Ingecon::BusClient& client,
+                       bool* silent) {
+  for (int i = 0; i < 80; ++i) {
+    Supla::Linux::Ingecon::Readings readings;
+    bool valid = true;
+    *silent = false;
+    if (client.copyReadings(&readings, &valid, silent) && !valid &&
+        (*silent || i > 40)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  return false;
+}
+
+BusConfig fastFailConfig(const std::string& device) {
+  BusConfig config;
+  config.serialDevice = device;
+  config.modbusAddress = 240;
+  config.pollIntervalSec = 1;
+  config.timeoutMs = 50;
+  config.retries = 0;
+  config.rtsToggle = false;  // a pty has no RTS line
+  config.profile = Supla::Linux::Ingecon::Profile::Lite27;
+  return config;
+}
+
+}  // namespace
+
+// Nobody answers on a pseudo-terminal: like an inverter asleep at night.
+TEST(IngeconBusTest, NoAnswerOnOpenPortIsReportedAsSilentInverter) {
+  const int master = posix_openpt(O_RDWR | O_NOCTTY);
+  ASSERT_GE(master, 0);
+  ASSERT_EQ(grantpt(master), 0);
+  ASSERT_EQ(unlockpt(master), 0);
+  const std::string slave = ptsname(master);
+
+  int owner = 0;
+  Supla::Linux::Ingecon::BusClient client(&owner, fastFailConfig(slave));
+  client.attach();
+  bool silent = false;
+  const bool failed = waitForFailedRead(client, &silent);
+  client.detach();
+  close(master);
+
+  ASSERT_TRUE(failed);
+  EXPECT_TRUE(silent);
+}
+
+// A missing adapter is a communication failure, not a silent inverter.
+TEST(IngeconBusTest, MissingSerialDeviceIsNotReportedAsSilent) {
+  int owner = 0;
+  Supla::Linux::Ingecon::BusClient client(
+      &owner, fastFailConfig("/dev/supla-ingecon-test-missing-adapter"));
+  client.attach();
+  bool silent = true;
+  const bool failed = waitForFailedRead(client, &silent);
+  client.detach();
+
+  ASSERT_TRUE(failed);
+  EXPECT_FALSE(silent);
 }
