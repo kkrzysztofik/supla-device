@@ -18,7 +18,6 @@ MEASURE = not in any file; check with calipers on the real Dremel/press, update,
 
 # --- Process: home FDM, PETG, 0.4 nozzle ----------------------------------
 WALL_MIN = 1.2          # 3 perimeters at 0.4
-HOLE_COMP = 0.2         # FDM holes print undersize; added to clearance holes
 BED = (180, 180, 180)   # A1 mini, smallest Bambu bed (HeatSync's own target)
 
 # --- HeatSync rack interface (copied from the iron collar, object_77) ------
