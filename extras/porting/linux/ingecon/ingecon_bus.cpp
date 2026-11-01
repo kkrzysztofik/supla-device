@@ -70,7 +70,9 @@ void storeSubscriberReadings(
   }
   std::lock_guard<std::mutex> lock(state->mutex);
   state->cacheValid = valid;
-  state->inverterSilent = !valid && silent;
+  state->link = valid    ? LinkState::Ok
+                : silent ? LinkState::Silent
+                         : LinkState::Error;
   if (valid) {
     state->readings = readings;
   }
@@ -216,6 +218,9 @@ bool Bus::poll(Readings* readings) {
     return false;
   }
 
+  // Silent only if every failed attempt got no answer at all: one bad frame
+  // means the inverter is awake and the link is faulty.
+  bool everyAttemptSilent = true;
   for (int attempt = 0; attempt <= config_.retries; ++attempt) {
     Readings parsed;
     const Profile profile = resolveProfile(&parsed);
@@ -231,11 +236,13 @@ bool Bus::poll(Readings* readings) {
             kMainRegisterAddress, registerCount, &mainRegisters)) {
       SUPLA_LOG_DEBUG("IngeconBus: main block read failed on attempt %d",
                       attempt + 1);
+      everyAttemptSilent = everyAttemptSilent && lastReadSilent_;
       continue;
     }
 
     if (!parseInputRegistersForProfile(profile, mainRegisters, &parsed)) {
       SUPLA_LOG_WARNING("IngeconBus: main block parse failed");
+      everyAttemptSilent = false;
       continue;
     }
     const auto filteredEnergy =
@@ -270,6 +277,7 @@ bool Bus::poll(Readings* readings) {
   SUPLA_LOG_WARNING("IngeconBus: poll failed for %s address=%u",
                     config_.serialDevice.c_str(),
                     config_.modbusAddress);
+  lastReadSilent_ = everyAttemptSilent;
   return false;
 }
 

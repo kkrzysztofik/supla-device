@@ -271,3 +271,9 @@ TEST(IngeconChannelTest, DcMeterMeasurementUnavailableOnCommError) {
 
   EXPECT_FALSE(meter.hasMeasurementForTest());
 }
+
+TEST(IngeconChannelTest, LinkUnavailableBeforeFirstPoll) {
+  // No poll has finished yet: neither OK nor an error - no startup alert.
+  IngeconMeasurement link(testConfig(), "link");
+  EXPECT_TRUE(std::isnan(link.getValue()));
+}

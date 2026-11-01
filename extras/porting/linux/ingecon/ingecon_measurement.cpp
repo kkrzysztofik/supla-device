@@ -107,13 +107,16 @@ bool IngeconMeasurement::isElectricalValue() const {
 
 double IngeconMeasurement::getValue() {
   Supla::Linux::Ingecon::Readings readings;
+  using Supla::Linux::Ingecon::LinkState;
   bool valid = false;
-  bool silent = false;
-  if (!busClient_.copyReadings(&readings, &valid, &silent) || !valid) {
-    // link: 1 = reads OK, 0 = inverter silent, -1 = port/frame error.
+  auto link = LinkState::Unknown;
+  if (!busClient_.copyReadings(&readings, &valid, &link) || !valid) {
+    const bool silent = link == LinkState::Silent;
+    // link: 1 = reads OK, 0 = inverter silent, -1 = port/frame error,
+    // unavailable until the first poll finishes (no false startup alert).
     // Reported at once, without the stale grace, so alerts are not delayed.
     if (valueKey_ == "link") {
-      return silent ? 0 : -1;
+      return link == LinkState::Unknown ? NAN : silent ? 0 : -1;
     }
     if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
       return silent && isElectricalValue() ? 0 : NAN;

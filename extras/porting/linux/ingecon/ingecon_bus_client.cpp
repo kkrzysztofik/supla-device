@@ -47,15 +47,15 @@ void BusClient::detach() {
 
 bool BusClient::copyReadings(Readings* readings,
                              bool* valid,
-                             bool* silent) const {
+                             LinkState* link) const {
   if (readings == nullptr || valid == nullptr || !state_) {
     return false;
   }
 
   std::lock_guard<std::mutex> lock(state_->mutex);
   *valid = state_->cacheValid;
-  if (silent != nullptr) {
-    *silent = state_->inverterSilent;
+  if (link != nullptr) {
+    *link = state_->link;
   }
   if (state_->cacheValid) {
     *readings = state_->readings;
@@ -70,7 +70,9 @@ void BusClient::setReadingsForTest(const Readings& readings,
   std::lock_guard<std::mutex> lock(state_->mutex);
   state_->readings = readings;
   state_->cacheValid = valid;
-  state_->inverterSilent = !valid && silent;
+  state_->link = valid    ? LinkState::Ok
+                 : silent ? LinkState::Silent
+                          : LinkState::Error;
 }
 #endif
 

@@ -141,7 +141,9 @@ bool SerialPort::writeAll(const uint8_t* data,
 
 ssize_t SerialPort::readSome(uint8_t* buffer, size_t maxLen, int timeoutMs) {
   constexpr bool kLogTimeout = true;
-  constexpr bool kEintrReturnsTimeout = true;
+  // An interrupted select is not "no answer": report it as an error so it
+  // cannot pass for a silent inverter.
+  constexpr bool kEintrReturnsTimeout = false;
   constexpr bool kLogReadResult = true;
   return port_.readSome(buffer,
                         maxLen,

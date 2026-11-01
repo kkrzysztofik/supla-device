@@ -171,11 +171,11 @@ bool IngeconInverter::isThreePhaseConfigured() const {
 void IngeconInverter::applyReadingsToChannel() {
   Supla::Linux::Ingecon::Readings readings;
   bool valid = false;
-  bool silent = false;
-  if (!busClient_.copyReadings(&readings, &valid, &silent) || !valid) {
+  auto link = Supla::Linux::Ingecon::LinkState::Unknown;
+  if (!busClient_.copyReadings(&readings, &valid, &link) || !valid) {
     if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
       // Asleep (no answer): really 0 W. Port/frame error: unknown, not 0.
-      if (silent) {
+      if (link == Supla::Linux::Ingecon::LinkState::Silent) {
         setZeroInstantaneousValues();
       } else {
         resetReadParameters();
