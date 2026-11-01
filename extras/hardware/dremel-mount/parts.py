@@ -74,7 +74,7 @@ def mount():
 
 def dremel_envelope():
     """Revolved stand-in for the tool: nose thread, taper, body, cradle band. Preview + interference."""
-    ay, hb, (c0, c1) = P.AXIS_Y, P.H_BASE, P.CRADLE_Z
+    ay, hb, (c0, _) = P.AXIS_Y, P.H_BASE, P.CRADLE_Z
     e = zcyl(ay, -25, P.FLOOR_T, P.NOSE_HOLE_D / 2 - 0.2)
     e += Pos(0, ay, P.FLOOR_T) * Cone(P.CONE_R0 - 0.2, P.cone_r(hb) - 0.2, hb - P.FLOOR_T, align=CC_MIN)
     e += zcyl(ay, hb, c0, P.BODY_R)
@@ -108,7 +108,7 @@ def check_part(name, shape):
     for cond, msg in [(n == 1, f"{n} solid(s)"), (shells == 1, f"{shells} shell(s)"),
                       (shape.volume > 0, f"volume {shape.volume:.1f} mm3"),
                       (bb.min.Z > -1e-6, "nothing below the bed plane"),
-                      (all(s <= b for s, b in zip(size, P.BED)), f"size {tuple(round(s, 1) for s in size)} fits bed")]:
+                      (all(s <= b for s, b in zip(size, P.BED, strict=True)), f"size {tuple(round(s, 1) for s in size)} fits bed")]:
         print(("ok   " if cond else "FAIL ") + f"{name}: {msg}")
         ok &= cond
     return ok
