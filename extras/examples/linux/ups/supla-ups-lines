@@ -1,0 +1,42 @@
+#!/usr/bin/awk -f
+# Copyright (C) 2026 Krzysztof Krzysztofik
+#
+# Turns `upsc <ups>` output into one value per line for the sd4linux Simple
+# parser (supla-device-ups.yaml uses these indexes):
+#   0 on battery (ups.status has OB)  1 battery low (LB)  2 battery.charge
+#   3 ups.load  4 input.voltage  5 beeper enabled (1/0)  6 output.frequency
+#   7 current A = load % x output.current.nominal (Megatec load is current
+#     against the 4 A rating)  8 apparent power VA = current x output.voltage
+#
+# All or nothing: if any value is missing or not a number (upsd down, stale
+# data, N/A, a UPS model without one of the variables) or the beeper state is
+# neither enabled nor disabled, print nothing and exit 1, so every SUPLA
+# channel goes invalid.
+# ponytail: a blank line would mark the whole shared Simple parser invalid
+# (order-dependent across channels) and reach ElectricityMeterParsed as 0;
+# per-field validity needs a Simple parser change, then optional fields can
+# go blank here instead.
+{
+  i = index($0, ": ")
+  if (i) v[substr($0, 1, i - 1)] = substr($0, i + 2)
+}
+END {
+  if (v["ups.status"] == "") exit 1
+  n = split("battery.charge ups.load input.voltage output.frequency " \
+            "output.current.nominal output.voltage", num, " ")
+  for (k = 1; k <= n; k++) if (v[num[k]] !~ /^-?[0-9]+(\.[0-9]+)?$/) exit 1
+  b = v["ups.beeper.status"]
+  if (b != "enabled" && b != "disabled") exit 1
+
+  s = " " v["ups.status"] " "
+  a = v["ups.load"] / 100 * v["output.current.nominal"]
+  print (s ~ / OB /)
+  print (s ~ / LB /)
+  print v["battery.charge"]
+  print v["ups.load"]
+  print v["input.voltage"]
+  print (b == "enabled")
+  print v["output.frequency"]
+  printf "%.2f\n", a
+  printf "%.1f\n", sprintf("%.2f", a) * v["output.voltage"]
+}

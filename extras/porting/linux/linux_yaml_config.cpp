@@ -1922,9 +1922,17 @@ bool Supla::LinuxYamlConfig::addElectricityMeterParsed(
 
   const std::map<std::string, int> phases = {
       {"phase_1", 1}, {"phase_2", 2}, {"phase_3", 3}};
+  const uint64_t phaseUnsupportedFlags[] = {
+      SUPLA_CHANNEL_FLAG_PHASE1_UNSUPPORTED,
+      SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED,
+      SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED};
 
   for (auto i : phases) {
-    if (auto phaseParameter = getAndMarkChannelParameter(ch, i.first.c_str())) {
+    auto phaseParameter = getAndMarkChannelParameter(ch, i.first.c_str());
+    if (!phaseParameter) {
+      // Without this flag SUPLA shows the meter as three-phase.
+      em->getChannel()->setFlag(phaseUnsupportedFlags[i.second - 1]);
+    } else {
       auto phaseParameters = phaseParameter;
       int phaseId = i.second;
 

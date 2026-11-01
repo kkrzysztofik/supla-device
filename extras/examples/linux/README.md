@@ -1455,7 +1455,9 @@ sensor. Allowed values: `opening_door`, `opening_window`, `opening_roller_shutte
 
 ### `ElectricityMeterParsed`
 
-Add 3-phase electricity meter channel.
+Add electricity meter channel. Phases without a `phase_N` block are reported
+to the server as unsupported, so a meter with only `phase_1` shows as
+single-phase.
 
 All parameters are optional, however it is reasonable to provide at least one ;).
 
