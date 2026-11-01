@@ -47,16 +47,21 @@ channels:
     parser:
       use: ups
 
-  # power is estimated: load % x 7 W (700 W rated). Calibrate the multiplier
-  # against a plug-in meter if it matters.
+  # Voltage and frequency are measured; current and VA are derived from the
+  # UPS load % (1 % = 0.04 A), see ups/supla-ups-lines. Active power is
+  # VA x assumed power factor: calibrate this multiplier once against a
+  # plug-in meter (0.95 suits PFC power supplies).
   - type: ElectricityMeterParsed
-    initial_caption: "UPS input"
+    initial_caption: "UPS power"
     parser:
       use: ups
+    frequency: 6
     phase_1:
       - voltage: 4
-      - power_active: 3
-        multiplier: 7
+      - current: 7
+      - power_apparent: 8
+      - power_active: 8
+        multiplier: 0.95
 
   # The UPS only has beeper.toggle, so toggle only when the state is known to
   # be the opposite (unknown -> do nothing). The relay applies initial_state at
