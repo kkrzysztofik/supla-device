@@ -8,6 +8,9 @@
 uv run parts.py            export out/nvlink_riser_p2s.stl, .step, assembly_preview.step
 uv run parts.py --check    solid checks + interference vs rail, flange, nut and screw envelopes
 NVLINK_OFFSET=24.2 uv run parts.py   rebuild for a measured offset
+
+Both paths run the params.py invariants first and refuse to continue when one fails, so an
+offset that does not fit the rail inserts never becomes a model.
 """
 import argparse
 import os
@@ -16,6 +19,7 @@ import sys
 from build123d import Align, Box, Compound, Cylinder, Pos, export_step, export_stl
 
 import params as P
+from check import invariants
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
 MIN = (Align.MIN, Align.MIN, Align.MIN)
@@ -27,6 +31,7 @@ def wbox(x, y, z):
 
 
 def riser():
+    """The block: rail-insert bores from below, screw slot on top, nut channel through both X ends."""
     w, d, h = P.BLOCK_W / 2, P.BLOCK_D / 2, P.H
     body = wbox((-w, w), (-d, d), (0, h))
     for s in (1, -1):   # rail inserts, from below
@@ -53,7 +58,16 @@ def envelopes():
     return out
 
 
-def check(part):
+def param_check():
+    """Print the parameter invariants and return the messages that failed."""
+    tests = invariants()
+    for cond, msg in tests:
+        print(("ok   " if cond else "FAIL ") + msg)
+    return [msg for cond, msg in tests if not cond]
+
+
+def check_part(part):
+    """Solid, shell, height, bed-fit and interference checks on the built part."""
     n = len(part.solids())
     shells = len(part.solids()[0].shells()) if n else 0
     bb = part.bounding_box()
@@ -61,7 +75,8 @@ def check(part):
     tests = [(n == 1, f"{n} solid(s)"), (shells == 1, f"{shells} shell(s)"),
              (part.volume > 0, f"volume {part.volume:.0f} mm3"),
              (abs(bb.size.Z - P.OFFSET) < 1e-6, f"height {bb.size.Z:.2f} = OFFSET"),
-             (all(s <= b for s, b in zip(size, P.BED)), f"size {tuple(round(s, 1) for s in size)} fits bed")]
+             (all(s <= b for s, b in zip(size, P.BED, strict=True)),
+              f"size {tuple(round(s, 1) for s in size)} fits bed")]
     for name, e in envelopes().items():
         v = (part & e).volume
         tests.append((v < 1e-3, f"block x {name}: {v:.4f} mm3"))
@@ -71,12 +86,19 @@ def check(part):
 
 
 def main():
+    """Check the parameters, then either self-check the part or export it."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
+
+    bad = param_check()
+    if bad:
+        print(f"\n{len(bad)} FAILED: fix the parameters before printing, nothing written")
+        sys.exit(1)
+
     part = riser()
     if a.check:
-        good = check(part)
+        good = check_part(part)
         print("\nall green" if good else "\nFAILED")
         sys.exit(0 if good else 1)
     os.makedirs(OUT, exist_ok=True)

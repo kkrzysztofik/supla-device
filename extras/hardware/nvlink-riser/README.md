@@ -5,10 +5,15 @@ The PNY's NVLink finger sits ~25 mm lower, so a 3-slot bridge won't seat.
 This block goes between the rail and the PNY flange and lifts the whole card by `OFFSET`.
 
 ```sh
-/usr/bin/python3 check.py                  # parameter invariants, stdlib only
-uv run parts.py --check                    # 1 solid / 1 shell / height / interference vs rail, flange, nut, screw
-NVLINK_OFFSET=24.6 uv run parts.py         # out/nvlink_riser_p2s.stl, .step, assembly_preview.step
+NVLINK_OFFSET=24.6 /usr/bin/python3 check.py   # parameter invariants, stdlib only
+NVLINK_OFFSET=24.6 uv run parts.py --check     # + 1 solid / 1 shell / height / interference vs rail, flange, nut, screw
+NVLINK_OFFSET=24.6 uv run parts.py             # out/nvlink_riser_p2s.stl, .step, assembly_preview.step
 ```
+
+Pass the same `NVLINK_OFFSET` to all three: the offset sets the block height, so the checks have to run
+against the value you are about to print. `parts.py` runs the parameter invariants first in both modes and
+writes nothing when one fails — an offset that would cut the screw relief into the rail inserts stops here
+instead of becoming a part.
 
 ## Before printing
 
