@@ -601,7 +601,7 @@ Supported channel types:
 * `SmaThermometer` - related class `Supla::PV::SmaThermometer` (extension, e.g. `Tkk`)
 * `SmaMeasurement` - related class `Supla::PV::SmaMeasurement` (extension, GPM e.g. `Zac`)
 * `IngeconInverter` - related class `Supla::PV::IngeconInverter` (extension, Modbus RTU/RS485 AC meter; see `supla-device-ingecon.yaml`)
-* `IngeconMeasurement` - related class `Supla::PV::IngeconMeasurement` (extension, GPM for INGECON status/alarm/DC registers)
+* `IngeconMeasurement` - related class `Supla::PV::IngeconMeasurement` (extension, GPM for INGECON status/alarm/DC registers; `link` reports 1 = reads OK, 0 = inverter silent, -1 = port/frame error)
 * `BydMeasurement` - related class `Supla::PV::BydMeasurement` (extension, BYD cloud GPM; see `supla-device-byd.yaml`)
 * `BydMeter` - related class `Supla::PV::BydMeter` (extension, BYD cloud energy counters)
 * `BydThermometer` - related class `Supla::PV::BydThermometer` (extension, BYD cabin/outside temperature)

@@ -39,13 +39,15 @@ void IngeconMeasurement::onInit() {
 #ifdef SUPLA_TEST
 void IngeconMeasurement::setReadingsForTest(
     const Supla::Linux::Ingecon::Readings& readings,
-    bool valid) {
-  busClient_.setReadingsForTest(readings, valid);
+    bool valid,
+    bool silent) {
+  busClient_.setReadingsForTest(readings, valid, silent);
 }
 #endif
 
 double IngeconMeasurement::readValue(
     const Supla::Linux::Ingecon::Readings& readings) const {
+  if (valueKey_ == "link") return 1;
   if (valueKey_ == "vdc") return readings.vdc;
   if (valueKey_ == "idc") return readings.idc;
   if (valueKey_ == "vbus") return readings.vbus;
@@ -89,12 +91,35 @@ double IngeconMeasurement::readValue(
   return NAN;
 }
 
+// A silent inverter (asleep, e.g. at night) has no voltage, current or power,
+// so these read 0 like the Ingecon meters do. On a port or frame error, and
+// for anything else (alarms, temperature, counters, dates), the value is
+// unknown and stays NaN.
+bool IngeconMeasurement::isElectricalValue() const {
+  for (const char* key : {"vdc", "idc", "vbus", "vac", "vac2", "vac3", "iac",
+                          "iac2", "iac3", "pac", "fac", "cos_phi"}) {
+    if (valueKey_ == key) {
+      return true;
+    }
+  }
+  return false;
+}
+
 double IngeconMeasurement::getValue() {
   Supla::Linux::Ingecon::Readings readings;
+  using Supla::Linux::Ingecon::LinkState;
   bool valid = false;
-  if (!busClient_.copyReadings(&readings, &valid) || !valid) {
+  auto link = LinkState::Unknown;
+  if (!busClient_.copyReadings(&readings, &valid, &link) || !valid) {
+    const bool silent = link == LinkState::Silent;
+    // link: 1 = reads OK, 0 = inverter silent, -1 = port/frame error,
+    // unavailable until the first poll finishes (no false startup alert).
+    // Reported at once, without the stale grace, so alerts are not delayed.
+    if (valueKey_ == "link") {
+      return link == LinkState::Unknown ? NAN : silent ? 0 : -1;
+    }
     if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
-      return NAN;
+      return silent && isElectricalValue() ? 0 : NAN;
     }
     return channel.getValueDouble();
   }

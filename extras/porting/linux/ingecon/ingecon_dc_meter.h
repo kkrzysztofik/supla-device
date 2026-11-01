@@ -28,8 +28,10 @@ class IngeconDcMeter : public Supla::Sensor::ElectricityMeter {
 
 #ifdef SUPLA_TEST
   void setReadingsForTest(const Supla::Linux::Ingecon::Readings& readings,
-                          bool valid);
+                          bool valid,
+                          bool silent = false);
   void applyReadingsForTest();
+  bool hasMeasurementForTest() const { return emValue.m_count > 0; }
 #endif
 
  private:

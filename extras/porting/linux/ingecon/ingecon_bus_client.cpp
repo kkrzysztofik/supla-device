@@ -45,13 +45,18 @@ void BusClient::detach() {
   Supla::Linux::detachSharedBusClient(state_, &bus_);
 }
 
-bool BusClient::copyReadings(Readings* readings, bool* valid) const {
+bool BusClient::copyReadings(Readings* readings,
+                             bool* valid,
+                             LinkState* link) const {
   if (readings == nullptr || valid == nullptr || !state_) {
     return false;
   }
 
   std::lock_guard<std::mutex> lock(state_->mutex);
   *valid = state_->cacheValid;
+  if (link != nullptr) {
+    *link = state_->link;
+  }
   if (state_->cacheValid) {
     *readings = state_->readings;
   }
@@ -59,10 +64,15 @@ bool BusClient::copyReadings(Readings* readings, bool* valid) const {
 }
 
 #ifdef SUPLA_TEST
-void BusClient::setReadingsForTest(const Readings& readings, bool valid) {
+void BusClient::setReadingsForTest(const Readings& readings,
+                                   bool valid,
+                                   bool silent) {
   std::lock_guard<std::mutex> lock(state_->mutex);
   state_->readings = readings;
   state_->cacheValid = valid;
+  state_->link = valid    ? LinkState::Ok
+                 : silent ? LinkState::Silent
+                          : LinkState::Error;
 }
 #endif
 

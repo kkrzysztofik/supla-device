@@ -77,3 +77,16 @@ channels:
     ingecon_value: alarm_safety
     default_unit_after_value: ""
     default_value_precision: 0
+
+  # Link state: 1 = reads OK, 0 = inverter silent (asleep, e.g. night),
+  # -1 = serial port / adapter / frame error. Alert on -1 in SUPLA.
+  # When silent, AC/DC meters and electrical keys (vdc, pac, ...) read 0;
+  # on an error they go unavailable instead of reporting a false 0.
+  - type: IngeconMeasurement
+    caption: INGECON link
+    serial: *ingecon_serial
+    device: *ingecon_device
+    poll_interval_sec: 15
+    ingecon_value: link
+    default_unit_after_value: ""
+    default_value_precision: 0

@@ -8,10 +8,20 @@
 */
 
 #include "ingecon_bus.h"
+#include "ingecon_bus_client.h"
 
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
+#include <poll.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <string>
+#include <thread>
 #include <vector>
 
 using Supla::Linux::Ingecon::Bus;
@@ -122,4 +132,119 @@ TEST(IngeconBusTest, EnergyFilterRejectsSpikeAndConfirmsReset) {
   const auto resetConfirmed = filterTotalEnergyKwh(&filter, 10u);
   ASSERT_TRUE(resetConfirmed.has_value());
   EXPECT_EQ(*resetConfirmed, 10u);
+}
+
+namespace {
+
+using Supla::Linux::Ingecon::LinkState;
+
+// Waits until the worker has finished a poll (link no longer Unknown).
+LinkState waitForPollResult(const Supla::Linux::Ingecon::BusClient& client) {
+  for (int i = 0; i < 100; ++i) {
+    Supla::Linux::Ingecon::Readings readings;
+    bool valid = false;
+    auto link = LinkState::Unknown;
+    if (client.copyReadings(&readings, &valid, &link) &&
+        link != LinkState::Unknown) {
+      return link;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  return LinkState::Unknown;
+}
+
+BusConfig fastFailConfig(const std::string& device, int retries = 0) {
+  BusConfig config;
+  config.serialDevice = device;
+  config.modbusAddress = 240;
+  config.pollIntervalSec = 1;
+  config.timeoutMs = 50;
+  config.retries = retries;
+  config.rtsToggle = false;  // a pty has no RTS line
+  config.profile = Supla::Linux::Ingecon::Profile::Lite27;
+  return config;
+}
+
+struct Pty {
+  Pty() {
+    master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0) {
+      slave = ptsname(master);
+    }
+  }
+  ~Pty() {
+    if (master >= 0) {
+      close(master);
+    }
+  }
+  int master = -1;
+  std::string slave;
+};
+
+}  // namespace
+
+// Nobody answers on a pseudo-terminal: like an inverter asleep at night.
+TEST(IngeconBusTest, NoAnswerOnOpenPortIsReportedAsSilentInverter) {
+  Pty pty;
+  ASSERT_FALSE(pty.slave.empty());
+
+  int owner = 0;
+  Supla::Linux::Ingecon::BusClient client(&owner, fastFailConfig(pty.slave));
+  client.attach();
+  const LinkState link = waitForPollResult(client);
+  client.detach();
+
+  EXPECT_EQ(link, LinkState::Silent);
+}
+
+// A missing adapter is a communication failure, not a silent inverter.
+TEST(IngeconBusTest, MissingSerialDeviceIsReportedAsError) {
+  int owner = 0;
+  Supla::Linux::Ingecon::BusClient client(
+      &owner, fastFailConfig("/dev/supla-ingecon-test-missing-adapter"));
+  client.attach();
+  const LinkState link = waitForPollResult(client);
+  client.detach();
+
+  EXPECT_EQ(link, LinkState::Error);
+}
+
+// A bad frame on one attempt means the inverter is awake: even if the retry
+// then gets no answer, the poll must not pass for a silent inverter.
+TEST(IngeconBusTest, BadFrameThenSilenceIsReportedAsError) {
+  Pty pty;
+  ASSERT_FALSE(pty.slave.empty());
+
+  // Answer the first two requests (profile discovery and main block attempt
+  // 1) with garbage, then stay silent for the retry.
+  std::atomic<bool> stop{false};
+  std::thread inverter([&] {
+    int answered = 0;
+    while (!stop && answered < 2) {
+      pollfd pfd{pty.master, POLLIN, 0};
+      if (::poll(&pfd, 1, 20) <= 0) {
+        continue;
+      }
+      uint8_t request[64];
+      if (read(pty.master, request, sizeof(request)) <= 0) {
+        continue;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(30));
+      const uint8_t garbage[] = {0xF0, 0x04, 0x02, 0xDE, 0xAD};
+      if (write(pty.master, garbage, sizeof(garbage)) > 0) {
+        ++answered;
+      }
+    }
+  });
+
+  int owner = 0;
+  Supla::Linux::Ingecon::BusClient client(&owner,
+                                          fastFailConfig(pty.slave, 1));
+  client.attach();
+  const LinkState link = waitForPollResult(client);
+  client.detach();
+  stop = true;
+  inverter.join();
+
+  EXPECT_EQ(link, LinkState::Error);
 }

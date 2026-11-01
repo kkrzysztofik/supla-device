@@ -27,6 +27,11 @@ namespace Ingecon {
 constexpr int kSunManagerPostTxDelayMs = 1000;
 constexpr int kLiteFwPostTxDelayMs = 200;
 
+// Result of the last poll as seen by subscribers. Silent: no answer at all on
+// an open port in every attempt (inverter asleep). Error: port, write or
+// frame error in any attempt. Unknown: no poll has finished yet.
+enum class LinkState { Unknown, Ok, Silent, Error };
+
 class Bus : public std::enable_shared_from_this<Bus> {
  public:
   struct Subscriber {
@@ -35,6 +40,7 @@ class Bus : public std::enable_shared_from_this<Bus> {
       mutable std::mutex mutex;
       Readings readings;
       bool cacheValid = false;
+      LinkState link = LinkState::Unknown;
     };
 
     std::shared_ptr<State> state;
@@ -78,6 +84,7 @@ class Bus : public std::enable_shared_from_this<Bus> {
   Profile resolvedProfile_ = Profile::Lite27;
   Readings discoveryReadings_;
   EnergyFilter energyFilter_;  // worker thread only
+  bool lastReadSilent_ = false;  // worker thread only
 };
 
 }  // namespace Ingecon

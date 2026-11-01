@@ -63,12 +63,16 @@ std::map<BusKey, std::weak_ptr<Bus>> gBuses;
 void storeSubscriberReadings(
     const std::shared_ptr<Bus::Subscriber::State>& state,
     const Readings& readings,
-    bool valid) {
+    bool valid,
+    bool silent) {
   if (!state) {
     return;
   }
   std::lock_guard<std::mutex> lock(state->mutex);
   state->cacheValid = valid;
+  state->link = valid    ? LinkState::Ok
+                : silent ? LinkState::Silent
+                         : LinkState::Error;
   if (valid) {
     state->readings = readings;
   }
@@ -195,7 +199,7 @@ void Bus::workerLoop() {
       invalidateSubscriberReadings(subscribersCopy);
     }
     for (const auto& sub : subscribersCopy) {
-      storeSubscriberReadings(sub.state, readings, valid);
+      storeSubscriberReadings(sub.state, readings, valid, lastReadSilent_);
     }
 
     const int sleepSlices = config_.pollIntervalSec * 10;
@@ -214,6 +218,9 @@ bool Bus::poll(Readings* readings) {
     return false;
   }
 
+  // Silent only if every failed attempt got no answer at all: one bad frame
+  // means the inverter is awake and the link is faulty.
+  bool everyAttemptSilent = true;
   for (int attempt = 0; attempt <= config_.retries; ++attempt) {
     Readings parsed;
     const Profile profile = resolveProfile(&parsed);
@@ -229,11 +236,13 @@ bool Bus::poll(Readings* readings) {
             kMainRegisterAddress, registerCount, &mainRegisters)) {
       SUPLA_LOG_DEBUG("IngeconBus: main block read failed on attempt %d",
                       attempt + 1);
+      everyAttemptSilent = everyAttemptSilent && lastReadSilent_;
       continue;
     }
 
     if (!parseInputRegistersForProfile(profile, mainRegisters, &parsed)) {
       SUPLA_LOG_WARNING("IngeconBus: main block parse failed");
+      everyAttemptSilent = false;
       continue;
     }
     const auto filteredEnergy =
@@ -268,6 +277,7 @@ bool Bus::poll(Readings* readings) {
   SUPLA_LOG_WARNING("IngeconBus: poll failed for %s address=%u",
                     config_.serialDevice.c_str(),
                     config_.modbusAddress);
+  lastReadSilent_ = everyAttemptSilent;
   return false;
 }
 
@@ -278,6 +288,7 @@ bool Bus::readInputBlock(uint16_t address,
   if (registers == nullptr) {
     return false;
   }
+  lastReadSilent_ = false;
 
   if (!serialPort_.isOpen()) {
     if (!serialPort_.open()) {
@@ -413,6 +424,7 @@ bool Bus::readFrame(std::vector<uint8_t>* response,
           context,
           received,
           expectedFrameLen);
+      lastReadSilent_ = received == 0;
       break;
     }
     received += static_cast<size_t>(read);

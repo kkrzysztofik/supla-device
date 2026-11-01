@@ -65,8 +65,9 @@ void IngeconDcMeter::onInit() {
 #ifdef SUPLA_TEST
 void IngeconDcMeter::setReadingsForTest(
     const Supla::Linux::Ingecon::Readings& readings,
-    bool valid) {
-  busClient_.setReadingsForTest(readings, valid);
+    bool valid,
+    bool silent) {
+  busClient_.setReadingsForTest(readings, valid, silent);
 }
 
 void IngeconDcMeter::applyReadingsForTest() {
@@ -94,9 +95,15 @@ void IngeconDcMeter::applyValidReadings(
 void IngeconDcMeter::applyReadingsToChannel() {
   Supla::Linux::Ingecon::Readings readings;
   bool valid = false;
-  if (!busClient_.copyReadings(&readings, &valid) || !valid) {
+  auto link = Supla::Linux::Ingecon::LinkState::Unknown;
+  if (!busClient_.copyReadings(&readings, &valid, &link) || !valid) {
     if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
-      setZeroInstantaneousValues();
+      // Asleep (no answer): really 0 W. Port/frame error: unknown, not 0.
+      if (link == Supla::Linux::Ingecon::LinkState::Silent) {
+        setZeroInstantaneousValues();
+      } else {
+        resetReadParameters();
+      }
       updateChannelValues();
     }
     return;

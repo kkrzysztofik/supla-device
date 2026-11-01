@@ -31,11 +31,13 @@ class IngeconMeasurement : public Supla::Sensor::GeneralPurposeMeasurement {
 
 #ifdef SUPLA_TEST
   void setReadingsForTest(const Supla::Linux::Ingecon::Readings& readings,
-                          bool valid);
+                          bool valid,
+                          bool silent = false);
 #endif
 
  private:
   double readValue(const Supla::Linux::Ingecon::Readings& readings) const;
+  bool isElectricalValue() const;
 
   std::string valueKey_;
   Supla::Linux::Ingecon::BusClient busClient_;

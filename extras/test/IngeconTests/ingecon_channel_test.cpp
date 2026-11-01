@@ -176,3 +176,104 @@ TEST(IngeconChannelTest, MeasurementReturnsNanWhenStale) {
 
   EXPECT_TRUE(std::isnan(measurement.getValue()));
 }
+
+constexpr const char* kElectricalKeys[] = {"vdc", "idc", "vbus", "vac",
+                                           "vac2", "vac3", "iac", "iac2",
+                                           "iac3", "pac", "fac", "cos_phi"};
+
+// Three failed reads cross the stale limit (kMaxStaleReadCount).
+double staleValue(IngeconMeasurement* measurement) {
+  measurement->getValue();
+  measurement->getValue();
+  measurement->getValue();
+  return measurement->getValue();
+}
+
+TEST(IngeconChannelTest, ElectricalMeasurementReadsZeroWhenInverterSilent) {
+  // A silent inverter (night) has no voltage, current or power - like the
+  // meters, which zero these too.
+  for (const char* key : kElectricalKeys) {
+    IngeconMeasurement measurement(testConfig(), key);
+    measurement.setReadingsForTest(sampleReadings(), false, true);
+    EXPECT_DOUBLE_EQ(staleValue(&measurement), 0.0) << key;
+  }
+}
+
+TEST(IngeconChannelTest, ElectricalMeasurementUnavailableOnCommError) {
+  // A broken port/adapter must not pass for 0 W.
+  for (const char* key : kElectricalKeys) {
+    IngeconMeasurement measurement(testConfig(), key);
+    measurement.setReadingsForTest(sampleReadings(), false, false);
+    EXPECT_TRUE(std::isnan(staleValue(&measurement))) << key;
+  }
+}
+
+TEST(IngeconChannelTest, AlarmsStayUnknownWhenInverterSilent) {
+  IngeconMeasurement measurement(testConfig(), "alarms");
+  measurement.setReadingsForTest(sampleReadings(), false, true);
+  EXPECT_TRUE(std::isnan(staleValue(&measurement)));
+}
+
+TEST(IngeconChannelTest, LinkReportsReadOkSilentAndCommError) {
+  IngeconMeasurement link(testConfig(), "link");
+  link.setReadingsForTest(sampleReadings(), true);
+  EXPECT_DOUBLE_EQ(link.getValue(), 1.0);
+  // no stale grace: the link state is reported on the first failed read
+  link.setReadingsForTest(sampleReadings(), false, true);
+  EXPECT_DOUBLE_EQ(link.getValue(), 0.0);
+  link.setReadingsForTest(sampleReadings(), false, false);
+  EXPECT_DOUBLE_EQ(link.getValue(), -1.0);
+}
+
+template <typename Meter>
+void applyStale(Meter* meter, bool silent) {
+  meter->setReadingsForTest(sampleReadings(), true);
+  meter->applyReadingsForTest();
+  meter->setReadingsForTest(sampleReadings(), false, silent);
+  for (int i = 0; i < 4; ++i) {
+    meter->applyReadingsForTest();
+  }
+}
+
+TEST(IngeconChannelTest, InverterZeroesWhenSilentAndKeepsEnergy) {
+  SimpleTime time;
+  IngeconInverter inverter(testConfig(), IngeconEnergyMapping::Reverse);
+  applyStale(&inverter, true);
+
+  EXPECT_TRUE(inverter.hasMeasurementForTest());
+  EXPECT_EQ(inverter.getPowerActive(0), 0);
+  EXPECT_EQ(inverter.getVoltage(0), 0);
+  EXPECT_EQ(inverter.getRvrActEnergy(0), 1200000u);
+}
+
+TEST(IngeconChannelTest, InverterMeasurementUnavailableOnCommError) {
+  SimpleTime time;
+  IngeconInverter inverter(testConfig(), IngeconEnergyMapping::Reverse);
+  applyStale(&inverter, false);
+
+  EXPECT_FALSE(inverter.hasMeasurementForTest());
+  EXPECT_EQ(inverter.getRvrActEnergy(0), 1200000u);
+}
+
+TEST(IngeconChannelTest, DcMeterZeroesWhenSilent) {
+  SimpleTime time;
+  IngeconDcMeter meter(testConfig());
+  applyStale(&meter, true);
+
+  EXPECT_TRUE(meter.hasMeasurementForTest());
+  EXPECT_EQ(meter.getPowerActive(0), 0);
+}
+
+TEST(IngeconChannelTest, DcMeterMeasurementUnavailableOnCommError) {
+  SimpleTime time;
+  IngeconDcMeter meter(testConfig());
+  applyStale(&meter, false);
+
+  EXPECT_FALSE(meter.hasMeasurementForTest());
+}
+
+TEST(IngeconChannelTest, LinkUnavailableBeforeFirstPoll) {
+  // No poll has finished yet: neither OK nor an error - no startup alert.
+  IngeconMeasurement link(testConfig(), "link");
+  EXPECT_TRUE(std::isnan(link.getValue()));
+}
