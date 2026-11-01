@@ -41,19 +41,21 @@ def build():
     import parts
     importlib.reload(params)
     importlib.reload(parts)
-    tmp = tempfile.mkdtemp()
     scene = trimesh.Scene()
-    for n, s in {"mount": parts.mount(), "dremel": parts.dremel_envelope()}.items():
-        f = os.path.join(tmp, n + ".stl")
-        export_stl(s, f, tolerance=0.05, angular_tolerance=0.3)
-        scene.add_geometry(trimesh.load(f), node_name=n, geom_name=n)   # colours are set in the page by name
+    with tempfile.TemporaryDirectory() as tmp:   # STLs are only a hand-off to trimesh
+        for n, s in {"mount": parts.mount(), "dremel": parts.dremel_envelope()}.items():
+            f = os.path.join(tmp, n + ".stl")
+            export_stl(s, f, tolerance=0.05, angular_tolerance=0.3)
+            scene.add_geometry(trimesh.load(f), node_name=n, geom_name=n)   # colours are set in the page by name
     if os.path.exists(parts.HEATSYNC_3MF):
         scene.add_geometry(parts.heatsync_mesh("object_74"), node_name="rack", geom_name="rack")
         scene.add_geometry(parts.heatsync_mesh("object_77"), node_name="collar", geom_name="collar")
     glb = base64.b64encode(scene.export(file_type="glb")).decode()
     os.makedirs(OUT, exist_ok=True)
-    with open(os.path.join(OUT, "viewer.html"), "w") as f:
+    page = os.path.join(OUT, "viewer.html")
+    with open(page + ".tmp", "w") as f:   # a reader must never see a half-written page
         f.write(PAGE.replace("__GLB__", glb))
+    os.replace(page + ".tmp", page)
     print(time.strftime("%H:%M:%S"), "wrote out/viewer.html,", len(scene.geometry), "meshes", flush=True)
 
 
@@ -62,6 +64,7 @@ def main():
     ap.add_argument("--serve", type=int, metavar="PORT", help="serve out/ on 0.0.0.0 and rebuild on change")
     a = ap.parse_args()
     sys.path.insert(0, HERE)
+    seen = mtimes()   # before the first build: a save that lands during it is still picked up
     build()
     if not a.serve:
         return
@@ -69,16 +72,21 @@ def main():
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", a.serve), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"serving out/ on http://0.0.0.0:{a.serve}/viewer.html, reload the page after a rebuild", flush=True)
-    seen = mtimes()
+    failed, retry_at = None, 0.0
     while True:
         time.sleep(1)
         now = mtimes()
-        if now is not None and now != seen:
-            seen = now
-            try:
-                build()
-            except Exception as e:   # a half-saved params.py shouldn't kill the server
-                print("rebuild failed:", e, flush=True)
+        if now is None or now == seen:   # nothing new, or a save is mid-flight
+            continue
+        if now == failed and time.monotonic() < retry_at:
+            continue                     # same broken files: back off instead of spinning
+        try:
+            build()
+        except Exception as e:   # a half-saved params.py shouldn't kill the server
+            print("rebuild failed:", e, flush=True)
+            failed, retry_at = now, time.monotonic() + 5   # retry in case the failure was transient
+        else:
+            seen, failed = now, None
 
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Dremel mount — 3D</title>
