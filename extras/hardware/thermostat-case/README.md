@@ -57,9 +57,11 @@ No self-tapping screws. Everything is from a standard M2/M3 kit plus heat-set in
    M2×6. Then plug in the USB-C from below.
 4. **Relay:** three M2×6 through its holes into the standoffs. Two of the holes are edge notches;
    the screw head still clamps them.
-5. **Button, OLED** mount the same way: drop the board face-down between the three notch posts
-   (the posts' outer halves locate its edges), put a printed washer over each Ø4.5 edge notch and
-   screw it down with an M2×6. The washer matters: the notch is bigger than the screw head.
+5. **Button, OLED** mount face-down: drop the board between four posts — three at its edge
+   notches, one on the free Grove edge; each post's outer half locates an edge. The screws sit
+   inside their notches but off-centre, so the pilots keep clear of the glass recess, and a
+   printed washer goes over each Ø4.5 notch under the M2×6. The washer matters: the notch is
+   bigger than the screw head.
    If the board won't drop in or rattles, set `MOD_CLR` (default 0.3 per side), e.g.
    `MOD_CLR=0.4 uv run parts.py --part lid`, and reprint the lid.
 6. **Probe cable:** pass it through its hole, lay it in the saddle groove behind the wall, put the

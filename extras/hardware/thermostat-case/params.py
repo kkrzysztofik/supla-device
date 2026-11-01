@@ -67,6 +67,16 @@ MOD = (40.1, 20.0)
 MOD_PCB_T = 1.5         # calipered; GROVE_PCB_T (1.6) is the Seeed default for the other Grove boards
 NOTCH_D = 4.5           # open half-holes centred on the board edge (Grove standard)
 MOD_NOTCHES = [(10.0, 0.0), (10.0, MOD[1]), (MOD[0], MOD[1] / 2)]
+# The screw sits inside its notch but off its centre: the Ø1.6 pilot then keeps WALL_MIN of plastic
+# to the glass recess, and the Ø7 washer still laps the notch (with the board's MOD_CLR play).
+MOD_SCREW_IN = 0.75     # left screws, inboard along the notch
+MOD_SCREW_OUT = 0.85    # far screw, outboard along the notch
+MOD_SCREWS = [
+    (MOD_NOTCHES[0][0] - MOD_SCREW_IN, MOD_NOTCHES[0][1]),
+    (MOD_NOTCHES[1][0] - MOD_SCREW_IN, MOD_NOTCHES[1][1]),
+    (MOD_NOTCHES[2][0] + MOD_SCREW_OUT, MOD_NOTCHES[2][1]),
+]
+MOD_LOCATORS = [(0.0, MOD[1] / 2)]   # locator-only post on the free (-x, Grove) edge
 MOD_GROVE = ((0.0, 9.0), (4.0, 16.0))   # socket on the back, 9 x 12 centred on the left edge
 MOD_PLUG_OUT = 8.0      # right-angle plug + cable bend past the left edge. MEASURE
 

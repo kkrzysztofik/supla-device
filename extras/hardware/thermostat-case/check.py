@@ -151,22 +151,53 @@ ok(P.MOD_SCREW_CLEAR >= P.M2_SHANK + P.HOLE_COMP, f"screw bore {P.MOD_SCREW_CLEA
 ok(P.MOD_POST_LIFT > 0 and P.MOD_PCB_T - P.MOD_POST_LIFT >= 2 * P.CLR,
    f"locator band {P.MOD_PCB_T - P.MOD_POST_LIFT:.1f} tall, {P.MOD_POST_LIFT} behind the PCB back")
 r = P.NOTCH_POST_D / 2
-posts = {n: [f(*nt) for nt in P.MOD_NOTCHES] for n, (f, _) in P.MODULES.items()}
+k = 0.05
+
+
+def bearing_area(px, py, notch_xy, keepout):
+    """Post disk area that lands on bare board: not in the notch void, not over the glass / switch."""
+    (kx0, kx1), (ky0, ky1) = keepout
+    span = math.ceil(r / k) + 1
+    total = 0.0
+    for i in range(-span, span + 1):
+        for j in range(-span, span + 1):
+            if math.hypot(i * k, j * k) > r:
+                continue
+            x, y = px + i * k, py + j * k
+            if not (0 <= x <= P.MOD[0] and 0 <= y <= P.MOD[1]):
+                continue
+            if notch_xy is not None and math.hypot(x - notch_xy[0], y - notch_xy[1]) < P.NOTCH_D / 2:
+                continue
+            if kx0 - P.CLR <= x <= kx1 + P.CLR and ky0 - P.CLR <= y <= ky1 + P.CLR:
+                continue
+            total += k * k
+    return total
+
+
+posts = {n: [f(*p) for p in (*P.MOD_SCREWS, *P.MOD_LOCATORS)] for n, (f, _) in P.MODULES.items()}
 for n in P.MODULES:
-    (kx0, kx1), (ky0, ky1) = P.MOD_FRONT_KEEPOUT[n]
-    for nx, ny in P.MOD_NOTCHES:
-        g = circle_gap((nx, ny), P.WASHER_D / 2, P.MOD_GROVE)
-        ok(g >= 0.3, f"{n} washer at ({nx}, {ny}) clears the Grove socket by {g:.2f}")
-        # shoulder: annulus notch..post, on the board, off the keepout (+CLR); 0.05 grid
-        k = 0.05
-        span = math.ceil(r / k) + 1
-        area = sum(k * k for i in range(-span, span + 1) for j in range(-span, span + 1)
-                   if P.NOTCH_D / 2 <= math.hypot(i * k, j * k) <= r
-                   and 0 <= nx + i * k <= P.MOD[0] and 0 <= ny + j * k <= P.MOD[1]
-                   and not (kx0 - P.CLR <= nx + i * k <= kx1 + P.CLR and ky0 - P.CLR <= ny + j * k <= ky1 + P.CLR))
-        ok(area >= 1.5, f"{n} shoulder at ({nx}, {ny}) bears {area:.1f} mm2")
+    keepout = P.MOD_FRONT_KEEPOUT[n]
+    (kx0, kx1), (ky0, ky1) = keepout
+    ok(P.MOD_CLR <= P.WINDOW_MARGIN, f"{n} board play {P.MOD_CLR} inside the {P.WINDOW_MARGIN} window margin")
+    for (nx, ny), (sx, sy) in zip(P.MOD_NOTCHES, P.MOD_SCREWS, strict=True):
+        d = math.hypot(sx - nx, sy - ny)
+        ok(d + P.MOD_CLR + P.M2_SHANK / 2 <= P.NOTCH_D / 2,
+           f"{n} screw at ({sx:.2f}, {sy:.2f}) stays in its notch at worst-case play")
+        ok(d + P.MOD_CLR + P.NOTCH_D / 2 <= P.WASHER_D / 2,
+           f"{n} washer at ({sx:.2f}, {sy:.2f}) laps its notch by {P.WASHER_D / 2 - d - P.MOD_CLR - P.NOTCH_D / 2:.2f}")
+        wall = math.hypot(max(kx0 - P.CLR - sx, 0, sx - (kx1 + P.CLR)),
+                          max(ky0 - P.CLR - sy, 0, sy - (ky1 + P.CLR))) - P.M2_PILOT / 2
+        ok(wall >= P.WALL_MIN, f"{n} pilot at ({sx:.2f}, {sy:.2f}) keeps {wall:.2f} mm to the glass recess")
+        g = circle_gap((sx, sy), P.WASHER_D / 2, P.MOD_GROVE)
+        ok(g >= 0.3, f"{n} washer at ({sx:.2f}, {sy:.2f}) clears the Grove socket by {g:.2f}")
+        area = bearing_area(sx, sy, (nx, ny), keepout)
+        ok(area >= 1.5, f"{n} shoulder at ({sx:.2f}, {sy:.2f}) bears {area:.1f} mm2")
+    for lx, ly in P.MOD_LOCATORS:
+        area = bearing_area(lx, ly, None, keepout)
+        ok(area >= 1.5, f"{n} locator at ({lx:.1f}, {ly:.1f}) bears {area:.1f} mm2")
     for px, py in posts[n]:
-        ok(r + P.CLR <= px <= P.IN_W - r - P.CLR and r + P.CLR <= py <= P.IN_H - r - P.CLR, f"{n} post ({px:.1f}, {py:.1f}) inside cavity")
+        ok(r + P.CLR <= px <= P.IN_W - r - P.CLR and r + P.CLR <= py <= P.IN_H - r - P.CLR,
+           f"{n} post ({px:.1f}, {py:.1f}) inside cavity")
         for cc in P.BOSSES:
             ok(math.dist(cc, (px, py)) - r - P.BOSS_D / 2 >= 0.5, f"{n} post clears column {cc}") if math.dist(cc, (px, py)) < 15 else None
         for m, other in (("oled", oled), ("button", btn)):

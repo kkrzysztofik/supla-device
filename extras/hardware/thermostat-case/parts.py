@@ -146,7 +146,7 @@ def base():
 
 
 def lid():
-    """Lid plate: module window and cap hole, notch posts and washers' pilots, insert columns."""
+    """Lid plate: module window and cap hole, mount posts, washer pilots and insert columns."""
     z0, z1 = P.Z_RIM, P.Z_RIM + P.LID_T
     s = rounded_slab(z0, z1)
 
@@ -167,26 +167,29 @@ def lid():
     s -= wbox(*P.rect(P.btn_xy, *[(a - P.MOD_CLR, b + P.MOD_CLR) for a, b in P.BTN_SW_B]), (z0 - 1, z0 + P.BTN_POCKET))
 
     for n in P.MODULES:
-        s += notch_posts(n)
+        s += mount_posts(n)
         f = P.MODULES[n][0]
         zf, zk = P.module_z(n)
         lo, hi, _, _ = P.pilots()["mod_" + n]
-        for nx, ny in P.MOD_NOTCHES:
-            x, y = f(nx, ny)
+        for sx, sy in P.MOD_SCREWS:
+            x, y = f(sx, sy)
             s -= zcyl(x, y, zk + P.MOD_POST_LIFT, zf, P.MOD_SCREW_CLEAR)   # shank passes the locator band
             s -= zcyl(x, y, lo, hi, P.M2_PILOT)
     return s
 
 
-def notch_posts(name):
-    """A post at each edge notch: shoulder under the board front, clipped off the glass / switch,
-    and outside the board it rises past the PCB edge (from MOD_POST_LIFT behind its back face) to
-    locate it."""
+def mount_posts(name):
+    """A post at every mount point (screw notches + locator): shoulder under the board front,
+    clipped off the glass / switch, and outside the board it rises past the PCB edge (from
+    MOD_POST_LIFT behind its back face) to locate it."""
     f, _ = P.MODULES[name]
     zf, zk = P.module_z(name)
     c = P.MOD_CLR
-    posts = [zcyl(*f(nx, ny), zk + P.MOD_POST_LIFT, P.Z_RIM + 0.01, P.NOTCH_POST_D) for nx, ny in P.MOD_NOTCHES]
-    out = posts[0] + posts[1] + posts[2]
+    pts = (*P.MOD_SCREWS, *P.MOD_LOCATORS)
+    posts = [zcyl(*f(x, y), zk + P.MOD_POST_LIFT, P.Z_RIM + 0.01, P.NOTCH_POST_D) for x, y in pts]
+    out = posts[0]
+    for post in posts[1:]:
+        out += post
     out -= wbox(*P.rect(f, (-c, P.MOD[0] + c), (-c, P.MOD[1] + c)), (zk - 1, zf))
     (kx0, kx1), (ky0, ky1) = P.MOD_FRONT_KEEPOUT[name]
     return out - wbox(*P.rect(f, (kx0 - P.CLR, kx1 + P.CLR), (ky0 - P.CLR, ky1 + P.CLR)), (zf - 0.01, P.Z_RIM))
@@ -232,8 +235,8 @@ def fixings_placed():
         out[f"tab_shield{i}"] = Pos(px, py, zt) * Rot(0, 0, ang) * tab()
     for n, (f, _) in P.MODULES.items():
         _, zk = P.module_z(n)
-        for i, (nx, ny) in enumerate(P.MOD_NOTCHES):
-            out[f"washer_{n}{i}"] = Pos(*f(nx, ny), zk - P.WASHER_T) * washer()
+        for i, (sx, sy) in enumerate(P.MOD_SCREWS):
+            out[f"washer_{n}{i}"] = Pos(*f(sx, sy), zk - P.WASHER_T) * washer()
     return out
 
 
@@ -305,13 +308,13 @@ def check_screw_paths(lid_shape):
     ok = True
     for n, (f, _) in P.MODULES.items():
         zf, zk = P.module_z(n)
-        for nx, ny in P.MOD_NOTCHES:
-            x, y = f(nx, ny)
+        for sx, sy in P.MOD_SCREWS:
+            x, y = f(sx, sy)
             v = (zcyl(x, y, zk + P.MOD_POST_LIFT, zf, P.M2_SHANK) & lid_shape).volume
             if v > 0.01:
-                print(f"FAIL screw {n} at ({nx}, {ny}): {v:.3f} mm3 of lid blocks the shank below the pilot")
+                print(f"FAIL screw {n} at ({sx:.2f}, {sy:.2f}): {v:.3f} mm3 of lid blocks the shank below the pilot")
                 ok = False
-    print(("ok   " if ok else "FAIL ") + f"module screw paths: {len(P.MODULES) * len(P.MOD_NOTCHES)} notch screws")
+    print(("ok   " if ok else "FAIL ") + f"module screw paths: {len(P.MODULES) * len(P.MOD_SCREWS)} notch screws")
     return ok
 
 
