@@ -19,6 +19,20 @@ uv run view.py                         # -> out/viewer.html, interactive 3D (orb
 uv run view.py --serve 8080            # same, served on the LAN, rebuilt when params.py/parts.py change
 ```
 
+## Validation
+
+The checks run in CI on every change under this directory
+(`.github/workflows/thermostat-case.yml`), and the generated STL/STEP files are attached to each
+run as artifacts, so geometry and fit can be validated without a local CAD install:
+
+| Check | Covers |
+|---|---|
+| `python3 check.py` | layout, clearances, keepout areas, fastener path and depth; stdlib only, instant |
+| `uv run parts.py --part all --check` | one solid and one shell per part, bed fit, module screw paths, pairwise interference in CAD (~3 min) |
+
+What is still physical: the values marked `MEASURE` (calipers) and the test print. Every number is
+in `params.py`; re-run both checks after measuring.
+
 About 76 × 69 × 41 mm closed, plus a 10 mm antenna socket on top.
 
 ## Print (FDM, no supports)
