@@ -1,0 +1,71 @@
+# Copyright (C) 2026 Krzysztof Krzysztofik
+#
+# Green Cell PowerProof 1000VA UPS via NUT -> sd4linux, as its own SUPLA device.
+# Setup: docs/integrations/greencell-ups-supla.md
+# Keep line indexes in sync with ups/supla-ups-lines.
+
+name: "UPS Green Cell 1000VA"
+log_level: info
+state_files_path: "/var/lib/supla-device-ups"
+
+supla:
+  server: svr1.supla.org
+  mail: user@example.com
+
+channels:
+  - type: BinaryParsed
+    initial_caption: "UPS on battery"
+    state: 0
+    source:
+      name: ups_src
+      type: Cmd
+      command: "upsc greencell@localhost 2>/dev/null | /usr/local/bin/supla-ups-lines"
+    parser:
+      name: ups
+      type: Simple
+      refresh_time_ms: 5000
+
+  - type: BinaryParsed
+    initial_caption: "UPS battery low"
+    state: 1
+    parser:
+      use: ups
+
+  - type: GeneralPurposeMeasurementParsed
+    initial_caption: "UPS battery"
+    value: 2
+    default_value_precision: 0
+    default_unit_after_value: "%"
+    parser:
+      use: ups
+
+  - type: GeneralPurposeMeasurementParsed
+    initial_caption: "UPS load"
+    value: 3
+    default_value_precision: 0
+    default_unit_after_value: "%"
+    parser:
+      use: ups
+
+  # power is estimated: load % x 7 W (700 W rated). Calibrate the multiplier
+  # against a plug-in meter if it matters.
+  - type: ElectricityMeterParsed
+    initial_caption: "UPS input"
+    parser:
+      use: ups
+    phase_1:
+      - voltage: 4
+      - power_active: 3
+        multiplier: 7
+
+  # The UPS only has beeper.toggle, so toggle only when the state differs.
+  # The relay applies initial_state at every start (default: off -> cmd_off);
+  # "on" keeps alarms audible and is a no-op when the beeper is already on.
+  - type: CmdRelay
+    initial_caption: "UPS beeper"
+    initial_state: on
+    cmd_on: 'test "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = enabled || upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle'
+    cmd_off: 'test "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = disabled || upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle'
+    state: 5
+    parser:
+      use: ups
