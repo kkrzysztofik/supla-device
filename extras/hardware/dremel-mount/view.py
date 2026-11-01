@@ -28,6 +28,14 @@ OUT = os.path.join(HERE, "out")
 WATCH = [os.path.join(HERE, f) for f in ("params.py", "parts.py")]
 
 
+def mtimes():
+    """Watched mtimes, or None while a save is mid-flight (some editors unlink then rewrite)."""
+    try:
+        return [os.path.getmtime(p) for p in WATCH]
+    except OSError:   # a transiently missing file must not take the server down
+        return None
+
+
 def build():
     import params
     import parts
@@ -61,11 +69,11 @@ def main():
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", a.serve), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"serving out/ on http://0.0.0.0:{a.serve}/viewer.html, reload the page after a rebuild", flush=True)
-    seen = [os.path.getmtime(p) for p in WATCH]
+    seen = mtimes()
     while True:
         time.sleep(1)
-        now = [os.path.getmtime(p) for p in WATCH]
-        if now != seen:
+        now = mtimes()
+        if now is not None and now != seen:
             seen = now
             try:
                 build()
