@@ -152,7 +152,9 @@ The filter is all or nothing. If `upsd` is down, its data is stale, a variable
 the yaml uses is missing, or the beeper state is neither `enabled` nor
 `disabled`, it prints nothing and exits 1. The `Simple` parser treats the
 empty result as invalid, so all channels go invalid together instead of
-showing "on mains, 0 %". A blank line is never emitted: it would invalidate
+showing "on mains, 0 %". The two binary channels and the beeper relay have
+`offline_on_invalid_state: true`, so they show offline rather than a stale or
+default "off". A blank line is never emitted: it would invalidate
 the shared parser for whichever channels read after it, and the meter would
 publish the blank field as 0.
 
