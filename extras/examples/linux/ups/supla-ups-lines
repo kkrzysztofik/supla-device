@@ -1,0 +1,23 @@
+#!/usr/bin/awk -f
+# Copyright (C) 2026 Krzysztof Krzysztofik
+#
+# Turns `upsc <ups>` output into one value per line for the sd4linux Simple
+# parser (supla-device-ups.yaml uses these indexes):
+#   0 on battery (ups.status has OB)  1 battery low (LB)  2 battery.charge
+#   3 ups.load  4 input.voltage  5 beeper enabled
+# No ups.status (upsd down, stale data) -> no output, exit 1, so SUPLA channels
+# go invalid instead of showing "on mains, 0 %".
+{
+  i = index($0, ": ")
+  if (i) v[substr($0, 1, i - 1)] = substr($0, i + 2)
+}
+END {
+  if (v["ups.status"] == "") exit 1
+  s = " " v["ups.status"] " "
+  print (s ~ / OB /)
+  print (s ~ / LB /)
+  print v["battery.charge"]
+  print v["ups.load"]
+  print v["input.voltage"]
+  print (v["ups.beeper.status"] == "enabled")
+}
