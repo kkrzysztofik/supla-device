@@ -31,7 +31,8 @@ run as artifacts, so geometry and fit can be validated without a local CAD insta
 | `uv run parts.py --part all --check` | one solid and one shell per part, bed fit, module screw paths, pairwise interference in CAD (~3 min) |
 
 What is still physical: the values marked `MEASURE` (calipers) and the test print. Every number is
-in `params.py`; re-run both checks after measuring.
+in `params.py`, `check.py` prints the remaining `MEASURE` values on every run, and both checks re-run
+in one command after measuring.
 
 About 76 × 69 × 41 mm closed, plus a 10 mm antenna socket on top.
 

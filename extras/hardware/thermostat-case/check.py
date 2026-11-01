@@ -227,5 +227,10 @@ ok(P.Z_RIM - P.BACK_T - P.BACK_STACK - P.FRONT_STACK >= P.STACK_GAP, "back and f
 size = [hi - lo for lo, hi in P.OUTER]
 ok(all(s <= b for s, b in zip(size, P.BED, strict=True)), f"box {[round(s, 1) for s in size]} fits bed")
 
+# The checks cover the layout, but these are still estimates: say which ones on every run.
+with open("params.py", encoding="utf-8") as f:
+    measure = sorted(line.split("=", 1)[0].strip() for line in f if "=" in line and " MEASURE" in line)
+print("\nMEASURE (caliper) values still estimated: " + (", ".join(measure) if measure else "none"))
+
 print(f"\nFAILED: {len(failed)}" if failed else "\nall green")
 sys.exit(1 if failed else 0)
