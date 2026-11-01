@@ -36,6 +36,7 @@ class IngeconMeasurement : public Supla::Sensor::GeneralPurposeMeasurement {
 
  private:
   double readValue(const Supla::Linux::Ingecon::Readings& readings) const;
+  bool isElectricalValue() const;
 
   std::string valueKey_;
   Supla::Linux::Ingecon::BusClient busClient_;

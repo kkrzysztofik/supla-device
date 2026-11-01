@@ -176,3 +176,19 @@ TEST(IngeconChannelTest, MeasurementReturnsNanWhenStale) {
 
   EXPECT_TRUE(std::isnan(measurement.getValue()));
 }
+
+TEST(IngeconChannelTest, ElectricalMeasurementReturnsZeroWhenStale) {
+  // A silent inverter (night) has no voltage, current or power - like the
+  // meters, which zero these too. Alarms/temperature/counters stay unknown.
+  for (const char* key : {"vdc", "idc", "vbus", "vac", "vac2", "vac3", "iac",
+                          "iac2", "iac3", "pac", "fac", "cos_phi"}) {
+    IngeconMeasurement measurement(testConfig(), key);
+    measurement.setReadingsForTest(sampleReadings(), false);
+
+    measurement.getValue();
+    measurement.getValue();
+    measurement.getValue();
+
+    EXPECT_DOUBLE_EQ(measurement.getValue(), 0.0) << key;
+  }
+}

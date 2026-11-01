@@ -89,12 +89,25 @@ double IngeconMeasurement::readValue(
   return NAN;
 }
 
+// A silent inverter (e.g. at night) has no voltage, current or power, so these
+// read 0 like the Ingecon meters do. Anything else (alarms, temperature,
+// counters, dates) is unknown and stays NaN.
+bool IngeconMeasurement::isElectricalValue() const {
+  for (const char* key : {"vdc", "idc", "vbus", "vac", "vac2", "vac3", "iac",
+                          "iac2", "iac3", "pac", "fac", "cos_phi"}) {
+    if (valueKey_ == key) {
+      return true;
+    }
+  }
+  return false;
+}
+
 double IngeconMeasurement::getValue() {
   Supla::Linux::Ingecon::Readings readings;
   bool valid = false;
   if (!busClient_.copyReadings(&readings, &valid) || !valid) {
     if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
-      return NAN;
+      return isElectricalValue() ? 0 : NAN;
     }
     return channel.getValueDouble();
   }
