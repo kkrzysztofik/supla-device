@@ -1,0 +1,84 @@
+# Copyright (C) 2026 Krzysztof Krzysztofik
+#
+# Green Cell PowerProof 1000VA UPS via NUT -> sd4linux, as its own SUPLA device.
+# Setup: docs/integrations/greencell-ups-supla.md
+# Keep line indexes in sync with ups/supla-ups-lines.
+
+name: "UPS Green Cell 1000VA"
+log_level: info
+state_files_path: "/var/lib/supla-device-ups"
+
+supla:
+  server: svr1.supla.org
+  mail: user@example.com
+
+channels:
+  # offline_on_invalid_state: when the filter prints nothing (NUT down or a
+  # value missing), the state channels go offline instead of showing a stale or
+  # default "off" (e.g. "not on battery" before the first valid read).
+  - type: BinaryParsed
+    initial_caption: "UPS on battery"
+    state: 0
+    offline_on_invalid_state: true
+    source:
+      name: ups_src
+      type: Cmd
+      command: "upsc greencell@localhost 2>/dev/null | /usr/local/bin/supla-ups-lines"
+    parser:
+      name: ups
+      type: Simple
+      refresh_time_ms: 5000
+
+  - type: BinaryParsed
+    initial_caption: "UPS battery low"
+    state: 1
+    offline_on_invalid_state: true
+    parser:
+      use: ups
+
+  - type: GeneralPurposeMeasurementParsed
+    initial_caption: "UPS battery"
+    value: 2
+    default_value_precision: 0
+    default_unit_after_value: "%"
+    parser:
+      use: ups
+
+  - type: GeneralPurposeMeasurementParsed
+    initial_caption: "UPS load"
+    value: 3
+    default_value_precision: 0
+    default_unit_after_value: "%"
+    parser:
+      use: ups
+
+  # Voltage and frequency are measured; current and VA are derived from the
+  # UPS load % (1 % = 0.04 A), see ups/supla-ups-lines. Active power is
+  # VA x assumed power factor: calibrate this multiplier once against a
+  # plug-in meter (0.95 suits PFC power supplies).
+  - type: ElectricityMeterParsed
+    initial_caption: "UPS power"
+    parser:
+      use: ups
+    frequency: 6
+    phase_1:
+      - voltage: 4
+      - current: 7
+      - power_apparent: 8
+      - power_active: 8
+        multiplier: 0.95
+
+  # The UPS only has beeper.toggle, so toggle only when the state is known to
+  # be the opposite (unknown -> do nothing). The relay applies initial_state at
+  # every start (default: off -> cmd_off), twice on Linux; "on" never silences
+  # the alarm. sleep: NUT re-reads the beeper state only every ~2 s, so the
+  # second call must not toggle back. PASSWORD: alphanumeric (unquoted in sh).
+  - type: CmdRelay
+    initial_caption: "UPS beeper"
+    initial_state: on
+    cmd_on: '[ "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = disabled ] && upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle && sleep 3'
+    cmd_off: '[ "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = enabled ] && upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle && sleep 3'
+    state: 5
+    offline_on_invalid_state: true
+    parser:
+      use: ups

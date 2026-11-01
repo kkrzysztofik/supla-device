@@ -115,6 +115,7 @@ class TestLinuxYamlConfig : public Supla::LinuxYamlConfig {
   using Supla::LinuxYamlConfig::addCustomChannel;
   using Supla::LinuxYamlConfig::addCustomRelay;
   using Supla::LinuxYamlConfig::addCmdRelay;
+  using Supla::LinuxYamlConfig::addElectricityMeterParsed;
   using Supla::LinuxYamlConfig::addCmdValve;
   using Supla::LinuxYamlConfig::addCmdRollerShutter;
   using Supla::LinuxYamlConfig::addHvac;
@@ -1127,4 +1128,25 @@ TEST(Sd4linuxYamlConfigTests, RejectsParsedIconIdOutsideAllowedRange) {
                                       0,
                                       &parser));
   deleteCreatedElement(previousElement);
+}
+
+TEST(Sd4linuxYamlConfigTests, ElectricityMeterParsedMarksUnconfiguredPhases) {
+  TestLinuxYamlConfig config;
+  FakeYamlSource source;
+  FakeYamlParser parser(&source);
+  auto previousElement = Supla::Element::last();
+
+  const bool added = config.addElectricityMeterParsed(
+      YAML::Load("phase_1:\n  - voltage: v\n"), 0, &parser);
+  const bool created = Supla::Element::last() != previousElement;
+  const uint64_t flags =
+      created ? Supla::Element::last()->getChannel()->getFlags() : 0;
+  // Clean up before asserting: Supla::Element is a global list.
+  deleteCreatedElement(previousElement);
+
+  ASSERT_TRUE(added);
+  ASSERT_TRUE(created);
+  EXPECT_FALSE(flags & SUPLA_CHANNEL_FLAG_PHASE1_UNSUPPORTED);
+  EXPECT_TRUE(flags & SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
+  EXPECT_TRUE(flags & SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
 }
