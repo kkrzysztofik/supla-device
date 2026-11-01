@@ -66,7 +66,7 @@ Refresh: 5000 ms. Each refresh is one `upsc` call that feeds every channel.
 ## Error handling
 
 - `upsd` down or data stale → `upsc` prints nothing to stdout. The awk
-  `END{if(!NR) exit 1}` emits no lines, and the `Simple` parser treats empty
+  filter (`supla-ups-lines`) sees no `ups.status`, emits no lines and exits 1, and the `Simple` parser treats empty
   content as invalid (`parser/simple.cpp:72`). Channels go invalid instead
   of showing "on mains, 0 %".
 - A single missing variable → a blank line → stored as a string → that
