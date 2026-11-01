@@ -140,11 +140,17 @@ void SmaInverter::applyMappedReadings(
 void SmaInverter::applyReadingsToChannel() {
   std::map<std::string, double> values;
   bool valid = false;
-  busClient_.copyReadings(&values, &valid);
+  auto link = Supla::Linux::Sma::LinkState::Unknown;
+  busClient_.copyReadings(&values, &valid, &link);
 
   if (!valid) {
     if (Supla::Linux::markInvalidRead(&invDisabledCounter_)) {
-      setZeroValues();
+      // Asleep (nothing answered): really 0 W. Link error: unknown, not 0.
+      if (link == Supla::Linux::Sma::LinkState::Silent) {
+        setZeroValues();
+      } else {
+        resetReadParameters();
+      }
       updateChannelValues();
     }
     return;
@@ -154,6 +160,19 @@ void SmaInverter::applyReadingsToChannel() {
   applyMappedReadings(values);
   updateChannelValues();
 }
+
+#ifdef SUPLA_TEST
+void SmaInverter::setReadingsForTest(
+    const std::map<std::string, double>& values,
+    bool valid,
+    Supla::Linux::Sma::LinkState link) {
+  busClient_.setReadingsForTest(values, valid, link);
+}
+
+void SmaInverter::applyReadingsForTest() {
+  applyReadingsToChannel();
+}
+#endif
 
 void SmaInverter::iterateAlways() {
   const uint32_t pollMs = static_cast<uint32_t>(pollIntervalSec_ * 1000);

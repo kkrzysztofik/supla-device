@@ -307,15 +307,33 @@ bool AddSmaMeasurement(const Supla::Linux::ChannelFactoryContext& context) {
     return false;
   }
 
+  // sma_value: link -> report the link state (1 / 0 / -1) instead of an SMA
+  // channel; it then takes no sma_channels.
+  const auto& ch = context.channel;
+  bool linkChannel = false;
+  if (ch["sma_value"]) {
+    context.config.markChannelParameterUsed();
+    if (ch["sma_value"].as<std::string>() != "link" || ch["sma_channels"]) {
+      SUPLA_LOG_ERROR(
+          "Channel[%d] config: sma_value supports only \"link\", without "
+          "sma_channels",
+          context.channelNumber);
+      return false;
+    }
+    linkChannel = true;
+  }
+
   std::vector<Supla::PV::SmaMappedChannel> mappedChannels;
-  if (!parseSingleSmaChannel(
+  if (!linkChannel &&
+      !parseSingleSmaChannel(
           context, SmaMappingKind::Measurement, &mappedChannels)) {
     return false;
   }
 
   SUPLA_LOG_INFO(
-      "Channel[%d] config: adding SmaMeasurement on %s, net_address=0x%04x",
+      "Channel[%d] config: adding SmaMeasurement%s on %s, net_address=0x%04x",
       context.channelNumber,
+      linkChannel ? " (link)" : "",
       serialConfig.serial.devicePath.c_str(),
       serialConfig.netAddress);
 

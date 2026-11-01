@@ -28,6 +28,11 @@ namespace Sma {
 
 constexpr int kDefaultPollIntervalSec = 5;
 
+// Result of the last poll cycle as seen by subscribers. Silent: the port is
+// open but no byte came back (inverter asleep). Error: port, read or protocol
+// failure with the line alive. Unknown: no poll cycle has finished yet.
+enum class LinkState { Unknown, Ok, Silent, Error };
+
 struct SmaBusConfig {
   std::string serialDevice;
   int baud = 9600;
@@ -47,6 +52,7 @@ class SmaBus : public std::enable_shared_from_this<SmaBus> {
       mutable std::mutex mutex;
       std::map<std::string, double> valuesByKey;
       bool cacheValid = false;
+      LinkState link = LinkState::Unknown;
     };
 
     std::shared_ptr<State> state;

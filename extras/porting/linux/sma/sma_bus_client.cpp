@@ -62,7 +62,8 @@ bool SmaBusClient::copyChannels(
 }
 
 bool SmaBusClient::copyReadings(std::map<std::string, double>* values,
-                                bool* valid) const {
+                                bool* valid,
+                                LinkState* link) const {
   if (values == nullptr || valid == nullptr) {
     return false;
   }
@@ -70,8 +71,23 @@ bool SmaBusClient::copyReadings(std::map<std::string, double>* values,
   std::lock_guard<std::mutex> lock(state_->mutex);
   *values = state_->valuesByKey;
   *valid = state_->cacheValid;
+  if (link != nullptr) {
+    *link = state_->link;
+  }
   return true;
 }
+
+#ifdef SUPLA_TEST
+void SmaBusClient::setReadingsForTest(
+    const std::map<std::string, double>& values,
+    bool valid,
+    LinkState link) {
+  std::lock_guard<std::mutex> lock(state_->mutex);
+  state_->valuesByKey = values;
+  state_->cacheValid = valid;
+  state_->link = link;
+}
+#endif
 
 void shutdownAllClients() {
   Supla::Linux::shutdownSharedBusClients(gClients);

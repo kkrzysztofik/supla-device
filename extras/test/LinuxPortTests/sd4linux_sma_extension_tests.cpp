@@ -10,11 +10,13 @@
 #include <gtest/gtest.h>
 #include <linux_channel_factory.h>
 #include <linux_yaml_config.h>
+#include <supla/element.h>
 #include <yaml-cpp/yaml.h>
 
 #include <cstdlib>
 
 #include "byd_config.h"
+#include "simple_time.h"
 
 namespace Supla {
 namespace Linux {
@@ -158,4 +160,34 @@ TEST_F(Sd4linuxSmaExtensionTests, ExampleBydYamlUsesRegisteredChannelTypes) {
   EXPECT_TRUE(root["byd"].IsMap());
   EXPECT_TRUE(root["byd"]["email"].IsScalar());
   EXPECT_TRUE(root["byd"]["region"].IsScalar());
+}
+
+TEST_F(Sd4linuxSmaExtensionTests, SmaMeasurementAcceptsOnlyLinkAsSmaValue) {
+  Supla::Linux::initSmaExtension();
+  SimpleTime time;
+  const auto* entry =
+      Supla::Linux::ChannelFactoryRegistry::instance().findByType(
+          "SmaMeasurement");
+  ASSERT_NE(entry, nullptr);
+
+  Supla::LinuxYamlConfig config("");
+  const std::string base =
+      "type: SmaMeasurement\n"
+      "serial: {device: /tmp/supla-sma-extension-test, baud: 1200}\n"
+      "device: {net_address: 1}\n";
+  auto create = [&](const std::string& extra) {
+    const YAML::Node channel = YAML::Load(base + extra);
+    auto* previous = Supla::Element::last();
+    const Supla::Linux::ChannelFactoryContext context{config, channel, 0};
+    const bool created = entry->factory(context);
+    if (Supla::Element::last() != previous) {
+      delete Supla::Element::last();
+    }
+    return created;
+  };
+
+  EXPECT_TRUE(create("sma_value: link\n"));
+  EXPECT_FALSE(create("sma_value: Zac\n"));
+  EXPECT_FALSE(create("sma_value: link\nsma_channels: {Zac: measurement}\n"));
+  EXPECT_TRUE(create("sma_channels: {Zac: measurement}\n"));
 }
