@@ -11,6 +11,7 @@ uv run view.py --serve 8080        build, serve out/ on the LAN, rebuild when pa
 """
 import argparse
 import base64
+import contextlib
 import functools
 import http.server
 import importlib
@@ -27,6 +28,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
 PYC = os.path.join(HERE, "__pycache__")
 WATCH = [os.path.join(HERE, f) for f in ("params.py", "parts.py")]
+WATCH_OPTIONAL = [os.path.join(HERE, "A1_HeatSync.3mf")]   # rack/collar mesh: downloading it rebuilds
 sys.dont_write_bytecode = True   # params/parts are re-read every build: never cache them as .pyc
 
 
@@ -38,15 +40,20 @@ def drop_bytecode():
         return
     for n in names:
         if n.startswith(("params.", "parts.")) and n.endswith(".pyc"):
-            os.unlink(os.path.join(PYC, n))
+            with contextlib.suppress(FileNotFoundError):   # a concurrent build removed it first
+                os.unlink(os.path.join(PYC, n))
 
 
 def mtimes():
-    """Watched mtimes, or None while a save is mid-flight (some editors unlink then rewrite)."""
+    """Snapshot of what build() reads; a missing optional mesh is None, so adding or removing it counts.
+
+    Returns None overall while params.py/parts.py are mid-save (some editors unlink then rewrite).
+    """
     try:
-        return [os.path.getmtime(p) for p in WATCH]
+        now = [os.path.getmtime(p) for p in WATCH]
     except OSError:   # a transiently missing file must not take the server down
         return None
+    return now + [os.path.getmtime(p) if os.path.exists(p) else None for p in WATCH_OPTIONAL]
 
 
 def build():
