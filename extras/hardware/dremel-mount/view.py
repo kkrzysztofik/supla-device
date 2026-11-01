@@ -45,15 +45,23 @@ def drop_bytecode():
 
 
 def mtimes():
-    """Snapshot of what build() reads; a missing optional mesh is None, so adding or removing it counts.
+    """Snapshot of what build() reads; None marks an input that is absent right now.
 
-    Returns None overall while params.py/parts.py are mid-save (some editors unlink then rewrite).
+    Returns None overall while params.py/parts.py are mid-save (some editors unlink then
+    rewrite), so the loop waits instead of rebuilding against a half-saved source.
     """
-    try:
-        now = [os.path.getmtime(p) for p in WATCH]
-    except OSError:   # a transiently missing file must not take the server down
-        return None
-    return now + [os.path.getmtime(p) if os.path.exists(p) else None for p in WATCH_OPTIONAL]
+    now = []
+    for p in WATCH:
+        try:
+            now.append(os.path.getmtime(p))
+        except OSError:   # a transiently missing file must not take the server down
+            return None
+    for p in WATCH_OPTIONAL:
+        try:
+            now.append(os.path.getmtime(p))
+        except OSError:   # absent, or being replaced right now: same thing for a rebuild
+            now.append(None)
+    return now
 
 
 def build():
