@@ -58,14 +58,16 @@ channels:
       - power_active: 3
         multiplier: 7
 
-  # The UPS only has beeper.toggle, so toggle only when the state differs.
-  # The relay applies initial_state at every start (default: off -> cmd_off);
-  # "on" keeps alarms audible and is a no-op when the beeper is already on.
+  # The UPS only has beeper.toggle, so toggle only when the state is known to
+  # be the opposite (unknown -> do nothing). The relay applies initial_state at
+  # every start (default: off -> cmd_off), twice on Linux; "on" never silences
+  # the alarm. sleep: NUT re-reads the beeper state only every ~2 s, so the
+  # second call must not toggle back. PASSWORD: alphanumeric (unquoted in sh).
   - type: CmdRelay
     initial_caption: "UPS beeper"
     initial_state: on
-    cmd_on: 'test "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = enabled || upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle'
-    cmd_off: 'test "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = disabled || upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle'
+    cmd_on: '[ "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = disabled ] && upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle && sleep 3'
+    cmd_off: '[ "$(upsc greencell@localhost ups.beeper.status 2>/dev/null)" = enabled ] && upscmd -u supla -p PASSWORD greencell@localhost beeper.toggle && sleep 3'
     state: 5
     parser:
       use: ups

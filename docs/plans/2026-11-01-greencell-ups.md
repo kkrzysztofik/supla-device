@@ -206,6 +206,8 @@ No commit (VM-only state). The config is documented in Task 5.
 
 ### Task 3: `supla-device-ups.yaml`
 
+> **As built:** the committed `extras/examples/linux/supla-device-ups.yaml` is authoritative. It uses `initial_caption` (`caption` is not a valid key), `initial_state: on` and a fail-closed, settle-delayed beeper guard (only `beeper.toggle` exists).
+
 **Files:**
 - Create: `extras/examples/linux/supla-device-ups.yaml`
 
