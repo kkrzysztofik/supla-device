@@ -27,13 +27,14 @@ Design notes: [design](../plans/2026-11-01-greencell-ups-design.md),
 | 1 | `ups.status` contains `LB` | `BinaryParsed` "UPS battery low" |
 | 2 | `battery.charge` | `GeneralPurposeMeasurementParsed` "UPS battery" % |
 | 3 | `ups.load` | `GeneralPurposeMeasurementParsed` "UPS load" % |
-| 4, 3 | `input.voltage`, `ups.load` × 7 | `ElectricityMeterParsed` "UPS input": voltage, estimated power (700 W at 100 %) |
 | 5 | `ups.beeper.status == enabled` | `CmdRelay` "UPS beeper" |
+| 4, 6, 7, 8 | `input.voltage`, `output.frequency`, current = `ups.load` % × `output.current.nominal`, VA = current × `output.voltage` | `ElectricityMeterParsed` "UPS power": voltage, frequency, current, apparent power, and active power = VA × 0.95 |
 
-One `upsc` call every 5 s feeds all channels. Not published: `upsmon`
-auto-shutdown, runtime (needs `runtimecal`), output voltage and frequency (the
-meter's `frequency:` key would take one more filter line). The meter is
-single-phase: sd4linux marks phases without a `phase_N:` block unsupported.
+One `upsc` call every 5 s feeds all channels. Voltage and frequency are
+measured; current, VA and W are derived from the 1 %-resolution load (0.04 A
+per step). Not published: `upsmon` auto-shutdown, runtime (needs
+`runtimecal`), output voltage, energy. The meter is single-phase: sd4linux
+marks phases without a `phase_N:` block unsupported.
 
 ## 1. NUT (Debian 13, NUT 2.8.1)
 
@@ -87,7 +88,7 @@ device next to the existing ones, with its own config, state directory and unit:
 
 ```bash
 install -m 0755 extras/examples/linux/ups/supla-ups-lines /usr/local/bin/
-upsc greencell@localhost 2>/dev/null | supla-ups-lines   # 6 lines, e.g. 0 0 100 12 231.5 1
+upsc greencell@localhost 2>/dev/null | supla-ups-lines   # 9 lines, e.g. 0 0 100 12 231.5 1 50.0 0.48 109.4
 
 pw=$(awk '/password/{print $3}' /etc/nut/upsd.users)
 install -m 0640 -o root -g supla-device /dev/null /etc/supla-device-ups.yaml
@@ -140,15 +141,20 @@ lag by up to one refresh (5 s).
   defaults of low 20.8 V and high 26.0 V. On float charge (27.5 V) it reads
   100. After a real discharge, set `default.battery.voltage.low/high` in
   `ups.conf` and restart `nut-driver@greencell`.
-* **Power** is `ups.load` × 7 W. Adjust `multiplier` in the yaml against a
-  plug-in meter if accuracy matters.
+* **Active power** is the filtered apparent power (line 8) × 0.95, an assumed
+  power factor that suits PFC power supplies. Compare the meter's W with a
+  plug-in meter at two loads and adjust `multiplier` under `power_active` in
+  the yaml.
 
 ## Error handling and troubleshooting
 
-If `upsd` is down or its data is stale, `upsc` prints nothing. The filter then
-emits no lines and exits 1, the `Simple` parser treats the result as invalid,
-and the channels go invalid instead of showing "on mains, 0 %". A single
-missing variable leaves only that channel invalid.
+The filter is all or nothing. If `upsd` is down, its data is stale, a variable
+the yaml uses is missing, or the beeper state is neither `enabled` nor
+`disabled`, it prints nothing and exits 1. The `Simple` parser treats the
+empty result as invalid, so all channels go invalid together instead of
+showing "on mains, 0 %". A blank line is never emitted: it would invalidate
+the shared parser for whichever channels read after it, and the meter would
+publish the blank field as 0.
 
 | Symptom | Check |
 | --- | --- |

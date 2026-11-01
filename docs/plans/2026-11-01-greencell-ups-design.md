@@ -63,14 +63,19 @@ One `Cmd` source and one shared `Simple` parser. awk fixes the line order:
 
 Refresh: 5000 ms. Each refresh is one `upsc` call that feeds every channel.
 
+> **As built:** the meter also publishes frequency, current and VA, with
+> W = VA × 0.95; see `docs/integrations/greencell-ups-supla.md` and the yaml.
+
 ## Error handling
 
 - `upsd` down or data stale → `upsc` prints nothing to stdout. The awk
   filter (`supla-ups-lines`) sees no `ups.status`, emits no lines and exits 1, and the `Simple` parser treats empty
   content as invalid (`parser/simple.cpp:72`). Channels go invalid instead
   of showing "on mains, 0 %".
-- A single missing variable → a blank line → stored as a string → that
-  channel reads invalid.
+- ~~A single missing variable → a blank line → only that channel invalid.~~
+  Wrong: a blank field marks the whole shared `Simple` parser invalid
+  (`simple.cpp:35`) and reaches `ElectricityMeterParsed` as 0. As built, the
+  filter is all or nothing: any missing value → no output, exit 1.
 
 ## Testing
 
