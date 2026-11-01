@@ -57,4 +57,12 @@ done
 check "beeper muted" '' 1 "$(without ups.beeper.status)
 ups.beeper.status: muted
 "
+# a non-numeric value (e.g. N/A) would reach awk arithmetic as 0 and the
+# shared parser as a string, so it counts as missing
+for var in battery.charge ups.load input.voltage output.frequency \
+           output.current.nominal output.voltage; do
+  check "non-numeric $var" '' 1 "$(without "$var")
+$var: N/A
+"
+done
 exit $fail
