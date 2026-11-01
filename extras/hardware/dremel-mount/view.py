@@ -25,7 +25,20 @@ from build123d import export_stl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
+PYC = os.path.join(HERE, "__pycache__")
 WATCH = [os.path.join(HERE, f) for f in ("params.py", "parts.py")]
+sys.dont_write_bytecode = True   # params/parts are re-read every build: never cache them as .pyc
+
+
+def drop_bytecode():
+    """Remove params/parts bytecode; a same-second, same-size edit defeats .pyc freshness checks."""
+    try:
+        names = os.listdir(PYC)
+    except FileNotFoundError:
+        return
+    for n in names:
+        if n.startswith(("params.", "parts.")) and n.endswith(".pyc"):
+            os.unlink(os.path.join(PYC, n))
 
 
 def mtimes():
@@ -37,6 +50,7 @@ def mtimes():
 
 
 def build():
+    drop_bytecode()
     import params
     import parts
     importlib.reload(params)
@@ -53,9 +67,14 @@ def build():
     glb = base64.b64encode(scene.export(file_type="glb")).decode()
     os.makedirs(OUT, exist_ok=True)
     page = os.path.join(OUT, "viewer.html")
-    with open(page + ".tmp", "w") as f:   # a reader must never see a half-written page
-        f.write(PAGE.replace("__GLB__", glb))
-    os.replace(page + ".tmp", page)
+    fd, tmp = tempfile.mkstemp(dir=OUT, suffix=".html")   # unique: a concurrent build must not collide
+    try:
+        with os.fdopen(fd, "w") as f:   # a reader must never see a half-written page
+            f.write(PAGE.replace("__GLB__", glb))
+        os.replace(tmp, page)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
     print(time.strftime("%H:%M:%S"), "wrote out/viewer.html,", len(scene.geometry), "meshes", flush=True)
 
 
