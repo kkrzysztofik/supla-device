@@ -114,6 +114,22 @@ SUPLA mapping aliases: `pac`, `uac`, `fac`, `totwh` (→ `rvr_act_energy`), `iac
 `upv`, `ipv`,
 `tkk`, `zac`, `riso`, `gpm`.
 
+### Inverter asleep vs link error
+
+An SMA inverter powers its RS485 interface from PV, so at night nothing
+answers. The poller tells this apart from a fault:
+
+| Poll cycle | `SmaInverter` / `SmaDcMeter` | `sma_value: link` |
+|------------|------------------------------|-------------------|
+| values read | values | `1` |
+| port open, no byte received (asleep) | power, current, voltage → 0; energy kept | `0` |
+| port, read/write or protocol error | measurement unavailable; energy kept | `-1` |
+| no cycle finished yet | — | unavailable |
+
+`sma_value: link` is a `SmaMeasurement` without `sma_channels`; alert on `-1`
+in SUPLA. `SmaMeasurement` and `SmaThermometer` values are unknown (NaN /
+not available) in both failure cases.
+
 ### Device profiles
 
 YASDI sequence for spot values (what works on WR33):

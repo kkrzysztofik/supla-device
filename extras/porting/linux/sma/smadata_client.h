@@ -83,8 +83,14 @@ class SmaDataClient {
 
   void resetBackoff();
   int backoffSec() const;
+  // True if this client has received no byte at all and no read or write
+  // failed: the line is up but nothing answers (inverter asleep). A new client
+  // is created for every poll cycle, so this covers exactly one cycle.
+  bool receivedNothing() const;
 
  private:
+  // All serial reads go through here so receivedNothing() sees every byte.
+  ssize_t readPort(uint8_t* buffer, size_t maxLen, int timeoutMs);
   bool transact(uint16_t destAddr,
                 uint8_t cmd,
                 const uint8_t* txData,
@@ -119,6 +125,8 @@ class SmaDataClient {
   uint16_t deviceAddr_;
   SmaNetFramer framer_;
   int consecutiveErrors_ = 0;
+  size_t rxBytes_ = 0;
+  bool ioError_ = false;  // a read or write failed in this cycle
 };
 
 }  // namespace Sma

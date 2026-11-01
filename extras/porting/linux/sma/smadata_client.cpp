@@ -161,6 +161,20 @@ void SmaDataClient::resetBackoff() {
   consecutiveErrors_ = 0;
 }
 
+bool SmaDataClient::receivedNothing() const {
+  return rxBytes_ == 0 && !ioError_;
+}
+
+ssize_t SmaDataClient::readPort(uint8_t* buffer, size_t maxLen, int timeoutMs) {
+  const ssize_t readBytes = port_.readSome(buffer, maxLen, timeoutMs);
+  if (readBytes < 0) {
+    ioError_ = true;
+  } else {
+    rxBytes_ += static_cast<size_t>(readBytes);
+  }
+  return readBytes;
+}
+
 int SmaDataClient::backoffSec() const {
   if (consecutiveErrors_ <= 0) {
     return 0;
@@ -263,6 +277,7 @@ bool SmaDataClient::sendSmadata(uint16_t destAddr,
   const auto frame =
       framer_.encapsulate(kProtPppSmadata1, payload.data(), payload.size());
   if (!port_.writeAll(frame.data(), frame.size())) {
+    ioError_ = true;
     SUPLA_LOG_WARNING("SmaBus: serial write failed for %s (%zu wire bytes)",
                       smaCmdName(cmd),
                       frame.size());
@@ -282,7 +297,7 @@ void SmaDataClient::drainSerial(int timeoutMs, SmaReadStats* stats) {
 
   while (Clock::now() < deadline) {
     const int waitMs = waitMsUntil(deadline);
-    const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
+    const ssize_t readBytes = readPort(buffer, sizeof(buffer), waitMs);
     if (readBytes <= 0) {
       continue;
     }
@@ -328,7 +343,7 @@ std::optional<SmaDataResponse> SmaDataClient::readOneFrame(
 
   while (Clock::now() < deadline) {
     const int waitMs = waitMsUntil(deadline);
-    const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
+    const ssize_t readBytes = readPort(buffer, sizeof(buffer), waitMs);
     if (readBytes < 0) {
       SUPLA_LOG_WARNING("SmaBus: serial read error while waiting for %s",
                         smaCmdName(expectedCmd));
@@ -620,7 +635,7 @@ std::optional<SmaDetectedDevice> SmaDataClient::detectDevice(
 
   while (!found && Clock::now() < deadline) {
     const int waitMs = waitMsUntil(deadline);
-    const ssize_t readBytes = port_.readSome(buffer, sizeof(buffer), waitMs);
+    const ssize_t readBytes = readPort(buffer, sizeof(buffer), waitMs);
     if (readBytes <= 0) {
       continue;
     }

@@ -12,6 +12,7 @@
 
 #include <supla/sensor/general_purpose_measurement.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -33,7 +34,16 @@ class SmaMeasurement : public Supla::Sensor::GeneralPurposeMeasurement {
   ~SmaMeasurement() override;
 
   void onInit() override;
+  // Without sma_channels the measurement reports the link state instead:
+  // 1 = reads OK, 0 = inverter silent (asleep), -1 = port/read/protocol
+  // error, unavailable until the first poll cycle finishes.
   double getValue() override;
+
+#ifdef SUPLA_TEST
+  void setReadingsForTest(const std::map<std::string, double>& values,
+                          bool valid,
+                          Supla::Linux::Sma::LinkState link);
+#endif
 
  private:
   std::string channelKey_;
