@@ -39,7 +39,7 @@ code, and NUT also brings instant commands and optional `upsmon` shutdown.
 
 - `nut.conf`: `MODE=standalone`.
 - `upsd.conf`: `LISTEN 127.0.0.1 3493`.
-- `upsd.users`: user `supla`, `instcmds = beeper.enable beeper.disable`.
+- `upsd.users`: user `supla`, `instcmds = beeper.toggle` (the UPS has no enable/disable).
 
 ### Separate SUPLA device
 
@@ -84,4 +84,4 @@ Refresh: 5000 ms. Each refresh is one `upsc` call that feeds every channel.
 
 - `upsmon` auto-shutdown: about 3 lines of config, add later if wanted.
 - `battery.runtime`: needs `runtimecal` calibration first.
-- Output voltage and frequency: `ElectricityMeterParsed` has no frequency key.
+- Output voltage and frequency (the meter has a `frequency:` key; not wired).

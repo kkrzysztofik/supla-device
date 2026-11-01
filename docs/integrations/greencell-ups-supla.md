@@ -31,8 +31,9 @@ Design notes: [design](../plans/2026-11-01-greencell-ups-design.md),
 | 5 | `ups.beeper.status == enabled` | `CmdRelay` "UPS beeper" |
 
 One `upsc` call every 5 s feeds all channels. Not published: `upsmon`
-auto-shutdown, runtime (needs `runtimecal`), and output voltage/frequency
-(`ElectricityMeterParsed` has no frequency key).
+auto-shutdown, runtime (needs `runtimecal`), output voltage and frequency (the
+meter's `frequency:` key would take one more filter line). The meter is
+single-phase: sd4linux marks phases without a `phase_N:` block unsupported.
 
 ## 1. NUT (Debian 13, NUT 2.8.1)
 
@@ -93,14 +94,17 @@ install -m 0640 -o root -g supla-device /dev/null /etc/supla-device-ups.yaml
 sed "s/PASSWORD/$pw/g" extras/examples/linux/supla-device-ups.yaml > /etc/supla-device-ups.yaml
 # now set supla.server and supla.mail in /etc/supla-device-ups.yaml
 
-sed 's#/etc/supla-device-ingecon.yaml#/etc/supla-device-ups.yaml#;
-     s#/var/lib/supla-device-ingecon#/var/lib/supla-device-ups#;
+# derive the unit from the packaged supla-device.service
+sed 's#/etc/supla-device.yaml#/etc/supla-device-ups.yaml#;
+     s#^StateDirectory=.*#StateDirectory=supla-device-ups#;
      s#^Description=.*#Description=SUPLA Device Linux (UPS)#;
      s#^SyslogIdentifier=.*#SyslogIdentifier=supla-device-ups#' \
-  /usr/lib/systemd/system/supla-device-ingecon.service \
+  /lib/systemd/system/supla-device.service \
   > /etc/systemd/system/supla-device-ups.service
-install -d -o supla-device -g supla-device /var/lib/supla-device-ups
 ```
+
+`StateDirectory=` creates `/var/lib/supla-device-ups`, which must match
+`state_files_path` in the YAML.
 
 Before the first start, enable new-device registration in SUPLA Cloud.
 Otherwise the log shows `Registration disabled!` and you have to restart the
