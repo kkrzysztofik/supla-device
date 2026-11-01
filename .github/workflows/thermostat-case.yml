@@ -1,0 +1,56 @@
+# Both checks for the printed thermostat case: the stdlib layout invariants and the CAD checks
+# (build123d + trimesh, taken from the PEP 723 headers of parts.py/view.py by uv). The printable
+# files are attached to the run, so geometry and fit can be validated without a local CAD setup.
+
+name: Thermostat case
+
+on:
+  push:
+    paths:
+      - "extras/hardware/thermostat-case/**"
+      - ".github/workflows/thermostat-case.yml"
+  pull_request:
+    paths:
+      - "extras/hardware/thermostat-case/**"
+      - ".github/workflows/thermostat-case.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: extras/hardware/thermostat-case
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+
+      - name: Layout invariants (stdlib, no CAD)
+        run: python3 check.py
+
+      - name: CAD solids, bed fit, screw paths and interference
+        run: uv run parts.py --part all --check
+
+      - name: Export STL/STEP
+        run: uv run parts.py --part all
+
+      - name: Build the 3D viewer
+        run: uv run view.py
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: thermostat-case
+          path: |
+            extras/hardware/thermostat-case/out/*.stl
+            extras/hardware/thermostat-case/out/*.step
+            extras/hardware/thermostat-case/out/viewer.html
+          if-no-files-found: error
