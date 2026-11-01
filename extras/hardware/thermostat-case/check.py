@@ -228,7 +228,7 @@ size = [hi - lo for lo, hi in P.OUTER]
 ok(all(s <= b for s, b in zip(size, P.BED, strict=True)), f"box {[round(s, 1) for s in size]} fits bed")
 
 # The checks cover the layout, but these are still estimates: say which ones on every run.
-with open("params.py", encoding="utf-8") as f:
+with open(P.__file__, encoding="utf-8") as f:   # the imported params.py, wherever check.py is run from
     measure = sorted(line.split("=", 1)[0].strip() for line in f if "=" in line and " MEASURE" in line)
 print("\nMEASURE (caliper) values still estimated: " + (", ".join(measure) if measure else "none"))
 
