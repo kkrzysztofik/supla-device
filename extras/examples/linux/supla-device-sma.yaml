@@ -55,6 +55,6 @@ channels:
     device: *sma_device
     poll_interval_sec: 15
     default_unit_after_value: "Ohm"
-    default_value_precision: 3
+    default_value_precision: 2
     sma_channels:
       Zac: measurement
