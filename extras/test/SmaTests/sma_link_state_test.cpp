@@ -173,3 +173,29 @@ TEST(SmaLinkStateTest, ImpedanceStaysUnknownWhenSilent) {
   }
   EXPECT_TRUE(std::isnan(zac.getValue()));
 }
+
+// The per-cycle aggregation: a single failed data read is a link error even
+// when another subscriber succeeded, while the cycle itself stays successful.
+TEST(SmaLinkStateTest, CycleOutcomeAggregatesDataSubscriberReads) {
+  using Supla::Linux::Sma::classifyCycle;
+
+  // Link-only bus: nothing can fail, the cycle succeeds and the link is Ok.
+  auto cycle = classifyCycle({});
+  EXPECT_TRUE(cycle.cycleOk);
+  EXPECT_EQ(cycle.linkState, LinkState::Ok);
+
+  // All data reads succeeded.
+  cycle = classifyCycle({true, true});
+  EXPECT_TRUE(cycle.cycleOk);
+  EXPECT_EQ(cycle.linkState, LinkState::Ok);
+
+  // Mixed result: no backoff, but the link reports the failed read.
+  cycle = classifyCycle({true, false});
+  EXPECT_TRUE(cycle.cycleOk);
+  EXPECT_EQ(cycle.linkState, LinkState::Error);
+
+  // All data reads failed: the cycle fails and so does the link.
+  cycle = classifyCycle({false, false});
+  EXPECT_FALSE(cycle.cycleOk);
+  EXPECT_EQ(cycle.linkState, LinkState::Error);
+}

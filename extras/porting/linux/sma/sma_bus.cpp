@@ -252,6 +252,21 @@ bool readSubscriberChannels(
 
 }  // namespace
 
+CycleOutcome classifyCycle(const std::vector<bool>& dataReadOutcomes) {
+  bool anyUpdated = false;
+  bool anyFailed = false;
+  for (const bool readOk : dataReadOutcomes) {
+    anyUpdated = anyUpdated || readOk;
+    anyFailed = anyFailed || !readOk;
+  }
+
+  CycleOutcome outcome;
+  outcome.cycleOk = anyUpdated || dataReadOutcomes.empty();
+  const bool linkOk = outcome.cycleOk && !anyFailed;
+  outcome.linkState = linkOk ? LinkState::Ok : LinkState::Error;
+  return outcome;
+}
+
 std::shared_ptr<SmaBus> SmaBus::acquire(const SmaBusConfig& config) {
   const SmaBusKey key{
       config.serialDevice, config.baud, config.media, config.netAddress};
@@ -434,9 +449,7 @@ void SmaBus::workerLoop() {
       }
     }
 
-    bool anySubscriberUpdated = false;
-    bool anyDataSubscriber = false;
-    bool anyDataSubscriberFailed = false;
+    std::vector<bool> dataReadOutcomes;
     std::vector<std::shared_ptr<Subscriber::State>> linkOnly{};
 
     for (auto& subscriber : subscribers) {
@@ -452,30 +465,24 @@ void SmaBus::workerLoop() {
         linkOnly.push_back(state);
         continue;
       }
-      anyDataSubscriber = true;
 
       // The inverter answered the login, so a failed read is a link error.
-      if (!readSubscriberChannels(
-              &client, useNameBasedConfig, bulkValues, channels, &readings)) {
-        storeSubscriberReadings(state, readings, false, LinkState::Error);
-        anyDataSubscriberFailed = true;
-        continue;
-      }
-
-      storeSubscriberReadings(state, readings, true, LinkState::Ok);
-      anySubscriberUpdated = true;
+      const bool readOk = readSubscriberChannels(
+          &client, useNameBasedConfig, bulkValues, channels, &readings);
+      storeSubscriberReadings(
+          state, readings, readOk, readOk ? LinkState::Ok : LinkState::Error);
+      dataReadOutcomes.push_back(readOk);
     }
 
     // The link channel reports the worst outcome of the cycle: a failed data
     // subscriber is a link error even when another subscriber succeeded.
-    const bool cycleOk = anySubscriberUpdated || !anyDataSubscriber;
-    const bool linkOk = cycleOk && !anyDataSubscriberFailed;
+    const CycleOutcome cycle = classifyCycle(dataReadOutcomes);
     for (const auto& state : linkOnly) {
       storeSubscriberReadings(
-          state, {}, linkOk, linkOk ? LinkState::Ok : LinkState::Error);
+          state, {}, cycle.linkState == LinkState::Ok, cycle.linkState);
     }
 
-    if (!cycleOk) {
+    if (!cycle.cycleOk) {
       const int delaySec = retryDelaySec(client, pollIntervalSec);
       SUPLA_LOG_WARNING("SmaBus: poll failed, backoff=%d s", delaySec);
       invalidateSubscriberReadings(subscribers, failedLinkState(client));

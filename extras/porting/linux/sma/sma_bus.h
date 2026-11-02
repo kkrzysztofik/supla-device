@@ -33,6 +33,20 @@ constexpr int kDefaultPollIntervalSec = 5;
 // failure with the line alive. Unknown: no poll cycle has finished yet.
 enum class LinkState { Unknown, Ok, Silent, Error };
 
+// Aggregated result of one poll cycle.
+struct CycleOutcome {
+  // True when the cycle counts as successful: at least one subscriber updated,
+  // or the bus has no data subscribers at all. Drives the retry/backoff path.
+  bool cycleOk = false;
+  // State reported by link-only subscribers.
+  LinkState linkState = LinkState::Unknown;
+};
+
+// Aggregates the read outcome of every data subscriber of one cycle (true =
+// read succeeded). A single failed read is a link error even when another
+// subscriber succeeded; successful subscribers keep their own readings.
+CycleOutcome classifyCycle(const std::vector<bool>& dataReadOutcomes);
+
 struct SmaBusConfig {
   std::string serialDevice;
   int baud = 9600;
