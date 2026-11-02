@@ -436,7 +436,8 @@ void SmaBus::workerLoop() {
 
     bool anySubscriberUpdated = false;
     bool anyDataSubscriber = false;
-    std::vector<std::shared_ptr<Subscriber::State>> linkOnly;
+    bool anyDataSubscriberFailed = false;
+    std::vector<std::shared_ptr<Subscriber::State>> linkOnly{};
 
     for (auto& subscriber : subscribers) {
       std::map<std::string, double> readings;
@@ -457,6 +458,7 @@ void SmaBus::workerLoop() {
       if (!readSubscriberChannels(
               &client, useNameBasedConfig, bulkValues, channels, &readings)) {
         storeSubscriberReadings(state, readings, false, LinkState::Error);
+        anyDataSubscriberFailed = true;
         continue;
       }
 
@@ -464,10 +466,13 @@ void SmaBus::workerLoop() {
       anySubscriberUpdated = true;
     }
 
+    // The link channel reports the worst outcome of the cycle: a failed data
+    // subscriber is a link error even when another subscriber succeeded.
     const bool cycleOk = anySubscriberUpdated || !anyDataSubscriber;
+    const bool linkOk = cycleOk && !anyDataSubscriberFailed;
     for (const auto& state : linkOnly) {
       storeSubscriberReadings(
-          state, {}, cycleOk, cycleOk ? LinkState::Ok : LinkState::Error);
+          state, {}, linkOk, linkOk ? LinkState::Ok : LinkState::Error);
     }
 
     if (!cycleOk) {
