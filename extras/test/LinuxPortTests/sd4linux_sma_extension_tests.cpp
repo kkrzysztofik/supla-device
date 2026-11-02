@@ -191,3 +191,37 @@ TEST_F(Sd4linuxSmaExtensionTests, SmaMeasurementAcceptsOnlyLinkAsSmaValue) {
   EXPECT_FALSE(create("sma_value: link\nsma_channels: {Zac: measurement}\n"));
   EXPECT_TRUE(create("sma_channels: {Zac: measurement}\n"));
 }
+
+TEST_F(Sd4linuxSmaExtensionTests, SmaMeterAndThermometerRejectSmaValue) {
+  Supla::Linux::initSmaExtension();
+  SimpleTime time;
+
+  Supla::LinuxYamlConfig config("");
+  const std::string serial =
+      "serial: {device: /tmp/supla-sma-extension-test, baud: 1200}\n"
+      "device: {net_address: 1}\n";
+  auto create = [&](const std::string& type, const std::string& extra) {
+    const YAML::Node channel =
+        YAML::Load("type: " + type + "\n" + serial + extra);
+    const auto* entry =
+        Supla::Linux::ChannelFactoryRegistry::instance().findByType(type);
+    if (entry == nullptr) {
+      return false;
+    }
+    auto* previous = Supla::Element::last();
+    const Supla::Linux::ChannelFactoryContext context{config, channel, 0};
+    const bool created = entry->factory(context);
+    if (Supla::Element::last() != previous) {
+      delete Supla::Element::last();
+    }
+    return created;
+  };
+
+  const std::string meter = "sma_channels: {Pac: power_active}\n";
+  const std::string thermometer = "sma_channels: {Tkk: temperature}\n";
+
+  EXPECT_TRUE(create("SmaInverter", meter));
+  EXPECT_FALSE(create("SmaInverter", meter + "sma_value: link\n"));
+  EXPECT_TRUE(create("SmaThermometer", thermometer));
+  EXPECT_FALSE(create("SmaThermometer", thermometer + "sma_value: link\n"));
+}

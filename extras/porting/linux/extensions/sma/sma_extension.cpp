@@ -223,6 +223,15 @@ bool parseSingleSmaChannel(
 bool AddSmaMeter(const Supla::Linux::ChannelFactoryContext& context,
                  const char* typeName,
                  bool useDcMeter) {
+  // sma_value belongs to SmaMeasurement; do not let the shared parameter
+  // validation silently accept it on an inverter or DC meter.
+  if (context.channel["sma_value"]) {
+    SUPLA_LOG_ERROR(
+        "Channel[%d] config: sma_value is supported only for SmaMeasurement",
+        context.channelNumber);
+    return false;
+  }
+
   SmaSerialConfig serialConfig;
   if (!parseSmaSerialConfig(context, &serialConfig)) {
     return false;
@@ -270,6 +279,15 @@ bool AddSmaDcMeter(const Supla::Linux::ChannelFactoryContext& context) {
 }
 
 bool AddSmaThermometer(const Supla::Linux::ChannelFactoryContext& context) {
+  // sma_value belongs to SmaMeasurement; do not let the shared parameter
+  // validation silently accept it on a thermometer.
+  if (context.channel["sma_value"]) {
+    SUPLA_LOG_ERROR(
+        "Channel[%d] config: sma_value is supported only for SmaMeasurement",
+        context.channelNumber);
+    return false;
+  }
+
   SmaSerialConfig serialConfig;
   if (!parseSmaSerialConfig(context, &serialConfig)) {
     return false;
