@@ -69,3 +69,15 @@ channels:
     default_value_precision: 2
     sma_channels:
       Zac: measurement
+
+  # Link state: 1 = reads OK, 0 = inverter silent (asleep, e.g. night),
+  # -1 = serial port / adapter / protocol error. Alert on -1 in SUPLA.
+  # When silent the AC/DC meters read 0; on an error they go unavailable
+  # instead of reporting a false 0.
+  - type: SmaMeasurement
+    caption: SMA link
+    serial: *sma_serial
+    device: *sma_device
+    sma_value: link
+    default_unit_after_value: ""
+    default_value_precision: 0

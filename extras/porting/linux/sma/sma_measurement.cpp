@@ -49,10 +49,35 @@ void SmaMeasurement::onInit() {
   Supla::Sensor::GeneralPurposeMeasurement::onInit();
 }
 
+#ifdef SUPLA_TEST
+void SmaMeasurement::setReadingsForTest(
+    const std::map<std::string, double>& values,
+    bool valid,
+    Supla::Linux::Sma::LinkState link) {
+  busClient_.setReadingsForTest(values, valid, link);
+}
+#endif
+
 double SmaMeasurement::getValue() {
+  using Supla::Linux::Sma::LinkState;
   std::map<std::string, double> values;
   bool valid = false;
-  if (!busClient_.copyReadings(&values, &valid) || !valid) {
+  auto link = LinkState::Unknown;
+  const bool copied = busClient_.copyReadings(&values, &valid, &link);
+  if (channelKey_.empty()) {
+    // Reported at once, without the stale grace, so alerts are not delayed.
+    switch (link) {
+      case LinkState::Ok:
+        return 1;
+      case LinkState::Silent:
+        return 0;
+      case LinkState::Error:
+        return -1;
+      case LinkState::Unknown:
+        return NAN;
+    }
+  }
+  if (!copied || !valid) {
     if (Supla::Linux::markInvalidRead(&staleReadCounter_)) {
       return NAN;
     }

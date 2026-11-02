@@ -36,6 +36,14 @@ class SmaInverter : public Supla::Sensor::ElectricityMeter {
   void onInit() override;
   void iterateAlways() override;
 
+#ifdef SUPLA_TEST
+  void setReadingsForTest(const std::map<std::string, double>& values,
+                          bool valid,
+                          Supla::Linux::Sma::LinkState link);
+  void applyReadingsForTest();
+  bool hasMeasurementForTest() const { return emValue.m_count > 0; }
+#endif
+
  protected:
   virtual void applyMappedReadings(const std::map<std::string, double>& values);
 

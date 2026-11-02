@@ -37,8 +37,17 @@ class SmaBusClient {
   void attach();
   void detach();
 
-  bool copyReadings(std::map<std::string, double>* values, bool* valid) const;
+  // Optional *link: result of the last poll cycle (Unknown before the first).
+  bool copyReadings(std::map<std::string, double>* values,
+                    bool* valid,
+                    LinkState* link = nullptr) const;
   bool copyChannels(std::vector<Supla::PV::SmaMappedChannel>* channels) const;
+
+#ifdef SUPLA_TEST
+  void setReadingsForTest(const std::map<std::string, double>& values,
+                          bool valid,
+                          LinkState link);
+#endif
 
  private:
   SmaBusConfig config_;

@@ -135,6 +135,11 @@ std::optional<std::vector<SmaChannelInfo>> loadChannelCatalog(
   return std::nullopt;
 }
 
+// Port open but nothing came back in this cycle: the inverter is asleep.
+LinkState failedLinkState(const SmaDataClient& client) {
+  return client.receivedNothing() ? LinkState::Silent : LinkState::Error;
+}
+
 int retryDelaySec(const SmaDataClient& client, int pollIntervalSec) {
   const int backoff = client.backoffSec();
   return backoff > 0 ? backoff : pollIntervalSec;
@@ -166,22 +171,26 @@ std::vector<Supla::PV::SmaMappedChannel> copySubscriberChannels(
 void storeSubscriberReadings(
     const std::shared_ptr<SmaBus::Subscriber::State>& state,
     const std::map<std::string, double>& readings,
-    bool valid) {
+    bool valid,
+    LinkState link) {
   std::lock_guard<std::mutex> lock(state->mutex);
   state->cacheValid = valid;
+  state->link = link;
   if (valid) {
     state->valuesByKey = readings;
   }
 }
 
 void invalidateSubscriberReadings(
-    const std::vector<SmaBus::Subscriber>& subscribers) {
+    const std::vector<SmaBus::Subscriber>& subscribers,
+    LinkState link) {
   for (const auto& subscriber : subscribers) {
     if (!subscriber.state) {
       continue;
     }
     std::lock_guard<std::mutex> lock(subscriber.state->mutex);
     subscriber.state->cacheValid = false;
+    subscriber.state->link = link;
   }
 }
 
@@ -243,6 +252,21 @@ bool readSubscriberChannels(
 
 }  // namespace
 
+CycleOutcome classifyCycle(const std::vector<bool>& dataReadOutcomes) {
+  bool anyUpdated = false;
+  bool anyFailed = false;
+  for (const bool readOk : dataReadOutcomes) {
+    anyUpdated = anyUpdated || readOk;
+    anyFailed = anyFailed || !readOk;
+  }
+
+  CycleOutcome outcome;
+  outcome.cycleOk = anyUpdated || dataReadOutcomes.empty();
+  const bool linkOk = outcome.cycleOk && !anyFailed;
+  outcome.linkState = linkOk ? LinkState::Ok : LinkState::Error;
+  return outcome;
+}
+
 std::shared_ptr<SmaBus> SmaBus::acquire(const SmaBusConfig& config) {
   const SmaBusKey key{
       config.serialDevice, config.baud, config.media, config.netAddress};
@@ -266,7 +290,7 @@ SmaBus::SmaBus(SmaBusConfig config) : config_(std::move(config)) {
 #ifdef SUPLA_TEST
 void SmaBus::invalidateCachedReadingsForTest(
     const std::vector<Subscriber>& subscribers) {
-  invalidateSubscriberReadings(subscribers);
+  invalidateSubscriberReadings(subscribers, LinkState::Error);
 }
 #endif
 
@@ -358,7 +382,7 @@ void SmaBus::workerLoop() {
     if (!port.isOpen() && !port.open()) {
       SUPLA_LOG_WARNING("SmaBus: failed to open %s",
                         config_.serialDevice.c_str());
-      invalidateSubscriberReadings(subscribers);
+      invalidateSubscriberReadings(subscribers, LinkState::Error);
       std::this_thread::sleep_for(std::chrono::seconds(5));
       continue;
     }
@@ -379,7 +403,7 @@ void SmaBus::workerLoop() {
     if (!detected) {
       const int delaySec = retryDelaySec(client, pollIntervalSec);
       SUPLA_LOG_WARNING("SmaBus: SMANet login failed, backoff=%d s", delaySec);
-      invalidateSubscriberReadings(subscribers);
+      invalidateSubscriberReadings(subscribers, failedLinkState(client));
       closeAndSleep(&port, delaySec);
       continue;
     }
@@ -392,7 +416,7 @@ void SmaBus::workerLoop() {
         SUPLA_LOG_WARNING(
             "SmaBus: no channel catalog — check net_address, wiring, or set "
             "device.profile (see sma/README.md)");
-        invalidateSubscriberReadings(subscribers);
+        invalidateSubscriberReadings(subscribers, failedLinkState(client));
         closeAndSleep(&port, retryDelaySec(client, pollIntervalSec));
         continue;
       }
@@ -425,7 +449,8 @@ void SmaBus::workerLoop() {
       }
     }
 
-    bool anySubscriberUpdated = false;
+    std::vector<bool> dataReadOutcomes;
+    std::vector<std::shared_ptr<Subscriber::State>> linkOnly{};
 
     for (auto& subscriber : subscribers) {
       std::map<std::string, double> readings;
@@ -436,23 +461,31 @@ void SmaBus::workerLoop() {
       }
       auto channels = copySubscriberChannels(state);
       if (channels.empty()) {
+        // link channel: no values, takes the outcome of the whole cycle
+        linkOnly.push_back(state);
         continue;
       }
 
-      if (!readSubscriberChannels(
-              &client, useNameBasedConfig, bulkValues, channels, &readings)) {
-        storeSubscriberReadings(state, readings, false);
-        continue;
-      }
-
-      storeSubscriberReadings(state, readings, true);
-      anySubscriberUpdated = true;
+      // The inverter answered the login, so a failed read is a link error.
+      const bool readOk = readSubscriberChannels(
+          &client, useNameBasedConfig, bulkValues, channels, &readings);
+      storeSubscriberReadings(
+          state, readings, readOk, readOk ? LinkState::Ok : LinkState::Error);
+      dataReadOutcomes.push_back(readOk);
     }
 
-    if (!anySubscriberUpdated) {
+    // The link channel reports the worst outcome of the cycle: a failed data
+    // subscriber is a link error even when another subscriber succeeded.
+    const CycleOutcome cycle = classifyCycle(dataReadOutcomes);
+    for (const auto& state : linkOnly) {
+      storeSubscriberReadings(
+          state, {}, cycle.linkState == LinkState::Ok, cycle.linkState);
+    }
+
+    if (!cycle.cycleOk) {
       const int delaySec = retryDelaySec(client, pollIntervalSec);
       SUPLA_LOG_WARNING("SmaBus: poll failed, backoff=%d s", delaySec);
-      invalidateSubscriberReadings(subscribers);
+      invalidateSubscriberReadings(subscribers, failedLinkState(client));
       closeAndSleep(&port, delaySec);
       continue;
     }
