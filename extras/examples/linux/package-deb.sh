@@ -126,20 +126,37 @@ normalize_path() {
 }
 
 # The Display HAT Mini extension embeds Montserrat-derived glyphs (SIL OFL 1.1),
-# so its licence notice has to travel with the package. Ship the notice only
-# when the packaged binary really contains those fonts.
+# so its licence notice has to travel with the package.
+
+# True when the packaged binary still has a symbol table, i.e. when the font
+# symbols below can actually be looked up.
+has_symbol_table() {
+  local symbols
+
+  command -v nm >/dev/null 2>&1 || return 1
+  symbols="$(nm -C "$BINARY_PATH" 2>/dev/null)" || return 1
+  [ -n "$symbols" ]
+}
+
+# True when the packaged binary contains the Display HAT Mini fonts. With a
+# symbol table the exact font symbols are checked; without one (stripped binary,
+# or no binutils) fall back to the extension's registered YAML type name, which
+# is a compile-time string literal and therefore survives stripping.
+# Note the grep output is discarded with >/dev/null rather than -q: -q would
+# close the pipe as soon as it matches, nm could then die of SIGPIPE, and under
+# `set -o pipefail` that would look like "no fonts".
 bundles_pl_fonts() {
-  # `nm` sees both defined and undefined symbols. Note the grep output is
-  # discarded with >/dev/null rather than -q: -q would close the pipe as soon
-  # as it matches, nm could then die of SIGPIPE, and under `set -o pipefail`
-  # that would look like "no fonts".
-  if command -v nm >/dev/null 2>&1 &&
-     nm -C "$BINARY_PATH" 2>/dev/null | grep 'lv_font_montserrat_pl_' >/dev/null; then
-    return 0
+  if has_symbol_table; then
+    nm -C "$BINARY_PATH" 2>/dev/null | grep 'lv_font_montserrat_pl_' >/dev/null
+  else
+    grep -aq 'DisplayHatMini' "$BINARY_PATH"
   fi
-  # Stripped binary (no symbol table) or no binutils: best effort raw scan, so
-  # a false negative is possible but a false positive only over-ships the notice.
-  grep -aq 'lv_font_montserrat_pl_' "$BINARY_PATH"
+}
+
+install_notice() {
+  install -d "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}"
+  install -m 0644 "$NOTICE_PATH" \
+    "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/$(basename "$NOTICE_PATH")"
 }
 
 require_cmd dpkg
@@ -198,12 +215,12 @@ install -m 0755 "$BINARY_PATH" "${PKG_ROOT}/usr/bin/supla-device-linux"
 
 if bundles_pl_fonts; then
   if [ -f "$NOTICE_PATH" ]; then
-    install -d "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}"
-    install -m 0644 "$NOTICE_PATH" \
-      "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/$(basename "$NOTICE_PATH")"
+    install_notice
   else
-    echo "warning: the binary bundles the Display HAT Mini (Montserrat) fonts," >&2
-    echo "         but the licence notice was not found: $NOTICE_PATH" >&2
+    echo "error: the binary bundles the Display HAT Mini (Montserrat) fonts," >&2
+    echo "       but their licence notice was not found: $NOTICE_PATH" >&2
+    echo "       set NOTICE_PATH or ship the notice with the package." >&2
+    exit 1
   fi
 fi
 
