@@ -1885,7 +1885,9 @@ The script creates a package under `build/deb/`. It installs:
 - `/lib/systemd/system/supla-device.service`
 - `/var/lib/supla-device`
 - `/usr/share/doc/supla-device-linux/Montserrat-OFL.txt` (font licence notice,
-  when the Display HAT Mini extension is part of the binary)
+  installed when the packaged binary contains the Display HAT Mini fonts; the
+  directory is named after `PACKAGE_NAME`, which defaults to
+  `supla-device-linux`)
 
 It also derives shared library dependencies from the built binary using
 `dpkg-shlibdeps`, creates the `supla-device` system user during package install,

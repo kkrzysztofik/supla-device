@@ -125,6 +125,18 @@ normalize_path() {
   printf '%s/%s' "$dir" "$(basename "$path")"
 }
 
+# The Display HAT Mini extension embeds Montserrat-derived glyphs (SIL OFL 1.1),
+# so its licence notice has to travel with the package. Ship the notice only
+# when the packaged binary really contains those fonts; `nm` sees both defined
+# and undefined symbols, plain `grep` is the fallback when binutils is missing.
+bundles_pl_fonts() {
+  if command -v nm >/dev/null 2>&1; then
+    nm -C "$BINARY_PATH" 2>/dev/null | grep -q 'lv_font_montserrat_pl_'
+  else
+    grep -aq 'lv_font_montserrat_pl_' "$BINARY_PATH"
+  fi
+}
+
 require_cmd dpkg
 require_cmd dpkg-deb
 require_cmd dpkg-shlibdeps
@@ -176,13 +188,15 @@ install -d "${PKG_ROOT}/var/lib/supla-device"
 
 install -m 0755 "$BINARY_PATH" "${PKG_ROOT}/usr/bin/supla-device-linux"
 
-if [ -f "$NOTICE_PATH" ]; then
-  install -d "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}"
-  install -m 0644 "$NOTICE_PATH" \
-    "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/$(basename "$NOTICE_PATH")"
-else
-  echo "warning: NOTICE_PATH not found, skipping third-party licence notice:" >&2
-  echo "         $NOTICE_PATH" >&2
+if bundles_pl_fonts; then
+  if [ -f "$NOTICE_PATH" ]; then
+    install -d "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}"
+    install -m 0644 "$NOTICE_PATH" \
+      "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/$(basename "$NOTICE_PATH")"
+  else
+    echo "warning: the binary bundles the Display HAT Mini (Montserrat) fonts," >&2
+    echo "         but the licence notice was not found: $NOTICE_PATH" >&2
+  fi
 fi
 
 if grep -q '^state_files_path:' "$CONFIG_PATH"; then
