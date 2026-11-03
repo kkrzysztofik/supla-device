@@ -69,6 +69,8 @@ option(SUPLA_TEST_ENABLE_CURL_HTTP
   "Enable sd4linux HTTP source tests when CURL is available" ON)
 option(SUPLA_TEST_REQUIRE_CURL
   "Fail test configuration when CURL is missing" OFF)
+option(SUPLA_TEST_ENABLE_HTTP_INTEGRATION
+  "Build and register HTTP integration tests requiring TCP loopback" OFF)
 
 find_package(CURL QUIET)
 set(SUPLA_TEST_CURL_HTTP_ENABLED OFF)
@@ -78,6 +80,11 @@ elseif(SUPLA_TEST_REQUIRE_CURL)
   message(FATAL_ERROR
     "CURL is required for sd4linux HTTP source tests. "
     "Install libcurl development package or disable SUPLA_TEST_REQUIRE_CURL.")
+endif()
+
+if(SUPLA_TEST_ENABLE_HTTP_INTEGRATION AND NOT SUPLA_TEST_CURL_HTTP_ENABLED)
+  message(FATAL_ERROR
+    "HTTP integration tests require CURL and SUPLA_TEST_ENABLE_CURL_HTTP=ON.")
 endif()
 
 file(GLOB TEST_SRC CONFIGURE_DEPENDS
@@ -128,8 +135,7 @@ file(GLOB SD4LINUX_TEST_SRC CONFIGURE_DEPENDS
 
 if(NOT SUPLA_TEST_CURL_HTTP_ENABLED)
   list(REMOVE_ITEM SD4LINUX_TEST_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/LinuxPortTests/sd4linux_http_source_tests.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/LinuxPortTests/sd4linux_http_redirect_tests.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/LinuxPortTests/sd4linux_http_source_tests.cpp)
 endif()
 
 list(APPEND TEST_SRC ../../src/supla-common/proto_check.cpp)
@@ -312,6 +318,27 @@ target_link_libraries(arduinoesp8266_tls_lifetime_tests PRIVATE
   gtest_main
 )
 
+# Exercise the real ESP32 client and TCP abort helper with shared lwIP doubles.
+add_executable(esp32_tcp_abort_tests
+  ArduinoEsp32PlatformTests/arduino_esp32_tcp_abort_tests.cpp
+  Esp32TcpAbortTests/esp32_tcp_abort_tests.cpp
+  Esp32TcpAbortTests/fake_lwip.c
+  ../../src/supla/network/client.cpp
+  ../../src/supla/network/ip_address.cpp
+  ../../src/supla/network/esp32_tcp_abort.cpp
+)
+target_include_directories(esp32_tcp_abort_tests BEFORE PRIVATE
+  Esp32TcpAbortTests/fakes
+  ArduinoEsp32PlatformTests/fakes
+  ArduinoEspPlatformTests/fakes
+)
+target_include_directories(esp32_tcp_abort_tests PRIVATE ../../src)
+target_compile_definitions(esp32_tcp_abort_tests PRIVATE
+  ARDUINO_ARCH_ESP32 LWIP_SOCKET_OFFSET=0)
+target_link_libraries(esp32_tcp_abort_tests PRIVATE gtest gtest_main)
+supla_apply_warnings(esp32_tcp_abort_tests)
+add_test(NAME esp32_tcp_abort_tests COMMAND esp32_tcp_abort_tests)
+
 target_include_directories(supladevicetests BEFORE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/MCP23008Tests
   ${CMAKE_CURRENT_SOURCE_DIR}/doubles/esp_idf
@@ -368,6 +395,30 @@ if(SUPLA_TEST_CURL_HTTP_ENABLED)
   target_link_libraries(sd4linuxtests PRIVATE CURL::libcurl)
   target_compile_definitions(sd4linuxtests
     PRIVATE SUPLA_LINUX_HTTP_SOURCE_ENABLED)
+endif()
+
+if(SUPLA_TEST_ENABLE_HTTP_INTEGRATION)
+  find_package(Threads REQUIRED)
+  add_executable(sd4linux_http_integration_tests
+    LinuxPortIntegrationTests/sd4linux_http_redirect_tests.cpp
+    ../porting/linux/supla/source/http.cpp
+    doubles/arduino_mock.cpp
+    doubles/log.cpp
+  )
+  target_include_directories(sd4linux_http_integration_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/doubles
+    ${CMAKE_CURRENT_SOURCE_DIR}/../porting/linux
+    ${SUPLA_DEVICE_SRC_DIR}
+  )
+  target_compile_definitions(sd4linux_http_integration_tests PRIVATE SUPLA_TEST)
+  target_link_libraries(sd4linux_http_integration_tests PRIVATE
+    CURL::libcurl Threads::Threads gmock gtest_main
+  )
+  supla_apply_warnings(sd4linux_http_integration_tests)
+  add_test(NAME sd4linux_http_integration_tests
+    COMMAND sd4linux_http_integration_tests)
+  set_tests_properties(sd4linux_http_integration_tests PROPERTIES
+    LABELS "integration;network")
 endif()
 
 add_test(NAME supladevicetests COMMAND supladevicetests)

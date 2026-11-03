@@ -7,6 +7,11 @@
 #include <supla/source/mqtt_src.h>
 #include <supla/output/mqtt.h>
 
+#include <simple_time.h>
+#include <supla/parser/simple.h>
+#include <supla/element.h>
+#include <supla/sensor/electricity_meter_parsed.h>
+
 #include <atomic>
 #include <memory>
 #include <string>
@@ -56,9 +61,11 @@ void mqtt_client_free() {
 
 class LinuxMqttTests : public ::testing::Test {
  protected:
+  SimpleTime time;
   MqttTestConfig config;
   std::shared_ptr<Supla::LinuxMqttClient> client =
       Supla::LinuxMqttClient::getInstance(config);
+  void SetUp() override { time.advance(1); }
   void TearDown() override {
     client.reset();
     Supla::LinuxMqttClient::getInstance().reset();
@@ -233,4 +240,321 @@ TEST_F(LinuxMqttTests, ConcurrentSubscribeEraseReceiveAndRead) {
   EXPECT_EQ(message, "final");
   client->unsubscribeTopic(topic);
   EXPECT_FALSE(client->getMessage(topic, message));
+}
+
+TEST_F(LinuxMqttTests, DocumentSnapshotsPreserveIdentityContentAndReceipt) {
+  Supla::Source::Mqtt source(config,
+      {"docs/0508", "docs/0505"}, {"0508", "0505"});
+  auto documents = source.getDocuments();
+  ASSERT_EQ(documents.size(), 2u);
+  EXPECT_EQ(documents[0].id, "0508");
+  EXPECT_FALSE(documents[0].received);
+  receive("docs/0505", "{\n\"data\": {\"val\": 230.5}\n}");
+  receive("docs/0508", "");
+  documents = source.getDocuments();
+  EXPECT_TRUE(documents[0].received);
+  EXPECT_TRUE(documents[0].content.empty());
+  EXPECT_TRUE(documents[1].received);
+  EXPECT_EQ(documents[1].content, "{\n\"data\": {\"val\": 230.5}\n}");
+  receive("docs/0508", "4.2");
+  EXPECT_EQ(source.getDocuments()[0].content, "4.2");
+  EXPECT_TRUE(documents[0].content.empty());
+  EXPECT_EQ(source.getDocuments()[1].content, documents[1].content);
+  EXPECT_EQ(source.getContent(), "4.2\n" + documents[1].content);
+}
+
+TEST_F(LinuxMqttTests, ExpirationIncludesExactDeadlineAndRecoversOnReceive) {
+  Supla::Source::Mqtt source(config, {"expiry/boundary"}, {}, 1);
+  receive("expiry/boundary", "first");
+  time.advance(1000);
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  time.advance(1);
+  EXPECT_FALSE(source.getDocuments()[0].fresh);
+  EXPECT_TRUE(source.getContent().empty());
+  receive("expiry/boundary", "second");
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  EXPECT_EQ(source.getContent(), "second");
+}
+
+TEST_F(LinuxMqttTests, ExpirationHandlesMillisRollover) {
+  Supla::Source::Mqtt source(config, {"expiry/wrap"}, {}, 1);
+  time.value = UINT32_MAX - 500;
+  receive("expiry/wrap", "before-wrap");
+  time.advance(1000);
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  time.advance(1);
+  EXPECT_FALSE(source.getDocuments()[0].fresh);
+  receive("expiry/wrap", "after-wrap");
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  EXPECT_EQ(source.getContent(), "after-wrap");
+}
+
+TEST_F(LinuxMqttTests, MaximumExpirationEventuallyExpires) {
+  Supla::Source::Mqtt source(config, {"expiry/maximum"}, {},
+      Supla::Source::Mqtt::MaximumExpirationTimeSec);
+  receive("expiry/maximum", "current");
+  time.advance(Supla::Source::Mqtt::MaximumExpirationTimeSec * 1000u);
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  time.advance(1);
+  EXPECT_FALSE(source.getDocuments()[0].fresh);
+}
+
+TEST_F(LinuxMqttTests, RejectsExpirationOutsideMillisRange) {
+  EXPECT_THROW((Supla::Source::Mqtt(config, {"expiry/invalid"}, {},
+      Supla::Source::Mqtt::MaximumExpirationTimeSec + 1)),
+      std::invalid_argument);
+}
+
+TEST_F(LinuxMqttTests, ExpiredMessageStaysInvalidAcrossAFullMillisCycle) {
+  Supla::Source::Mqtt source(config, {"expiry/cycle"}, {}, 1);
+  receive("expiry/cycle", "same-payload");
+  time.advance(1001);
+  ASSERT_FALSE(source.getDocuments()[0].fresh);
+  time.advance(INT32_MAX);
+  ASSERT_FALSE(source.getDocuments()[0].fresh);
+  time.advance(INT32_MAX - 999);
+  ASSERT_EQ(time.value, 1u);  // Same timestamp as the original receipt.
+  EXPECT_FALSE(source.getDocuments()[0].fresh);
+  EXPECT_TRUE(source.getContent().empty());
+  receive("expiry/cycle", "same-payload");
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  EXPECT_EQ(source.getContent(), "same-payload");
+}
+
+TEST_F(LinuxMqttTests, SharedTopicHasIndependentExpirationPerSource) {
+  Supla::Source::Mqtt shortLived(config, {"expiry/shared"}, {}, 1);
+  Supla::Source::Mqtt longLived(config, {"expiry/shared"}, {}, 3);
+  Supla::Source::Mqtt unlimited(config, {"expiry/shared"});
+  receive("expiry/shared", "current");
+  time.advance(1001);
+  EXPECT_FALSE(shortLived.getDocuments()[0].fresh);
+  EXPECT_TRUE(longLived.getDocuments()[0].fresh);
+  EXPECT_EQ(unlimited.getContent(), "current");
+  time.advance(2000);
+  EXPECT_FALSE(longLived.getDocuments()[0].fresh);
+  EXPECT_EQ(unlimited.getContent(), "current");
+  receive("expiry/shared", "new");
+  EXPECT_TRUE(shortLived.getDocuments()[0].fresh);
+  EXPECT_TRUE(longLived.getDocuments()[0].fresh);
+}
+
+TEST_F(LinuxMqttTests, RecreatedTopicRevivesExpiredSource) {
+  Supla::Source::Mqtt source(config, {"expiry/recreated"}, {}, 1);
+  receive("expiry/recreated", "same-payload");
+  time.advance(1001);
+  ASSERT_FALSE(source.getDocuments()[0].fresh);
+  client->unsubscribeTopic("expiry/recreated");
+  client->subscribeTopic("expiry/recreated");
+  receive("expiry/recreated", "same-payload");
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  EXPECT_EQ(source.getContent(), "same-payload");
+}
+
+TEST_F(LinuxMqttTests, ReceiptAtMillisZeroIsValid) {
+  Supla::Source::Mqtt source(config, {"expiry/zero"}, {}, 1);
+  for (uint32_t timestamp : {UINT32_C(0), UINT32_MAX}) {
+    time.value = timestamp;
+    receive("expiry/zero", "current");
+    EXPECT_TRUE(source.getDocuments()[0].fresh);
+    time.advance(1);
+    EXPECT_TRUE(source.getDocuments()[0].fresh);
+    time.advance(1001);
+    EXPECT_FALSE(source.getDocuments()[0].fresh);
+  }
+}
+
+TEST_F(LinuxMqttTests, DocumentsExpireIndependentlyAndRecover) {
+  Supla::Source::Mqtt source(config,
+      {"expiry/a", "expiry/b"}, {"a", "b"}, 1);
+  Supla::Source::Mqtt unlimited(config,
+      {"expiry/a", "expiry/b"}, {"a", "b"});
+  receive("expiry/a", "old");
+  time.advance(1100);
+  receive("expiry/b", "new");
+  auto documents = source.getDocuments();
+  EXPECT_TRUE(documents[0].received);
+  EXPECT_FALSE(documents[0].fresh);
+  EXPECT_EQ(documents[0].content, "old");
+  EXPECT_TRUE(documents[1].fresh);
+  EXPECT_TRUE(source.getContent().empty());
+  EXPECT_TRUE(unlimited.getDocuments()[0].fresh);
+  EXPECT_EQ(unlimited.getContent(), "old\nnew");
+  receive("expiry/a", "renewed");
+  EXPECT_TRUE(source.getDocuments()[0].fresh);
+  EXPECT_EQ(source.getDocuments()[0].content, "renewed");
+}
+
+TEST_F(LinuxMqttTests, ConcurrentDocumentSnapshotKeepsWholePayloadAndMetadata) {
+  Supla::Source::Mqtt source(config, {"snapshot/a", "snapshot/b"}, {"a", "b"});
+  const std::string first(512, 'a'), second(1024, 'b');
+  receive("snapshot/a", first);
+  receive("snapshot/b", "constant");
+  std::thread writer([&]() {
+    for (int i = 0; i < 10000; ++i) {
+      receive("snapshot/a", i % 2 ? first : second);
+    }
+  });
+  for (int i = 0; i < 10000; ++i) {
+    const auto documents = source.getDocuments();
+    EXPECT_EQ(documents[0].id, "a");
+    EXPECT_TRUE(documents[0].received);
+    EXPECT_TRUE(documents[0].fresh);
+    EXPECT_TRUE(documents[0].content == first ||
+                documents[0].content == second);
+    EXPECT_EQ(documents[1].content, "constant");
+  }
+  writer.join();
+}
+
+TEST_F(LinuxMqttTests, SimpleParserKeepsLegacyIndicesWithMissingMessages) {
+  Supla::Source::Mqtt source(config, {"simple/a", "simple/b"});
+  Supla::Parser::Simple parser(&source);
+  parser.addKey("temperature", 0);
+  parser.addKey("humidity", 1);
+  EXPECT_FALSE(parser.refreshSource());
+  receive("simple/b", "48");
+  ASSERT_TRUE(parser.refreshSource());
+  // Preserve the legacy omission of leading empty entries in getContent().
+  EXPECT_DOUBLE_EQ(parser.getValue("temperature"), 48);
+  EXPECT_EQ(parser.getValue("humidity"), 0);
+  EXPECT_FALSE(parser.isValid());
+  receive("simple/b", "");
+  receive("simple/a", "21.5");
+  ASSERT_TRUE(parser.refreshSource());
+  EXPECT_DOUBLE_EQ(parser.getValue("temperature"), 21.5);
+  EXPECT_EQ(parser.getValue("humidity"), 0);
+  EXPECT_FALSE(parser.isValid());
+  receive("simple/b", "48");
+  ASSERT_TRUE(parser.refreshSource());
+  EXPECT_DOUBLE_EQ(parser.getValue("humidity"), 48);
+  EXPECT_DOUBLE_EQ(parser.getValue("temperature"), 21.5);
+}
+
+TEST_F(LinuxMqttTests,
+       YamlMeterReadsIndependentDocumentsAndRejectsIncompleteData) {
+  mqtt_client transport = {};
+  transport.error = MQTT_OK;
+  client->mq_client = &transport;
+  config.config = YAML::Load(R"(
+mqtt: {host: localhost, use_ssl: false}
+channels:
+- type: ElectricityMeterParsed
+  name: meter
+  source:
+    type: MQTT
+    state_topic: data/dev/1/0b04
+    sub_topics: ["0509", "0508", "0505"]
+    expiration_time_sec: 600
+  parser: {type: Json, multi_document: true, refresh_time_ms: 1000}
+  phase_1:
+  - voltage: "0505:/data/val"
+  - current: "0508:/data/val"
+  - power_active: "0509:/data/val"
+)");
+  ASSERT_EQ(Supla::Element::begin(), nullptr);
+  ASSERT_TRUE(config.loadChannels());
+  auto* meter = dynamic_cast<Supla::Sensor::ElectricityMeterParsed*>(
+      Supla::Element::begin());
+  ASSERT_NE(meter, nullptr);
+  std::unique_ptr<Supla::Element> cleanup(meter);
+  receive("data/dev/1/0b04/0505", R"({"data":{"val":"230.5"}})");
+  receive("data/dev/1/0b04/0508", R"({"data":{"val":"4.2"}})");
+  meter->onInit();
+  EXPECT_EQ(meter->getVoltage(0), 0);
+  EXPECT_EQ(meter->getCurrent(0), 0u);
+  TElectricityMeter_ExtendedValue_V3 value = {};
+  meter->updateChannelValues();
+  value = *reinterpret_cast<TElectricityMeter_ExtendedValue_V3*>(
+      meter->getChannel()->getExtValue()->value);
+  EXPECT_EQ(value.m_count, 0);
+  // Cache hits must not turn an incomplete snapshot into a valid measurement.
+  meter->readValuesFromDevice();
+  meter->updateChannelValues();
+  value = *reinterpret_cast<TElectricityMeter_ExtendedValue_V3*>(
+      meter->getChannel()->getExtValue()->value);
+  EXPECT_EQ(value.m_count, 0);
+  receive("data/dev/1/0b04/0509", R"({"data":{"val":"966.0"}})");
+  time.advance(1001);
+  meter->readValuesFromDevice();
+  EXPECT_EQ(meter->getVoltage(0), 23050);
+  EXPECT_EQ(meter->getCurrent(0), 4200u);
+  EXPECT_EQ(meter->getPowerActive(0), 96600000);
+  meter->updateChannelValues();
+  value = *reinterpret_cast<TElectricityMeter_ExtendedValue_V3*>(
+      meter->getChannel()->getExtValue()->value);
+  EXPECT_EQ(value.m_count, 1);
+  EXPECT_NE(value.measured_values & EM_VAR_VOLTAGE, 0u);
+  EXPECT_NE(value.measured_values & EM_VAR_CURRENT, 0u);
+  EXPECT_NE(value.measured_values & EM_VAR_POWER_ACTIVE, 0u);
+  // A conversion failure must not publish a valid zero, including cache hits.
+  receive("data/dev/1/0b04/0508", R"({"data":{"val":"broken"}})");
+  time.advance(1001);
+  meter->readValuesFromDevice();
+  meter->updateChannelValues();
+  value = *reinterpret_cast<TElectricityMeter_ExtendedValue_V3*>(
+      meter->getChannel()->getExtValue()->value);
+  EXPECT_EQ(value.m_count, 0);
+  meter->readValuesFromDevice();
+  meter->updateChannelValues();
+  value = *reinterpret_cast<TElectricityMeter_ExtendedValue_V3*>(
+      meter->getChannel()->getExtValue()->value);
+  EXPECT_EQ(value.m_count, 0);
+  receive("data/dev/1/0b04/0508", R"({"data":{"val":5}})");
+  time.advance(1001);
+  meter->readValuesFromDevice();
+  EXPECT_EQ(meter->getCurrent(0), 5000u);
+  EXPECT_EQ(meter->getVoltage(0), 23050);
+  client->mq_client = nullptr;
+}
+
+TEST_F(LinuxMqttTests, ExpirationNeverShiftsSimpleParserIndices) {
+  Supla::Source::Mqtt source(config,
+      {"expiry-index/a", "expiry-index/b", "expiry-index/c"},
+      {"a", "b", "c"}, 1);
+  Supla::Parser::Simple parser(&source);
+  parser.addKey("a", 0);
+  parser.addKey("b", 1);
+  parser.addKey("c", 2);
+
+  receive("expiry-index/a", "10");
+  receive("expiry-index/c", "30");
+  EXPECT_TRUE(source.getContent().empty());
+  EXPECT_FALSE(parser.refreshSource());
+  EXPECT_DOUBLE_EQ(parser.getValue("b"), 0);
+  EXPECT_FALSE(parser.isValid());
+
+  receive("expiry-index/b", "20");
+  ASSERT_TRUE(parser.refreshSource());
+  EXPECT_DOUBLE_EQ(parser.getValue("b"), 20);
+  EXPECT_TRUE(parser.isValid());
+
+  time.advance(1100);
+  receive("expiry-index/a", "11");
+  receive("expiry-index/c", "31");
+  const auto documents = source.getDocuments();
+  EXPECT_FALSE(documents[1].fresh);
+  EXPECT_EQ(documents[1].content, "20");
+  EXPECT_TRUE(documents[0].fresh);
+  EXPECT_TRUE(documents[2].fresh);
+  EXPECT_TRUE(source.getContent().empty());
+  EXPECT_FALSE(parser.refreshSource());
+  EXPECT_DOUBLE_EQ(parser.getValue("b"), 0);
+  EXPECT_FALSE(parser.isValid());
+
+  receive("expiry-index/b", "21");
+  EXPECT_EQ(source.getContent(), "11\n21\n31");
+  ASSERT_TRUE(parser.refreshSource());
+  EXPECT_DOUBLE_EQ(parser.getValue("a"), 11);
+  EXPECT_DOUBLE_EQ(parser.getValue("b"), 21);
+  EXPECT_DOUBLE_EQ(parser.getValue("c"), 31);
+  EXPECT_TRUE(parser.isValid());
+
+  // A received empty payload also keeps its own position.
+  receive("expiry-index/a", "");
+  EXPECT_EQ(source.getContent(), "\n21\n31");
+  ASSERT_TRUE(parser.refreshSource());
+  EXPECT_DOUBLE_EQ(parser.getValue("b"), 21);
+  EXPECT_TRUE(parser.isValid());
+  EXPECT_DOUBLE_EQ(parser.getValue("a"), 0);
+  EXPECT_FALSE(parser.isValid());
 }
