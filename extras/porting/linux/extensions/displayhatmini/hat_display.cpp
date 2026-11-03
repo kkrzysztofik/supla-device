@@ -73,6 +73,11 @@ void HatDisplay::setBacklight(bool on) {
   std::ofstream(backlightPath + "/bl_power") << (on ? "0" : "4");
 }
 
+/**
+ * Rebuild the widget tree of one page: a title, then either a chart with its
+ * current-value label or one row per item. Called from render() when the
+ * visible page changes; the created widgets are cached for later updates.
+ */
 void HatDisplay::buildPage(const Page &page) {
   auto screen = lv_screen_active();
   lv_obj_clean(screen);
