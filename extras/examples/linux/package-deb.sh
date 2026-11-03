@@ -147,6 +147,9 @@ BINARY_PATH="$(normalize_path "$BINARY_PATH")"
 CONFIG_PATH="$(normalize_path "$CONFIG_PATH")"
 UNIT_PATH="$(normalize_path "$UNIT_PATH")"
 OUTPUT_DIR="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
+if [ -f "$NOTICE_PATH" ]; then
+  NOTICE_PATH="$(normalize_path "$NOTICE_PATH")"
+fi
 
 if [ ! -x "$BINARY_PATH" ]; then
   echo "Missing executable binary: $BINARY_PATH" >&2
