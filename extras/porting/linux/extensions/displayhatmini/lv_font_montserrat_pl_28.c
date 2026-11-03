@@ -12,7 +12,8 @@
 
  Glyph outlines come from Montserrat, Copyright 2011 The Montserrat
  Project Authors (https://github.com/JulietaUla/Montserrat), released under
- the SIL Open Font License 1.1 (https://openfontlicense.org).
+ the SIL Open Font License 1.1 (https://openfontlicense.org). The full notice
+ is in Montserrat-OFL.txt next to this file.
 
  Generated with lv_font_conv 1.5.2 from LVGL v9.2.2's Montserrat-Medium.ttf;
  the exact command is in the banner below. The version guards in the font

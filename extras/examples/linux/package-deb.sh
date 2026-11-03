@@ -13,6 +13,9 @@ BINARY_PATH="${BINARY_PATH:-${SCRIPT_DIR}/build/supla-device-linux}"
 CONFIG_PATH="${CONFIG_PATH:-${SCRIPT_DIR}/supla-device.yaml}"
 UNIT_PATH="${UNIT_PATH:-${SCRIPT_DIR}/supla-device-linux.service}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/build/deb}"
+# Third-party licence notice installed into /usr/share/doc: the Display HAT
+# Mini extension bundles Montserrat-derived fonts (SIL OFL 1.1).
+NOTICE_PATH="${NOTICE_PATH:-${SCRIPT_DIR}/../../porting/linux/extensions/displayhatmini/Montserrat-OFL.txt}"
 MAINTAINER="${MAINTAINER:-Krzysztof Krzysztofik <root@localhost>}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-}"
 ARCHITECTURE="${ARCHITECTURE:-}"
@@ -32,7 +35,7 @@ Options:
 
 Environment overrides:
   PACKAGE_NAME, BINARY_PATH, CONFIG_PATH, UNIT_PATH, OUTPUT_DIR,
-  MAINTAINER, PACKAGE_VERSION, ARCHITECTURE
+  MAINTAINER, PACKAGE_VERSION, ARCHITECTURE, NOTICE_PATH
 EOF
 }
 
@@ -172,6 +175,15 @@ install -d "${PKG_ROOT}/lib/systemd/system"
 install -d "${PKG_ROOT}/var/lib/supla-device"
 
 install -m 0755 "$BINARY_PATH" "${PKG_ROOT}/usr/bin/supla-device-linux"
+
+if [ -f "$NOTICE_PATH" ]; then
+  install -d "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}"
+  install -m 0644 "$NOTICE_PATH" \
+    "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}/$(basename "$NOTICE_PATH")"
+else
+  echo "warning: NOTICE_PATH not found, skipping third-party licence notice:" >&2
+  echo "         $NOTICE_PATH" >&2
+fi
 
 if grep -q '^state_files_path:' "$CONFIG_PATH"; then
   sed 's#^state_files_path:.*$#state_files_path: "/var/lib/supla-device"#' \
