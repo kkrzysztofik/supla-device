@@ -30,6 +30,8 @@ supla_linux_register_extension(
     ${CMAKE_CURRENT_LIST_DIR}/displayhatmini_extension.cpp
     ${CMAKE_CURRENT_LIST_DIR}/hat_gpio.cpp
     ${CMAKE_CURRENT_LIST_DIR}/hat_display.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/lv_font_montserrat_pl_20.c
+    ${CMAKE_CURRENT_LIST_DIR}/lv_font_montserrat_pl_28.c
     ${_DHM_DIR}/hat_model.cpp
   INCLUDE_DIRS
     ${SUPLA_LINUX_PORT_DIR}
