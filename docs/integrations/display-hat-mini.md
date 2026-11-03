@@ -134,13 +134,15 @@ extension writes `bl_power` (`0` = on, `4` = off).
 - `bl_power` is owned by root, so a service running as a non-root user cannot
   change it. Either grant the `video` group write access with a udev rule, or
   set `backlight_timeout_sec: 0` and accept an always-on backlight. Rule used
-  on the Pi 5, e.g. `/etc/udev/rules.d/99-supla-backlight.rules`:
+  on the Pi 5, e.g. `/etc/udev/rules.d/99-supla-backlight.rules` (replace
+  `fb_st7789v` with the name found above):
 
   ```text
-  SUBSYSTEM=="backlight", ACTION=="add", RUN+="/bin/chgrp video /sys%p/bl_power", RUN+="/bin/chmod g+w /sys%p/bl_power"
+  SUBSYSTEM=="backlight", KERNEL=="fb_st7789v", ACTION=="add", RUN+="/bin/chgrp video /sys%p/bl_power", RUN+="/bin/chmod g+w /sys%p/bl_power"
   ```
 
-  After the next boot `ls -l /sys/class/backlight/*/bl_power` shows
+  The `KERNEL` match keeps the rule off other backlights (e.g. a DSI panel).
+  After the next boot `ls -l /sys/class/backlight/fb_st7789v/bl_power` shows
   `-rw-rw-r-- root video`.
 
 ### 2.3 GPIO chip
@@ -163,8 +165,12 @@ sudo usermod -aG gpio,video supla
 # log out and back in (or restart the service) for the new groups to apply
 ```
 
-For a systemd service (see `supla-device-linux.service`), also add the groups
-to the unit. That unit sets `ProtectKernelTunables=true`, which makes `/sys`
+For a systemd service, also add the groups to the unit. The example unit in
+this repository is
+[`extras/examples/linux/supla-device-linux.service`](../../extras/examples/linux/supla-device-linux.service),
+installed as `supla-device.service` (see the
+[Linux README](../../extras/examples/linux/README.md)); that is the unit name
+used below. That unit sets `ProtectKernelTunables=true`, which makes `/sys`
 read-only, so backlight writes also need the real (symlink-resolved) sysfs
 directory in `ReadWritePaths=`. A drop-in,
 `/etc/systemd/system/supla-device.service.d/override.conf`:
