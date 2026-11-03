@@ -65,6 +65,13 @@ Standard C/C++ runtime (`libc`, `libstdc++`, `libm`, `libgcc_s`) comes with the
 base system. `libz1` / `libzstd1` are usually already installed as OpenSSL
 dependencies.
 
+If the binary was built with the Display HAT Mini extension, copy the font
+licence notice along with it: the bundled Montserrat glyphs are licensed under
+the SIL Open Font License 1.1, so redistribute
+[`Montserrat-OFL.txt`](../../porting/linux/extensions/displayhatmini/Montserrat-OFL.txt)
+next to the executable (or inside the package documentation directory, as
+`package-deb.sh` does).
+
 Check missing libraries on the target host:
 
 ```bash
@@ -1877,6 +1884,11 @@ The script creates a package under `build/deb/`. It installs:
 - `/etc/supla-device.yaml`
 - `/lib/systemd/system/supla-device.service`
 - `/var/lib/supla-device`
+- `/usr/share/doc/supla-device-linux/Montserrat-OFL.txt` (font licence notice,
+  installed when the packaged binary contains the Display HAT Mini fonts;
+  packaging stops with an error if those fonts are present but the notice is
+  missing. The directory is named after `PACKAGE_NAME`, which defaults to
+  `supla-device-linux`)
 
 It also derives shared library dependencies from the built binary using
 `dpkg-shlibdeps`, creates the `supla-device` system user during package install,
