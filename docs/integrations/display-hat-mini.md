@@ -24,13 +24,16 @@ runnable example is
   the extension binary built from this tree starts with that config (only
   `state_files_path` pointed at a writable directory), logs the expected GPIO
   error without a HAT and keeps running.
-- **Not verified on hardware:** no Raspberry Pi was available, so hardware
-  bring-up and the on-hardware smoke test ([§6](#6-hardware-smoke-checklist))
-  were **not executed**. The display overlay line, framebuffer number and
-  backlight path in [§2](#2-raspberry-pi-setup) are the **planned values from
-  the implementation plan**, not measured on a Pi — confirm them on your
-  hardware using the check steps in §2, then work through §6. Nothing in this
-  document is a hardware test result.
+- **Brought up on hardware (2026-11-03):** Raspberry Pi 5, Debian 13 (trixie),
+  kernel 6.18.50+rpt-rpi-2712, no HDMI attached, running as a systemd service
+  next to two Socomec COUNTIS meters. The overlay lines, framebuffer
+  (`/dev/fb0`), backlight name (`fb_st7789v`), GPIO chip (`gpiochip0`) and
+  service permissions in [§2](#2-raspberry-pi-setup) are the values measured
+  there; the LCD rendered a values page with live meter readings.
+- **Not yet verified on hardware:** the rest of the smoke test
+  ([§6](#6-hardware-smoke-checklist)) — buttons, LED, page navigation, charts,
+  backlight timeout. Other Pi models and kernels may differ; use the check
+  steps in §2.
 
 ---
 
@@ -40,46 +43,66 @@ BCM numbering; libgpiod line offsets are the same numbers.
 
 | Part | Pins (BCM) | Notes |
 | --- | --- | --- |
-| LCD ST7789 320×240 | SPI0 CE1, DC GPIO9, backlight GPIO13 | kernel display overlay exposes it as a framebuffer (`/dev/fb1`, see §2) |
+| LCD ST7789 320×240 | SPI0 CE1, DC GPIO9, backlight GPIO13 | kernel display overlay exposes it as a framebuffer (`/dev/fb0` without HDMI, `/dev/fb1` with; see §2). GPIO9 is also SPI0 MISO, so SPI must be enabled without MISO (§2.1) |
 | Buttons A / B / X / Y | GPIO5 / 6 / 16 / 24 | active-low, internal pull-up |
 | RGB LED | R GPIO17, G GPIO27, B GPIO22 | active-low; no hardware PWM, so on/off only, 7 colours |
 
 The HAT sits on the 40-pin header, so the GPIO lines live on the Pi's GPIO
-header chip — `gpiochip0` on most kernels, but on some Raspberry Pi 5 kernels
-it is `gpiochip4`. Use the chip that `gpioinfo` reports for these lines (§2.3).
+header chip — `gpiochip0` on most kernels (on the Pi 5 with kernel 6.18 it is
+`gpiochip0 [pinctrl-rp1]`), but on some older Raspberry Pi 5 kernels it is
+`gpiochip4`. Use the chip that `gpioinfo` reports for these lines (§2.3).
 
 ---
 
 ## 2. Raspberry Pi setup
 
-> Steps 2.1–2.3 are **to verify on your hardware**. They follow the planned
-> bring-up sequence; the exact framebuffer number, overlay line and backlight
-> name can differ between kernels and HAT revisions.
+> The values below were measured on a Raspberry Pi 5 (Debian 13, kernel 6.18).
+> The framebuffer number, overlay line and backlight name can differ on other
+> kernels and HAT revisions, so run the check commands.
 
 ### 2.1 SPI and the display overlay
 
-Enable SPI (`sudo raspi-config` → Interface Options → SPI) or make sure
-`dtparam=spi=on` is present, then append the display overlay to
-`/boot/firmware/config.txt`:
+The HAT uses GPIO9 as the display's DC (data/command) line, but GPIO9 is also
+SPI0 MISO. Do **not** enable SPI with `dtparam=spi=on` (or `raspi-config`):
+that claims GPIO9 for SPI and the display driver fails to probe with
 
 ```text
-dtparam=spi=on
+pinctrl-rp1 ...: pin gpio9 already requested by 1f00050000.spi; cannot claim for pinctrl-rp1:...
+fb_st7789v spi0.1: error -EINVAL: Failed to request dc GPIO
+```
+
+Enable SPI0 without MISO instead and add the display overlay to
+`/boot/firmware/config.txt` (under `[all]`):
+
+```text
+dtoverlay=spi0-2cs,no_miso
 dtoverlay=fbtft,spi0-1,st7789v,width=240,height=320,rotate=90,dc_pin=9,led_pin=13,speed=40000000
 ```
 
 Reboot and check that a framebuffer appeared for the HAT:
 
 ```bash
-ls -l /dev/fb*                            # /dev/fb1 expected (fb0 = HDMI); see note
-cat /sys/class/graphics/fb1/virtual_size  # expected 320,240
+dmesg | grep -E "fb_st7789v|graphics fb"  # "graphics fbN: fb_st7789v frame buffer, 320x240 ..."
+ls -l /dev/fb*
+cat /sys/class/graphics/fb*/name          # find the fb_st7789v one
 ```
+
+Without an HDMI display attached the HAT is `/dev/fb0`; with HDMI it is
+usually `/dev/fb1`. The extension defaults to `/dev/fb1`, so on a headless Pi
+set `framebuffer: /dev/fb0`.
 
 If the panel stays white or colours are inverted, the generic `st7789v` init
 does not match your panel: try `rotate=270`, then add `bgr` to the overlay
 line; as a last resort use the `mipi-dbi-spi` overlay with an ST7789 init
-firmware (Raspberry Pi `overlays/README`, section `mipi-dbi-spi`). If there is
-no HDMI output, the HAT framebuffer may be `/dev/fb0` instead of `/dev/fb1` —
-set `framebuffer:` accordingly.
+firmware (Raspberry Pi `overlays/README`, section `mipi-dbi-spi`).
+
+To see what the panel shows without being next to it, read the framebuffer
+(RGB565, 320×240) and convert it, e.g. with Pillow:
+
+```bash
+ssh root@pi 'cat /dev/fb0' > fb.raw
+python3 -c 'from PIL import Image; Image.frombytes("RGB", (320, 240), open("fb.raw", "rb").read(), "raw", "BGR;16").save("fb.png")'
+```
 
 ### 2.2 Backlight path
 
@@ -97,9 +120,17 @@ extension writes `bl_power` (`0` = on, `4` = off).
 
 - If the directory does not exist, or the path is wrong, writes fail silently:
   the LCD still works but `backlight_timeout_sec` has no visible effect.
-- On Raspberry Pi OS `bl_power` is normally owned by root, so a service running
-  as a non-root user cannot change it. Either grant write access with a udev
-  rule, or set `backlight_timeout_sec: 0` and accept an always-on backlight.
+- `bl_power` is owned by root, so a service running as a non-root user cannot
+  change it. Either grant the `video` group write access with a udev rule, or
+  set `backlight_timeout_sec: 0` and accept an always-on backlight. Rule used
+  on the Pi 5, e.g. `/etc/udev/rules.d/99-supla-backlight.rules`:
+
+  ```text
+  SUBSYSTEM=="backlight", ACTION=="add", RUN+="/bin/chgrp video /sys%p/bl_power", RUN+="/bin/chmod g+w /sys%p/bl_power"
+  ```
+
+  After the next boot `ls -l /sys/class/backlight/*/bl_power` shows
+  `-rw-rw-r-- root video`.
 
 ### 2.3 GPIO chip
 
@@ -122,7 +153,20 @@ sudo usermod -aG gpio,video supla
 ```
 
 For a systemd service (see `supla-device-linux.service`), also add the groups
-to the unit, e.g. `SupplementaryGroups=gpio video dialout`.
+to the unit. That unit sets `ProtectKernelTunables=true`, which makes `/sys`
+read-only, so backlight writes also need the real (symlink-resolved) sysfs
+directory in `ReadWritePaths=`. A drop-in,
+`/etc/systemd/system/supla-device.service.d/override.conf`:
+
+```ini
+[Service]
+SupplementaryGroups=dialout gpio video
+# Output of: readlink -f /sys/class/backlight/fb_st7789v
+ReadWritePaths=/sys/devices/platform/axi/1000120000.pcie/1f00050000.spi/spi_master/spi0/spi0.1/backlight/fb_st7789v
+```
+
+The path above is the one on a Raspberry Pi 5; take yours from
+`readlink -f`. Then `systemctl daemon-reload && systemctl restart supla-device`.
 
 ### 2.5 libgpiod v2
 
@@ -199,7 +243,7 @@ type name is case-sensitive).
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `gpio_chip` | `gpiochip0` | libgpiod chip name; opened as `/dev/<gpio_chip>`. Must be the chip with GPIO5/6/16/24 (buttons) and GPIO17/27/22 (LED). |
-| `framebuffer` | `/dev/fb1` | Framebuffer device LVGL writes to. Must exist (readable and writable) at startup. |
+| `framebuffer` | `/dev/fb1` | Framebuffer device LVGL writes to. Must exist (readable and writable) at startup. Use `/dev/fb0` on a Pi without HDMI attached (§2.1). |
 | `backlight` | `/sys/class/backlight/fb_st7789v` | sysfs backlight directory containing `bl_power`. Wrong/missing path = no backlight control. |
 | `backlight_timeout_sec` | `60` | Seconds without a button press before the backlight is switched off. `0` = always on. |
 | `hold_time_ms` | `700` | Hold time used by the button elements; a longer press is reported as `ON_HOLD` to the action trigger. |
@@ -421,9 +465,10 @@ backlight is switched off and the screen is cleared.
 
 ## 6. Hardware smoke checklist
 
-> **Not executed in the development environment** (no Raspberry Pi available).
-> Run this on the Pi with the example config, adjusted for your `gpio_chip` and
-> `backlight`:
+> **Not executed yet.** Bring-up (overlay, framebuffer, LCD rendering) was
+> confirmed on a Raspberry Pi 5 (see the verification status at the top); the
+> interactive steps below have not been run. Run this on the Pi with the
+> example config, adjusted for your `gpio_chip`, `backlight` and `framebuffer`:
 
 - [ ] Startup: LED blinks blue while connecting, turns green after registration.
 - [ ] LCD shows the "Relays" page; B → "Pump history" chart; A → back.
