@@ -76,6 +76,12 @@ Notes:
 * The E03 is single-phase and has **no per-line energy block**; the driver reads the
   `50946` fine totals and publishes them as phase 1. The `no line-1 energy block,
   using totals` INFO log at startup is expected on an E03.
+* The E03 channel registers with `SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED` and
+  `SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED`, so SUPLA Cloud does not present empty L2/L3
+  for it and the MQTT publisher skips `phases/2` and `phases/3`. Upgrading an MQTT
+  installation from an earlier build can leave the previously retained discovery
+  configs and retained state of those two phase topics in the broker, so Home
+  Assistant may keep showing L2/L3 until they are cleared once.
 * On E23 firmware 3.00 the phase-sequence register returns `132`, not the documented
   `0`/`1`/`3`. The driver treats anything outside 0…1 as unknown and simply clears the
   SUPLA phase-sequence flag.
