@@ -43,7 +43,7 @@ BCM numbering; libgpiod line offsets are the same numbers.
 
 | Part | Pins (BCM) | Notes |
 | --- | --- | --- |
-| LCD ST7789 320×240 | SPI0 CE1, DC GPIO9, backlight GPIO13 | kernel display overlay exposes it as a framebuffer (`/dev/fb0` without HDMI, `/dev/fb1` with; see §2). GPIO9 is also SPI0 MISO, so SPI must be enabled without MISO (§2.1) |
+| LCD ST7789 320×240 | SPI0 CE1, DC GPIO9, backlight GPIO13 | kernel display overlay exposes it as a framebuffer (`/dev/fb0` when headless, usually `/dev/fb1` with HDMI; resolve by name, §2.1). GPIO9 is also SPI0 MISO, so SPI must be enabled without MISO (§2.1) |
 | Buttons A / B / X / Y | GPIO5 / 6 / 16 / 24 | active-low, internal pull-up |
 | RGB LED | R GPIO17, G GPIO27, B GPIO22 | active-low; no hardware PWM, so on/off only, 7 colours |
 
@@ -87,22 +87,33 @@ ls -l /dev/fb*
 cat /sys/class/graphics/fb*/name          # find the fb_st7789v one
 ```
 
-Without an HDMI display attached the HAT is `/dev/fb0`; with HDMI it is
-usually `/dev/fb1`. The extension defaults to `/dev/fb1`, so on a headless Pi
-set `framebuffer: /dev/fb0`.
+Framebuffer numbers follow kernel registration order: headless the HAT is
+usually `/dev/fb0`, with HDMI usually `/dev/fb1`, and the `dtparam=drm_fb*_vc4`
+options can shift them. Resolve the HAT index by name (the command below) and
+use it for `framebuffer:`; the extension defaults to `/dev/fb1`.
 
 If the panel stays white or colours are inverted, the generic `st7789v` init
 does not match your panel: try `rotate=270`, then add `bgr` to the overlay
 line; as a last resort use the `mipi-dbi-spi` overlay with an ST7789 init
 firmware (Raspberry Pi `overlays/README`, section `mipi-dbi-spi`).
 
-To see what the panel shows without being next to it, read the framebuffer
-(RGB565, 320×240) and convert it, e.g. with Pillow:
+To see what the panel shows without being next to it, read the HAT framebuffer
+(RGB565, 320×240 — width × height after `rotate=90`) and convert it, e.g. with
+Pillow. Pick the framebuffer by name rather than by number; `/dev/fbN` is
+`root:video` mode 0660, so read it as root or as a user in the `video` group
+(§2.4):
 
 ```bash
-ssh root@pi 'cat /dev/fb0' > fb.raw
+# replace user@host with your login; index of the fb named fb_st7789v
+FB=$(ssh user@host 'grep -l "^fb_st7789v$" /sys/class/graphics/fb*/name | head -n1 | cut -d/ -f5')
+test -n "$FB" || { echo "no fb_st7789v framebuffer - is the display overlay loaded?" >&2; exit 1; }
+ssh user@host "cat /dev/$FB" > fb.raw
 python3 -c 'from PIL import Image; Image.frombytes("RGB", (320, 240), open("fb.raw", "rb").read(), "raw", "BGR;16").save("fb.png")'
 ```
+
+`BGR;16` is Pillow's raw mode for 16-bit little-endian pixels with 5 red,
+6 green and 5 blue bits — exactly the framebuffer's RGB565 layout. The name
+refers to Pillow's byte-order convention, not to BGR channel order.
 
 ### 2.2 Backlight path
 
@@ -162,8 +173,17 @@ directory in `ReadWritePaths=`. A drop-in,
 [Service]
 SupplementaryGroups=dialout gpio video
 # Output of: readlink -f /sys/class/backlight/fb_st7789v
-ReadWritePaths=/sys/devices/platform/axi/1000120000.pcie/1f00050000.spi/spi_master/spi0/spi0.1/backlight/fb_st7789v
+ReadWritePaths=-/sys/devices/platform/axi/1000120000.pcie/1f00050000.spi/spi_master/spi0/spi0.1/backlight/fb_st7789v
 ```
+
+Keep the `-` prefix. systemd builds the mount namespace before `ExecStart`, and
+without `-` a path that does not exist at that moment makes the unit fail with
+`226/NAMESPACE` — overlay removed, HAT not fitted, or a different kernel path.
+That takes down buttons, LED and every other channel too, so the
+[§6](#6-hardware-smoke-checklist) step that removes the overlay would fail at
+the unit level instead of logging the framebuffer error. With `-` a missing path
+is ignored and the service still starts; if the backlight device shows up later,
+restart the service to include it.
 
 The path above is the one on a Raspberry Pi 5; take yours from
 `readlink -f`. Then `systemctl daemon-reload && systemctl restart supla-device`.
@@ -243,7 +263,7 @@ type name is case-sensitive).
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `gpio_chip` | `gpiochip0` | libgpiod chip name; opened as `/dev/<gpio_chip>`. Must be the chip with GPIO5/6/16/24 (buttons) and GPIO17/27/22 (LED). |
-| `framebuffer` | `/dev/fb1` | Framebuffer device LVGL writes to. Must exist (readable and writable) at startup. Use `/dev/fb0` on a Pi without HDMI attached (§2.1). |
+| `framebuffer` | `/dev/fb1` | Framebuffer device LVGL writes to. Must exist (readable and writable) at startup. Use the index resolved by name (§2.1) — usually `/dev/fb0` on a headless Pi. |
 | `backlight` | `/sys/class/backlight/fb_st7789v` | sysfs backlight directory containing `bl_power`. Wrong/missing path = no backlight control. |
 | `backlight_timeout_sec` | `60` | Seconds without a button press before the backlight is switched off. `0` = always on. |
 | `hold_time_ms` | `700` | Hold time used by the button elements; a longer press is reported as `ON_HOLD` to the action trigger. |
@@ -459,7 +479,7 @@ backlight is switched off and the screen is cleared.
 | `channel` in a page/alert does not exist | Logged at init; the item shows `--`; the alert never fires; startup continues |
 | Channel offline or no value yet | Item shows `--`, chart skips the sample, alerts do not fire |
 | Relay toggled while the cloud connection is down | Toggled locally; the state syncs on reconnect |
-| Backlight path wrong/missing | No backlight control (panel stays lit); set `backlight_timeout_sec: 0` |
+| Backlight path wrong/missing | No backlight control (panel stays lit); set `backlight_timeout_sec: 0`. Under systemd keep the `-` prefix in `ReadWritePaths=` (§2.4), otherwise a missing path stops the whole unit |
 
 ---
 
