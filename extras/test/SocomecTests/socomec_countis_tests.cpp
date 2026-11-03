@@ -169,6 +169,22 @@ TEST_F(SocomecCountisTests, E03FullCyclePublishesPhaseOne) {
             0);
 }
 
+TEST_F(SocomecCountisTests, E03RegistersAsSinglePhase) {
+  SocomecCountis e03(&meter, Model::E03, 2);
+  const uint64_t flags = e03.getChannel()->getFlags();
+  EXPECT_FALSE(flags & SUPLA_CHANNEL_FLAG_PHASE1_UNSUPPORTED);
+  EXPECT_TRUE(flags & SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
+  EXPECT_TRUE(flags & SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
+}
+
+TEST_F(SocomecCountisTests, E23RegistersAllThreePhases) {
+  SocomecCountis e23(&meter, Model::E23, 2);
+  EXPECT_FALSE(e23.getChannel()->getFlags() &
+               (SUPLA_CHANNEL_FLAG_PHASE1_UNSUPPORTED |
+                SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED |
+                SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED));
+}
+
 TEST_F(SocomecCountisTests, E23PublishesThreePhasesAndSequence) {
   loadE23(&meter);
   SocomecCountis em(&meter, Model::E23, 2);

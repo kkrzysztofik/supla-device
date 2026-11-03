@@ -291,6 +291,11 @@ SocomecCountis::SocomecCountis(Socomec::Transport *transport,
                                Socomec::Model model,
                                uint8_t slave)
     : transport(transport), model(model), slave(slave) {
+  if (phaseCount() == 1) {
+    // Without these the server shows a three-phase meter with empty L2/L3.
+    extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE2_UNSUPPORTED);
+    extChannel.setFlag(SUPLA_CHANNEL_FLAG_PHASE3_UNSUPPORTED);
+  }
   setMaxPowerW(Socomec::defaultMaxPowerW(model));
 }
 
