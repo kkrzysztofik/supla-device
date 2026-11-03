@@ -387,6 +387,10 @@ Conditions are strict (`below` = `<`, `above` = `>`), so an alert
   uses `min`/`max` when set and auto-scales to the data otherwise. Samples are
   taken every `sample_sec`; samples of missing values are skipped.
 - The display is only rendered while the backlight is on.
+- Text is drawn with the bundled Montserrat fonts (ASCII, all Polish letters,
+  `°`, `²`, `³` and `•`). Characters outside that set — other language
+  diacritics or LVGL symbol glyphs — have no glyph in these fonts and render as
+  the placeholder box.
 
 ### 5.4 Backlight
 
