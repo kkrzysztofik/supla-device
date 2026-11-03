@@ -127,14 +127,19 @@ normalize_path() {
 
 # The Display HAT Mini extension embeds Montserrat-derived glyphs (SIL OFL 1.1),
 # so its licence notice has to travel with the package. Ship the notice only
-# when the packaged binary really contains those fonts; `nm` sees both defined
-# and undefined symbols, plain `grep` is the fallback when binutils is missing.
+# when the packaged binary really contains those fonts.
 bundles_pl_fonts() {
-  if command -v nm >/dev/null 2>&1; then
-    nm -C "$BINARY_PATH" 2>/dev/null | grep -q 'lv_font_montserrat_pl_'
-  else
-    grep -aq 'lv_font_montserrat_pl_' "$BINARY_PATH"
+  # `nm` sees both defined and undefined symbols. Note the grep output is
+  # discarded with >/dev/null rather than -q: -q would close the pipe as soon
+  # as it matches, nm could then die of SIGPIPE, and under `set -o pipefail`
+  # that would look like "no fonts".
+  if command -v nm >/dev/null 2>&1 &&
+     nm -C "$BINARY_PATH" 2>/dev/null | grep 'lv_font_montserrat_pl_' >/dev/null; then
+    return 0
   fi
+  # Stripped binary (no symbol table) or no binutils: best effort raw scan, so
+  # a false negative is possible but a false positive only over-ships the notice.
+  grep -aq 'lv_font_montserrat_pl_' "$BINARY_PATH"
 }
 
 require_cmd dpkg
