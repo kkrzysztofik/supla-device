@@ -37,7 +37,7 @@ channels:
     # Take this path from: ls /sys/class/backlight/
     backlight: /sys/class/backlight/fb_st7789v
     # Defaults (shown for reference, uncomment to change):
-    # framebuffer: /dev/fb1
+    # framebuffer: /dev/fb1     # usually /dev/fb0 when no HDMI display is attached
     # backlight_timeout_sec: 60   # 0 = always on
     # hold_time_ms: 700
     # multiclick_time_ms: 300
