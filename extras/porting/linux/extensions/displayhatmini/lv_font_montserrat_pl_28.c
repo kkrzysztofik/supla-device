@@ -1,3 +1,26 @@
+/*
+ Copyright (C) Krzysztof Krzysztofik
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
+*/
+
+/*
+ Generated LVGL font - do not edit the glyph data by hand.
+
+ Glyph outlines come from Montserrat, Copyright 2011 The Montserrat
+ Project Authors (https://github.com/JulietaUla/Montserrat), released under
+ the SIL Open Font License 1.1 (https://openfontlicense.org).
+
+ Generated with lv_font_conv 1.5.2 from LVGL v9.2.2's Montserrat-Medium.ttf;
+ the exact command is in the banner below. The version guards in the font
+ descriptor use LVGL_VERSION_MAJOR (LVGL v9 style) instead of the
+ LV_VERSION_CHECK(8, 0, 0) form emitted by lv_font_conv 1.5.2: the latter is
+ false on LVGL v9 and would define the descriptors without `const`.
+*/
+
 /*******************************************************************************
  * Size: 28 px
  * Bpp: 4
@@ -2940,9 +2963,12 @@ static const lv_font_fmt_txt_kern_classes_t kern_classes =
  *  ALL CUSTOM DATA
  *--------------------*/
 
-#if LV_VERSION_CHECK(8, 0, 0)
+#if LVGL_VERSION_MAJOR == 8
 /*Store all the custom data of the font*/
 static  lv_font_fmt_txt_glyph_cache_t cache;
+#endif
+
+#if LVGL_VERSION_MAJOR >= 8
 static const lv_font_fmt_txt_dsc_t font_dsc = {
 #else
 static lv_font_fmt_txt_dsc_t font_dsc = {
@@ -2956,7 +2982,7 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
     .bpp = 4,
     .kern_classes = 1,
     .bitmap_format = 0,
-#if LV_VERSION_CHECK(8, 0, 0)
+#if LVGL_VERSION_MAJOR == 8
     .cache = &cache
 #endif
 };
@@ -2967,7 +2993,7 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
  *----------------*/
 
 /*Initialize a public general font descriptor*/
-#if LV_VERSION_CHECK(8, 0, 0)
+#if LVGL_VERSION_MAJOR >= 8
 const lv_font_t lv_font_montserrat_pl_28 = {
 #else
 lv_font_t lv_font_montserrat_pl_28 = {
